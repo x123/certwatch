@@ -61,8 +61,8 @@ impl AsnLookup for MaxmindAsnLookup {
             .ok_or_else(|| anyhow!("No ASN number found for IP {}", ip))?;
 
         let as_name = asn_data.autonomous_system_organization
-            .ok_or_else(|| anyhow!("No ASN organization found for IP {}", ip))?
-            .to_string();
+            .map(|org| org.to_string())
+            .unwrap_or_else(|| format!("AS{}", as_number));
 
         // For the country code, we need to do a separate GeoIP lookup
         // Since we only have the ASN database, we'll use a placeholder
