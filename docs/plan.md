@@ -22,7 +22,7 @@ This phase builds a robust, testable client for the `certstream` websocket.
     - [x] Write a unit test in `network.rs` that provides a sample JSON string and asserts that the parsing function correctly extracts a `Vec<String>` of domains or returns an appropriate `Err`.
     - [x] Implement the `parse_message(text: &str) -> Result<Vec<String>, Error>` function to make the test pass.
 
-- [ ] **#3 - Implement a Decoupled WebSocket Client**
+- [x] **#3 - Implement a Decoupled WebSocket Client**
   - **Context:** Build the WebSocket client. It will depend on a `WebSocket` trait for testability, allowing us to simulate network interactions without making real connections during tests.
   - **Dependencies:** #2
   - **Subtasks:**
@@ -35,21 +35,21 @@ This phase builds a robust, testable client for the `certstream` websocket.
 ### **Epic 3: High-Performance Pattern Matching**
 This phase builds the core detection engine with a focus on testability and hot-reloading.
 
-- [ ] **#4 - Implement the Pattern Matching Engine**
+- [x] **#4 - Implement the Pattern Matching Engine**
   - **Context:** Build the service that matches domains against thousands of regex rules. The implementation will be hidden behind the `PatternMatcher` trait defined in task #1.
   - **Dependencies:** #1
   - **Subtasks:**
-    - [ ] Write unit tests for the `PatternMatcher`. One test should assert a successful match returns the correct domain and tag. Another should assert no match returns `None`.
-    - [ ] Implement a `struct RegexMatcher` that fulfills the `trait PatternMatcher`.
-    - [ ] The implementation should use `regex::RegexSet` for high performance.
-    - [ ] The constructor will take a `Vec<(String, String)>` of `(pattern, source_tag)` to build its internal state.
+    - [x] Write unit tests for the `PatternMatcher`. One test should assert a successful match returns the correct domain and tag. Another should assert no match returns `None`.
+    - [x] Implement a `struct RegexMatcher` that fulfills the `trait PatternMatcher`.
+    - [x] The implementation should use `regex::RegexSet` for high performance.
+    - [x] The constructor will take a `Vec<(String, String)>` of `(pattern, source_tag)` to build its internal state.
 
-- [ ] **#5 - Implement Pattern Loading and Hot-Reload**
+- [x] **#5 - Implement Pattern Loading and Hot-Reload**
   - **Context:** Create the logic to load patterns from files and swap them into the `RegexMatcher` atomically and safely.
   - **Dependencies:** #4
   - **Subtasks:**
-    - [ ] Write a unit test to verify that the pattern loading function correctly reads a file and produces a `Vec` of `(pattern, tag)`.
-    - [ ] Implement the file loading and parsing logic.
+    - [x] Write a unit test to verify that the pattern loading function correctly reads a file and produces a `Vec` of `(pattern, tag)`.
+    - [x] Implement the file loading and parsing logic.
     - [ ] Write an integration test to verify the hot-reload mechanism. This test will write to a file and assert that the `PatternMatcher` starts matching new patterns after a short delay.
     - [ ] Implement the hot-reload service using a file watcher (e.g., `notify`) that rebuilds the `RegexSet` in a background task and swaps it using an `ArcSwap`.
 
