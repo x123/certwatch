@@ -11,7 +11,8 @@
 use certwatch::network::CertStreamClient;
 use tokio::sync::mpsc;
 
-const TEST_CERTSTREAM_URL: &str = "wss://127.0.0.1:8181/domains-only";
+mod common;
+use common::TEST_CERTSTREAM_URL;
 
 #[tokio::test]
 #[ignore] // This test requires a live server, so ignore by default

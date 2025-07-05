@@ -45,6 +45,11 @@ impl RegexMatcher {
 
         Ok(Self { regex_set, tags })
     }
+
+    /// Returns the number of patterns loaded in the matcher.
+    pub fn patterns_count(&self) -> usize {
+        self.tags.len()
+    }
 }
 
 #[async_trait]
