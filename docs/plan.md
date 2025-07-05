@@ -141,13 +141,13 @@ This epic addresses technical debt and feature gaps identified during the 2025-0
 ### **Epic 5: Output & Alerting**
 This phase builds the flexible output system for delivering alerts.
 
-- [ ] **#8 - Implement the Output Management System**
+- [x] **#8 - Implement the Output Management System**
   - **Context:** Build the `OutputManager` and the specific output formatters. The entire system will be built on the `Output` trait.
   - **Dependencies:** #1
   - **Subtasks:**
-    - [ ] Write unit tests for each output formatter (JSON, stdout, Slack). The tests for Slack will use a fake HTTP client injected as a dependency.
-    - [ ] Implement `JsonOutput`, `StdoutOutput`, and `SlackOutput` structs, each fulfilling the `trait Output`.
-    - [ ] Implement the `OutputManager` which holds a `Vec<Box<dyn Output>>` and dispatches alerts accordingly.
+    - [x] Write unit tests for each output formatter (JSON, stdout, Slack). The tests for Slack will use a fake HTTP client injected as a dependency.
+    - [x] Implement `JsonOutput`, `StdoutOutput`, and `SlackOutput` structs, each fulfilling the `trait Output`.
+    - [x] Implement the `OutputManager` which holds a `Vec<Box<dyn Output>>` and dispatches alerts accordingly.
 
 - [ ] **#9 - Implement Deduplication**
   - **Context:** Build the deduplication service that filters alerts based on the defined unique keys.
