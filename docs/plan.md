@@ -1,35 +1,35 @@
 ### **Epic 1: Project Setup & Core Plumbing**
 This phase establishes the project's foundation, focusing on a testable, decoupled structure from the start.
 
-- [ ] **#1 - Initialize Project & Define Core Traits**
+- [x] **#1 - Initialize Project & Define Core Traits**
   - **Context:** Set up the project, establish the module structure, and define the core data structures and the primary `trait` contracts that will govern component interactions. This ensures a decoupled architecture from the outset.
   - **Dependencies:** None
   - **Subtasks:**
-    - [ ] Initialize a new binary Rust project: `cargo new certwatch --bin`.
-    - [ ] Add core dependencies to `Cargo.toml`: `tokio`, `serde`, `anyhow`, `log`, `env_logger`, and dev-dependencies for testing.
-    - [ ] Create module files (`main.rs`, `core.rs`, `network.rs`, `matching.rs`, etc.).
-    - [ ] In `core.rs`, define the final data structs (`Alert`, `DnsInfo`, `AsnInfo`) using `serde`.
-    - [ ] In `core.rs`, define the primary service traits that will be injected as dependencies, e.g., `trait PatternMatcher`, `trait DnsResolver`, `trait AsnLookup`, `trait Output`.
+    - [x] Initialize a new binary Rust project: `cargo new certwatch --bin`.
+    - [x] Add core dependencies to `Cargo.toml`: `tokio`, `serde`, `anyhow`, `log`, `env_logger`, and dev-dependencies for testing.
+    - [x] Create module files (`main.rs`, `core.rs`, `network.rs`, `matching.rs`, etc.).
+    - [x] In `core.rs`, define the final data structs (`Alert`, `DnsInfo`, `AsnInfo`) using `serde`.
+    - [x] In `core.rs`, define the primary service traits that will be injected as dependencies, e.g., `trait PatternMatcher`, `trait DnsResolver`, `trait AsnLookup`, `trait Output`.
 
 ---
 ### **Epic 2: Data Ingestion**
 This phase builds a robust, testable client for the `certstream` websocket.
 
-- [ ] **#2 - Implement Testable CertStream Message Parsing**
+- [x] **#2 - Implement Testable CertStream Message Parsing**
   - **Context:** Following TDD, create a function that can reliably parse a raw `certstream` JSON string into our core domain objects. This logic will be tested in isolation before any network code is written.
   - **Dependencies:** #1
   - **Subtasks:**
-    - [ ] Write a unit test in `network.rs` that provides a sample JSON string and asserts that the parsing function correctly extracts a `Vec<String>` of domains or returns an appropriate `Err`.
-    - [ ] Implement the `parse_message(text: &str) -> Result<Vec<String>, Error>` function to make the test pass.
+    - [x] Write a unit test in `network.rs` that provides a sample JSON string and asserts that the parsing function correctly extracts a `Vec<String>` of domains or returns an appropriate `Err`.
+    - [x] Implement the `parse_message(text: &str) -> Result<Vec<String>, Error>` function to make the test pass.
 
 - [ ] **#3 - Implement a Decoupled WebSocket Client**
   - **Context:** Build the WebSocket client. It will depend on a `WebSocket` trait for testability, allowing us to simulate network interactions without making real connections during tests.
   - **Dependencies:** #2
   - **Subtasks:**
-    - [ ] Write an integration test in `/tests` that uses a fake WebSocket implementation to test the client's reconnect logic.
-    - [ ] Define a `trait WebSocketConnection` with methods like `connect` and `read_message`.
-    - [ ] Implement the `CertStreamClient` struct, which takes a `Box<dyn WebSocketConnection>` as a dependency.
-    - [ ] Implement the client's connection and auto-reconnect logic, using channels (`tokio::sync::mpsc`) to send parsed domains to the next stage.
+    - [x] Write an integration test in `/tests` that uses a fake WebSocket implementation to test the client's reconnect logic.
+    - [x] Define a `trait WebSocketConnection` with methods like `connect` and `read_message`.
+    - [x] Implement the `CertStreamClient` struct, which takes a `Box<dyn WebSocketConnection>` as a dependency.
+    - [x] Implement the client's connection and auto-reconnect logic, using channels (`tokio::sync::mpsc`) to send parsed domains to the next stage.
 
 ---
 ### **Epic 3: High-Performance Pattern Matching**

@@ -24,8 +24,6 @@
       - **Unit Tests:** Place these inside a `#[cfg(test)] mod tests { ... }` block within the same file as the code they test.
       - **Integration Tests:** Place these in the top-level `/tests` directory to test how components work together.
       - **Dependency Isolation:** For unit tests, the primary strategy **must** be **Trait-Based Dependency Injection** with hand-written "fake" implementations. Mocking libraries like `mockall` should only be used as a secondary tool when verifying the exact nature of an interaction is critical.
-  - **Lint Before Testing:** Always run `bin/lint-repo` to lint the entire repository before running tests.
-  - **Run the Full Test Suite:** Use `bin/test-suite` to run all unit and integration tests. All tests must pass before suggesting a commit.
 
 ## 5. Version Control
 
