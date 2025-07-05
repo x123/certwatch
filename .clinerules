@@ -1,0 +1,43 @@
+# Project Guidelines
+
+## 1. Project & Codebase Hygiene
+
+  - **No Artifacts:** No build artifacts, log files, or other generated files should be committed to the repository.
+  - **Cleanliness Over Complexity:** Less code is better than more code. Always aim for simplicity and clarity.
+  - **Rewrite Over Add:** Prefer refactoring an existing component to meet a new requirement over adding a new, duplicative one.
+  - **Flag Obsolete Code:** If a file or block of code becomes obsolete during a refactoring, it should be explicitly flagged for deletion in the commit message or a follow-up task.
+
+## 2. Error Handling & Concurrency
+
+  - **Propagate Errors Explicitly:** Do not use fallback mechanisms that hide failures. The agent **must** use `Result<T, E>` and the `?` operator to propagate errors up the call stack. Errors should only be handled at the highest appropriate layer (e.g., the top of a running task), never ignored or replaced with default values.
+  - **Prioritize Message Passing for Concurrency:** To manage shared state and avoid race conditions, the agent's primary strategy **must** be message passing using channels (e.g., `tokio::sync::mpsc`). Direct shared-state primitives like `Arc<Mutex<T>>` should only be used in specific, well-justified cases, such as for read-mostly data like a shared configuration.
+
+## 3. Library & Environment Usage
+
+  - **Verify Library References:** When referencing external libraries, the agent **must** double-check that the referenced classes, methods, or fields actually exist. Do not guess or hallucinate API names.
+  - **Use the Nix Environment:** All development happens within the environment defined in `flake.nix` and managed by `direnv`. The agent should assume the necessary toolchains (e.g., the Rust compiler) are available in the shell.
+
+## 4. Development & Testing Workflow
+
+  - **Follow Test-Driven Development (TDD) with a Clear Structure:**
+      - Tests **must** be written before the implementation code.
+      - **Unit Tests:** Place these inside a `#[cfg(test)] mod tests { ... }` block within the same file as the code they test.
+      - **Integration Tests:** Place these in the top-level `/tests` directory to test how components work together.
+      - **Dependency Isolation:** For unit tests, the primary strategy **must** be **Trait-Based Dependency Injection** with hand-written "fake" implementations. Mocking libraries like `mockall` should only be used as a secondary tool when verifying the exact nature of an interaction is critical.
+  - **Lint Before Testing:** Always run `bin/lint-repo` to lint the entire repository before running tests.
+  - **Run the Full Test Suite:** Use `bin/test-suite` to run all unit and integration tests. All tests must pass before suggesting a commit.
+
+## 5. Version Control
+
+  - **Suggest Structured Commit Messages:** When a task is complete, suggest a clear, well-structured commit message that follows the **Conventional Commits** specification and the **50/72 rule**.
+      - **Structure:** `type(scope): subject` line, an optional detailed description, and an optional footer for tags and references, all separated by blank lines.
+      - **Example:**
+        ```text
+        feat(dns): Add dual-curve retry logic
+
+        Implement separate exponential backoff strategies for standard
+        DNS failures (timeouts/server errors) and NXDOMAIN responses.
+        This prevents spamming resolvers for non-existent domains.
+
+        Ticket: CERT-15
+        ```
