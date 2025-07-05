@@ -1,0 +1,110 @@
+//! Core domain types and service traits for CertWatch
+//!
+//! This module defines the fundamental data structures and trait contracts
+//! that govern component interactions throughout the application.
+
+use anyhow::Result;
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
+
+/// Represents a security alert for a suspicious domain
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alert {
+    /// ISO 8601 timestamp when the alert was generated
+    pub timestamp: String,
+    /// The suspicious domain name
+    pub domain: String,
+    /// Tag identifying the pattern source (e.g., "phishing", "typosquatting")
+    pub source_tag: String,
+    /// Flag indicating if this domain was previously NXDOMAIN but now resolves
+    pub resolved_after_nxdomain: bool,
+    /// DNS resolution information
+    pub dns: DnsInfo,
+    /// ASN enrichment data for resolved IPs
+    pub enrichment: Vec<AsnInfo>,
+}
+
+/// DNS resolution information for a domain
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DnsInfo {
+    /// IPv4 addresses from A records
+    pub a_records: Vec<IpAddr>,
+    /// IPv6 addresses from AAAA records
+    pub aaaa_records: Vec<IpAddr>,
+    /// Name servers from NS records
+    pub ns_records: Vec<String>,
+}
+
+/// ASN (Autonomous System Number) information for an IP address
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsnInfo {
+    /// The IP address this information relates to
+    pub ip: IpAddr,
+    /// Autonomous System Number
+    pub as_number: u32,
+    /// Human-readable name of the AS
+    pub as_name: String,
+    /// ISO country code where the AS is registered
+    pub country_code: String,
+}
+
+// =============================================================================
+// Service Traits
+// =============================================================================
+
+/// Matches domains against a set of patterns to detect suspicious registrations
+#[async_trait]
+pub trait PatternMatcher: Send + Sync {
+    /// Attempts to match a domain against loaded patterns
+    ///
+    /// # Arguments
+    /// * `domain` - The domain name to check
+    ///
+    /// # Returns
+    /// * `Some(source_tag)` if the domain matches a pattern
+    /// * `None` if no patterns match
+    async fn match_domain(&self, domain: &str) -> Option<String>;
+}
+
+/// Resolves domain names to their DNS records
+#[async_trait]
+pub trait DnsResolver: Send + Sync {
+    /// Resolves a domain to its DNS records (A, AAAA, NS)
+    ///
+    /// # Arguments
+    /// * `domain` - The domain name to resolve
+    ///
+    /// # Returns
+    /// * `Ok(DnsInfo)` with populated records on successful resolution
+    /// * `Err` for DNS errors including NXDOMAIN, timeouts, server errors
+    async fn resolve(&self, domain: &str) -> Result<DnsInfo>;
+}
+
+/// Looks up ASN information for IP addresses
+#[async_trait]
+pub trait AsnLookup: Send + Sync {
+    /// Retrieves ASN information for an IP address
+    ///
+    /// # Arguments
+    /// * `ip` - The IP address to look up
+    ///
+    /// # Returns
+    /// * `Ok(AsnInfo)` if the IP is found in the database
+    /// * `Err` if the IP is not found or database access fails
+    async fn lookup(&self, ip: IpAddr) -> Result<AsnInfo>;
+}
+
+/// Sends alerts to output destinations
+#[async_trait]
+pub trait Output: Send + Sync {
+    /// Sends an alert to the configured output destination
+    ///
+    /// # Arguments
+    /// * `alert` - The alert to send
+    ///
+    /// # Returns
+    /// * `Ok(())` if the alert was successfully sent
+    /// * `Err` if sending failed (network error, formatting error, etc.)
+    async fn send_alert(&self, alert: &Alert) -> Result<()>;
+}

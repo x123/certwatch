@@ -1,0 +1,26 @@
+[package]
+name = "certwatch"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+async-trait = "0.1"
+
+# Dependencies for later tasks
+regex = "1.10"
+trust-dns-resolver = "0.23"
+maxminddb = "0.24"
+reqwest = { version = "0.11", features = ["json"] }
+moka = { version = "0.12", features = ["future"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+serde_json = "1.0"
+notify = "6.1"
+arc-swap = "1.6"
+
+[dev-dependencies]
+tokio-test = "0.4"

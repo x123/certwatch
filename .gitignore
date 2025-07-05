@@ -1,2 +1,7 @@
 .direnv/
 flake.lock
+
+
+# Added by cargo
+
+/target
