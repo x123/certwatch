@@ -2,10 +2,50 @@
 //!
 //! This test uses the official MaxMind test database to verify that our
 //! MaxmindAsnLookup implementation correctly parses and extracts ASN data.
+//! It validates against the source JSON data to ensure accuracy.
 
 use certwatch::enrichment::MaxmindAsnLookup;
 use certwatch::core::AsnLookup;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use ipnetwork::IpNetwork;
+
+/// Represents an ASN entry from the MaxMind test data JSON
+#[derive(Debug, Deserialize)]
+struct AsnTestEntry {
+    autonomous_system_number: u32,
+    autonomous_system_organization: Option<String>,
+}
+
+/// Test case extracted from the JSON source data
+#[derive(Debug)]
+struct TestCase {
+    network: IpNetwork,
+    expected_asn: u32,
+    expected_org: Option<String>,
+}
+
+/// Load and parse the MaxMind test data JSON file
+fn load_test_data() -> Result<Vec<TestCase>, Box<dyn std::error::Error>> {
+    let json_content = std::fs::read_to_string("tests/data/GeoLite2-ASN-Test.json")?;
+    let raw_data: Vec<HashMap<String, AsnTestEntry>> = serde_json::from_str(&json_content)?;
+    
+    let mut test_cases = Vec::new();
+    
+    for entry_map in raw_data {
+        for (network_str, asn_entry) in entry_map {
+            let network: IpNetwork = network_str.parse()?;
+            test_cases.push(TestCase {
+                network,
+                expected_asn: asn_entry.autonomous_system_number,
+                expected_org: asn_entry.autonomous_system_organization,
+            });
+        }
+    }
+    
+    Ok(test_cases)
+}
 
 #[tokio::test]
 async fn test_maxmind_asn_lookup_with_real_db() {
