@@ -50,29 +50,29 @@ This phase builds the core detection engine with a focus on testability and hot-
   - **Subtasks:**
     - [x] Write a unit test to verify that the pattern loading function correctly reads a file and produces a `Vec` of `(pattern, tag)`.
     - [x] Implement the file loading and parsing logic.
-    - [ ] Write an integration test to verify the hot-reload mechanism. This test will write to a file and assert that the `PatternMatcher` starts matching new patterns after a short delay.
-    - [ ] Implement the hot-reload service using a file watcher (e.g., `notify`) that rebuilds the `RegexSet` in a background task and swaps it using an `ArcSwap`.
+    - [x] Write an integration test to verify the hot-reload mechanism. This test will write to a file and assert that the `PatternMatcher` starts matching new patterns after a short delay.
+    - [x] Implement the hot-reload service using a file watcher (e.g., `notify`) that rebuilds the `RegexSet` in a background task and swaps it using an `ArcSwap`.
 
 ---
 ### **Epic 4: DNS Resolution & Enrichment**
 This phase focuses on enriching domains with DNS/ASN data, using a fully testable, trait-based approach.
 
-- [ ] **#6 - Implement the DNS Resolver Service**
+- [x] **#6 - Implement the DNS Resolver Service**
   - **Context:** Implement the `DnsResolver` trait. The implementation will handle A, AAAA, and NS lookups and the dual-curve retry logic, ensuring all network errors are propagated via `Result`.
   - **Dependencies:** #1, #3
   - **Subtasks:**
-    - [ ] Write unit tests for the retry logic. Use a hand-written `FakeDnsResolver` that implements the `DnsResolver` trait to simulate timeouts, server errors, and `NXDOMAIN` responses, asserting the retry behavior is correct.
-    - [ ] Implement a `struct TrustDnsResolver` that uses the `trust-dns-resolver` crate.
-    - [ ] Ensure all fallible operations within this struct return a `Result` and use the `?` operator for error propagation.
-    - [ ] Implement the logic for the `NXDOMAIN` retry queue and the `"resolved_after_nxdomain"` flag.
+    - [x] Write unit tests for the retry logic. Use a hand-written `FakeDnsResolver` that implements the `DnsResolver` trait to simulate timeouts, server errors, and `NXDOMAIN` responses, asserting the retry behavior is correct.
+    - [x] Implement a `struct TrustDnsResolver` that uses the `trust-dns-resolver` crate.
+    - [x] Ensure all fallible operations within this struct return a `Result` and use the `?` operator for error propagation.
+    - [x] Implement the logic for the `NXDOMAIN` retry queue and the `"resolved_after_nxdomain"` flag.
 
-- [ ] **#7 - Implement the ASN Enrichment Service**
+- [x] **#7 - Implement the ASN Enrichment Service**
   - **Context:** Build the IP-to-ASN enrichment service, hiding the database implementation behind the `AsnLookup` trait.
   - **Dependencies:** #1, #6
   - **Subtasks:**
-    - [ ] Write a unit test for the `AsnLookup` trait, providing a sample IP and asserting the correct `AsnInfo` is returned.
-    - [ ] Implement a `struct MaxmindAsnLookup` that implements the trait.
-    - [ ] The constructor for the struct will load the MaxMindDB file. The lookup method will handle cases where an IP is not found in the database by returning a `Result`.
+    - [x] Write a unit test for the `AsnLookup` trait, providing a sample IP and asserting the correct `AsnInfo` is returned.
+    - [x] Implement a `struct MaxmindAsnLookup` that implements the trait.
+    - [x] The constructor for the struct will load the MaxMindDB file. The lookup method will handle cases where an IP is not found in the database by returning a `Result`.
 
 ---
 ### **Epic 5: Output & Alerting**
