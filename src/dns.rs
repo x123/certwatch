@@ -15,7 +15,9 @@ use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
 
 /// Configuration for DNS retry policies
-#[derive(Debug, Clone)]
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct DnsRetryConfig {
     /// Number of retries for standard failures (timeouts, server errors)
     pub standard_retries: u32,
@@ -67,54 +69,46 @@ impl DnsResolver for TrustDnsResolver {
         let mut first_error = None;
 
         // Resolve A records (IPv4)
-        match self.resolver.ipv4_lookup(domain).await {
-            Ok(lookup) => {
-                dns_info.a_records = lookup.iter().map(|ip| IpAddr::V4(ip.0)).collect();
-            }
-            Err(e) => {
-                let error_string = e.to_string();
-                if error_string.contains("NXDOMAIN") {
-                    return Err(anyhow!("NXDOMAIN: {}", domain));
-                }
-                log::warn!("Failed to resolve A records for {}: {}", domain, e);
-                if first_error.is_none() {
-                    first_error = Some(anyhow!("A record lookup failed: {}", e));
-                }
+        if let Err(e) = self.resolver.ipv4_lookup(domain).await.map(|lookup| {
+            dns_info.a_records = lookup.iter().map(|ip| IpAddr::V4(ip.0)).collect();
+        }) {
+            log::warn!("Failed to resolve A records for {}: {}", domain, e);
+            if first_error.is_none() {
+                first_error = Some(e.into());
             }
         }
 
         // Resolve AAAA records (IPv6)
-        match self.resolver.ipv6_lookup(domain).await {
-            Ok(lookup) => {
-                dns_info.aaaa_records = lookup.iter().map(|ip| IpAddr::V6(ip.0)).collect();
-            }
-            Err(e) => {
-                log::warn!("Failed to resolve AAAA records for {}: {}", domain, e);
-                if first_error.is_none() {
-                    first_error = Some(anyhow!("AAAA record lookup failed: {}", e));
-                }
+        if let Err(e) = self.resolver.ipv6_lookup(domain).await.map(|lookup| {
+            dns_info.aaaa_records = lookup.iter().map(|ip| IpAddr::V6(ip.0)).collect();
+        }) {
+            log::warn!("Failed to resolve AAAA records for {}: {}", domain, e);
+            if first_error.is_none() {
+                first_error = Some(e.into());
             }
         }
 
         // Resolve NS records
-        match self.resolver.ns_lookup(domain).await {
-            Ok(lookup) => {
-                dns_info.ns_records = lookup.iter().map(|ns| ns.to_string()).collect();
-            }
-            Err(e) => {
-                log::warn!("Failed to resolve NS records for {}: {}", domain, e);
-                if first_error.is_none() {
-                    first_error = Some(anyhow!("NS record lookup failed: {}", e));
-                }
+        if let Err(e) = self.resolver.ns_lookup(domain).await.map(|lookup| {
+            dns_info.ns_records = lookup.iter().map(|ns| ns.to_string()).collect();
+        }) {
+            log::warn!("Failed to resolve NS records for {}: {}", domain, e);
+            if first_error.is_none() {
+                first_error = Some(e.into());
             }
         }
 
-        // If we got no records at all, return the first specific error we encountered
-        if dns_info.a_records.is_empty()
-            && dns_info.aaaa_records.is_empty()
-            && dns_info.ns_records.is_empty()
-        {
-            return Err(first_error.unwrap_or_else(|| anyhow!("No DNS records found for {}", domain)));
+        // If we have a specific error, and it's an NXDOMAIN, return it immediately.
+        if let Some(err) = &first_error {
+            if is_nxdomain_error(err) {
+                return Err(first_error.unwrap());
+            }
+        }
+
+        // If we got no records at all, return the first specific error we encountered.
+        if dns_info.is_empty() {
+            return Err(first_error
+                .unwrap_or_else(|| anyhow!("No DNS records found for {}", domain)));
         }
 
         Ok(dns_info)
@@ -123,6 +117,18 @@ impl DnsResolver for TrustDnsResolver {
 
 /// Represents a domain that has resolved after previously being NXDOMAIN
 pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, dns_info)
+
+/// Checks if an `anyhow::Error` is an NXDOMAIN error.
+fn is_nxdomain_error(err: &anyhow::Error) -> bool {
+    if let Some(proto_err) = err.downcast_ref::<trust_dns_resolver::error::ResolveError>() {
+        if let trust_dns_resolver::error::ResolveErrorKind::NoRecordsFound { response_code, .. } =
+            proto_err.kind()
+        {
+            return *response_code == trust_dns_resolver::proto::op::ResponseCode::NXDomain;
+        }
+    }
+    false
+}
 
 /// Manages DNS resolution with dual-curve retry logic
 pub struct DnsResolutionManager {
@@ -172,13 +178,18 @@ impl DnsResolutionManager {
                     last_error = Some(format!("{}", e));
                     
                     // Check if this is an NXDOMAIN error
-                    if e.to_string().contains("NXDOMAIN") {
+                    if is_nxdomain_error(&e) {
                         // Schedule for NXDOMAIN retry queue
-                        let retry_time = Instant::now() + Duration::from_millis(self.config.nxdomain_initial_backoff_ms);
-                        if let Err(send_err) = self.nxdomain_retry_tx.send((domain.to_string(), source_tag.to_string(), retry_time)) {
+                        let retry_time = Instant::now()
+                            + Duration::from_millis(self.config.nxdomain_initial_backoff_ms);
+                        if let Err(send_err) = self.nxdomain_retry_tx.send((
+                            domain.to_string(),
+                            source_tag.to_string(),
+                            retry_time,
+                        )) {
                             log::error!("Failed to schedule NXDOMAIN retry: {}", send_err);
                         }
-                        
+
                         // Return the NXDOMAIN error immediately for immediate alert generation
                         return Err(e);
                     }
@@ -274,6 +285,8 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use trust_dns_resolver::error::{ResolveError, ResolveErrorKind};
+    use trust_dns_resolver::proto::op::ResponseCode;
 
     /// Fake DNS resolver for testing
     pub struct FakeDnsResolver {
@@ -321,7 +334,20 @@ mod tests {
             let responses = self.responses.lock().unwrap();
             match responses.get(domain) {
                 Some(Ok(dns_info)) => Ok(dns_info.clone()),
-                Some(Err(error)) => Err(anyhow!("{}", error)),
+                Some(Err(error)) => {
+                    if error == "NXDOMAIN" {
+                        let kind = ResolveErrorKind::NoRecordsFound {
+                            query: Default::default(),
+                            response_code: ResponseCode::NXDomain,
+                            trusted: false,
+                            negative_ttl: None,
+                            soa: None,
+                        };
+                        Err(ResolveError::from(kind).into())
+                    } else {
+                        Err(anyhow!("{}", error))
+                    }
+                }
                 None => Err(anyhow!("No response configured for {}", domain)),
             }
         }
@@ -347,7 +373,7 @@ mod tests {
         
         let result = resolver.resolve("nonexistent.com").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NXDOMAIN"));
+        assert!(is_nxdomain_error(&result.unwrap_err()));
         assert_eq!(resolver.get_call_count("nonexistent.com"), 1);
     }
 
@@ -387,7 +413,7 @@ mod tests {
 
         // Should return NXDOMAIN error immediately (no standard retries)
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NXDOMAIN"));
+        assert!(is_nxdomain_error(&result.unwrap_err()));
         assert_eq!(fake_resolver.get_call_count("nonexistent.com"), 1);
     }
 
@@ -425,7 +451,7 @@ mod tests {
         // This first call should fail immediately and queue the domain for retry
         let result = manager.resolve_with_retry("newly-active.com", "test-tag").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("NXDOMAIN"));
+        assert!(is_nxdomain_error(&result.unwrap_err()));
         assert_eq!(fake_resolver.get_call_count("newly-active.com"), 1);
 
         // Now, configure the resolver to return a success response

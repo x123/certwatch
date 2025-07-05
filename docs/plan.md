@@ -110,9 +110,9 @@ This epic addresses technical debt and feature gaps identified during the 2025-0
   - **Context:** The current DNS implementation has two critical flaws: the "First Resolution" alert for `NXDOMAIN` domains is not fully implemented, and the error handling in `TrustDnsResolver` swallows specific errors.
   - **Dependencies:** #6
   - **Subtasks:**
-    - [ ] Refactor the `nxdomain_retry_task` to send successfully resolved domains to the main application pipeline for alert generation.
-    - [ ] Correct the error handling in `TrustDnsResolver` to propagate specific DNS errors instead of replacing them with a generic message.
-    - [ ] Write unit tests for the `nxdomain_retry_task` logic.
+    - [x] Refactor the `nxdomain_retry_task` to send successfully resolved domains to the main application pipeline for alert generation.
+    - [x] Correct the error handling in `TrustDnsResolver` to propagate specific DNS errors instead of replacing them with a generic message.
+    - [x] Write unit tests for the `nxdomain_retry_task` logic.
 
 - [x] **#B - Implement Configurable Sampling**
   - **Context:** The `CertStreamClient` lacks the required sampling feature to manage high-volume streams.
@@ -125,8 +125,8 @@ This epic addresses technical debt and feature gaps identified during the 2025-0
   - **Context:** The enrichment service currently uses a placeholder for the `country_code`. A real implementation is needed to match the spec.
   - **Dependencies:** #7
   - **Subtasks:**
-    - [ ] Add a `GeoIpLookup` trait and a `MaxmindGeoIpLookup` implementation that uses the `GeoLite2-Country.mmdb` database.
-    - [ ] Integrate the `GeoIpLookup` service into the main pipeline to add the country code to the `AsnInfo` struct.
+    - [x] Add a `GeoIpLookup` trait and a `MaxmindGeoIpLookup` implementation that uses the `GeoLite2-Country.mmdb` database.
+    - [x] Integrate the `GeoIpLookup` service into the main pipeline to add the country code to the `AsnInfo` struct.
 
 - [x] **#D - General Code Cleanup**
   - **Context:** Address medium-priority cleanup tasks identified in the code review.
@@ -160,20 +160,20 @@ This phase builds the flexible output system for delivering alerts.
 ### **Epic 6: Finalization & Integration**
 This final phase ties all the decoupled components together into a running application.
 
-- [ ] **#10 - Implement Configuration Management**
+- [x] **#10 - Implement Configuration Management**
   - **Context:** Load all application settings from a file and command-line arguments, making them available to the rest of the application.
   - **Dependencies:** #1
   - **Subtasks:**
-    - [ ] Define a single, comprehensive `Config` struct using `serde`.
-    - [ ] Write a unit test to verify that loading a sample TOML file correctly populates the `Config` struct.
-    - [ ] Implement the configuration loading logic using a crate like `figment` to merge file-based settings with CLI arguments.
+    - [x] Define a single, comprehensive `Config` struct using `serde`.
+    - [x] Write a unit test to verify that loading a sample TOML file correctly populates the `Config` struct.
+    - [x] Implement the configuration loading logic using a crate like `figment` to merge file-based settings with CLI arguments.
 
-- [ ] **#11 - Wire All Components in `main.rs`**
+- [x] **#11 - Wire All Components in `main.rs`**
   - **Context:** Write the main application function that initializes all concrete service implementations, injects them into the components that depend on their traits, and starts all concurrent tasks.
   - **Dependencies:** #3, #5, #7, #8, #9, #10
   - **Subtasks:**
-    - [ ] In `main`, load the configuration from task #10.
-    - [ ] Instantiate the concrete types: `RegexMatcher`, `TrustDnsResolver`, `MaxmindAsnLookup`, `OutputManager`, etc.
-    - [ ] Create the `mpsc` channels that will connect the pipeline stages.
-    - [ ] "Wire" the application by passing the concrete instances (as `Box<dyn Trait>`) into the constructors of the services that need them.
-    - [ ] Spawn a `tokio` task for each concurrent process (client, matcher, resolver pool, etc.) and start the runtime.
+    - [x] In `main`, load the configuration from task #10.
+    - [x] Instantiate the concrete types: `RegexMatcher`, `TrustDnsResolver`, `MaxmindAsnLookup`, `OutputManager`, etc.
+    - [x] Create the `mpsc` channels that will connect the pipeline stages.
+    - [x] "Wire" the application by passing the concrete instances (as `Box<dyn Trait>`) into the constructors of the services that need them.
+    - [x] Spawn a `tokio` task for each concurrent process (client, matcher, resolver pool, etc.) and start the runtime.

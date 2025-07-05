@@ -14,8 +14,7 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct MaxmindEnrichmentProvider {
     asn_reader: Reader<Vec<u8>>,
-    // In the future, a geoip_reader would go here.
-    // For now, we'll keep the structure but won't use it.
+    geoip_reader: Reader<Vec<u8>>,
 }
 
 impl MaxmindEnrichmentProvider {
@@ -24,15 +23,17 @@ impl MaxmindEnrichmentProvider {
     /// # Arguments
     /// * `asn_db_path` - Path to the MaxMind GeoLite2-ASN.mmdb file.
     /// * `geoip_db_path` - Path to the MaxMind GeoLite2-Country.mmdb file.
-    pub fn new<P: AsRef<Path>>(asn_db_path: P, _geoip_db_path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(asn_db_path: P, geoip_db_path: P) -> Result<Self> {
         let asn_reader = Reader::open_readfile(asn_db_path)
             .map_err(|e| anyhow!("Failed to open MaxMind ASN database: {}", e))?;
-        
-        // In the future, we would open the GeoIP database here.
-        // let geoip_reader = Reader::open_readfile(geoip_db_path)
-        //     .map_err(|e| anyhow!("Failed to open MaxMind GeoIP database: {}", e))?;
 
-        Ok(Self { asn_reader })
+        let geoip_reader = Reader::open_readfile(geoip_db_path)
+            .map_err(|e| anyhow!("Failed to open MaxMind GeoIP database: {}", e))?;
+
+        Ok(Self {
+            asn_reader,
+            geoip_reader,
+        })
     }
 }
 
@@ -65,11 +66,23 @@ impl EnrichmentProvider for MaxmindEnrichmentProvider {
             }
         }
 
-        // Perform GeoIP lookup (placeholder)
-        // In the future, this would use the geoip_reader.
-        info.geoip = Some(GeoIpInfo {
-            country_code: "XX".to_string(), // Placeholder until GeoIP DB is integrated
-        });
+        // Perform GeoIP lookup
+        match self.geoip_reader.lookup::<geoip2::Country>(ip) {
+            Ok(country_data) => {
+                if let Some(country) = country_data.country {
+                    if let Some(iso_code) = country.iso_code {
+                        info.geoip = Some(GeoIpInfo {
+                            country_code: iso_code.to_string(),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                if !matches!(e, MaxMindDBError::AddressNotFoundError(_)) {
+                    log::warn!("GeoIP lookup failed for {}: {}", ip, e);
+                }
+            }
+        }
 
         Ok(info)
     }

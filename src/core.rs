@@ -35,6 +35,13 @@ pub struct DnsInfo {
     /// Name servers from NS records
     pub ns_records: Vec<String>,
 }
+impl DnsInfo {
+    /// Checks if the DnsInfo struct contains any records.
+    pub fn is_empty(&self) -> bool {
+        self.a_records.is_empty() && self.aaaa_records.is_empty() && self.ns_records.is_empty()
+    }
+}
+
 
 /// Combined enrichment information for an IP address
 #[derive(Debug, Clone, Serialize, Deserialize)]
