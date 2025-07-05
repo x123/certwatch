@@ -149,12 +149,12 @@ This phase builds the flexible output system for delivering alerts.
     - [x] Implement `JsonOutput`, `StdoutOutput`, and `SlackOutput` structs, each fulfilling the `trait Output`.
     - [x] Implement the `OutputManager` which holds a `Vec<Box<dyn Output>>` and dispatches alerts accordingly.
 
-- [ ] **#9 - Implement Deduplication**
+- [x] **#9 - Implement Deduplication**
   - **Context:** Build the deduplication service that filters alerts based on the defined unique keys.
   - **Dependencies:** #8
   - **Subtasks:**
-    - [ ] Write unit tests to verify the deduplication logic. Assert that a second alert with the same key is dropped, but an alert with the unique "First Resolution" key is processed.
-    - [ ] Implement the `Deduplicator` service using a time-aware cache (e.g., `moka`) and the specified hashing logic for keys.
+    - [x] Write unit tests to verify the deduplication logic. Assert that a second alert with the same key is dropped, but an alert with the unique "First Resolution" key is processed.
+    - [x] Implement the `Deduplicator` service using a time-aware cache (e.g., `moka`) and the specified hashing logic for keys.
 
 ---
 ### **Epic 6: Finalization & Integration**

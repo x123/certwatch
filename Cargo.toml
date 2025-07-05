@@ -23,6 +23,7 @@ figment = { version = "0.10", features = ["toml", "env"] }
 serde_json = "1.0"
 notify = "6.1"
 arc-swap = "1.6"
+blake3 = "1.5"
 
 # WebSocket dependencies for Epic 2
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
