@@ -5,6 +5,7 @@
 use anyhow::Result;
 use certwatch::network::CertStreamClient;
 use std::future::Future;
+use chrono::Local;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
@@ -32,7 +33,7 @@ where
 {
     // Initialize the logger to see output from the client
     let _ = env_logger::try_init();
-    println!("Starting live test for {} seconds...", duration.as_secs());
+    println!("[INFO] {} Starting live test for {} seconds...", Local::now().to_rfc3339(), duration.as_secs());
 
     // Setup communication channel
     let (tx, rx) = mpsc::channel(100);
@@ -50,9 +51,9 @@ where
 
     // Run the provided test logic with a timeout
     if let Err(e) = timeout(duration, test_logic(rx)).await {
-        println!("Test finished after {} seconds: {}", duration.as_secs(), e);
+        println!("[INFO] {} Test finished after {} seconds: {}", Local::now().to_rfc3339(), duration.as_secs(), e);
     } else {
-        println!("Test finished after {} seconds.", duration.as_secs());
+        println!("[INFO] {} Test finished after {} seconds.", Local::now().to_rfc3339(), duration.as_secs());
     }
 
     Ok(())

@@ -86,12 +86,13 @@ This epic focuses on paying down technical debt by leveraging our live testing c
     - [x] Refactor `live_certstream_client.rs` to use the new harness.
     - [x] Refactor `live_pattern_matching.rs` to use the new harness.
 
-- [ ] **#7.2 - Add Live Integration Test for Pattern Hot-Reload**
+- [x] **#7.2 - Add Live Integration Test for Pattern Hot-Reload**
   - **Context:** The pattern hot-reloading mechanism is currently only validated by a unit test. A live test is needed to verify its correctness in a concurrent environment.
   - **Dependencies:** #5
   - **Subtasks:**
-    - [ ] Create a new test file `tests/live_hot_reload.rs`.
-    - [ ] The test will connect to the live feed, match against initial patterns, update the pattern file, and assert that the new patterns are loaded and used correctly.
+    - [x] Create a new test file `tests/live_hot_reload.rs`.
+    - [x] The test will connect to the live feed, match against initial patterns, update the pattern file, and assert that the new patterns are loaded and used correctly.
+    - [x] Remove obsolete, flaky hot-reload tests from `tests/pattern_hot_reload.rs`.
 
 - [ ] **#7.3 - Add Live Integration Test for Enrichment Pipeline**
   - **Context:** The DNS and ASN enrichment services are only validated with unit tests. A live integration test will provide higher confidence in their implementation.

@@ -8,64 +8,7 @@ use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
 use std::collections::HashMap;
 use tempfile::NamedTempFile;
-use tokio::fs;
-use tokio::time::{sleep, Duration};
 use std::io::Write;
-
-#[tokio::test]
-#[ignore = "Hot-reload file watching is flaky in test environment - functionality works but test needs improvement"]
-async fn test_pattern_watcher_hot_reload() -> Result<()> {
-    // Initialize logging for the test
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    // Create a temporary pattern file
-    let mut temp_file = NamedTempFile::new()?;
-    let temp_path = temp_file.path().to_path_buf();
-    
-    // Write initial patterns
-    let initial_content = r#"# Initial patterns
-.*\.initial\.com$
-"#;
-    temp_file.write_all(initial_content.as_bytes())?;
-    temp_file.flush()?;
-
-    // Create pattern files map
-    let mut pattern_files = HashMap::new();
-    pattern_files.insert(temp_path.clone(), "test".to_string());
-
-    // Create PatternWatcher
-    let watcher = PatternWatcher::new(pattern_files).await?;
-
-    // Test initial pattern matching
-    let result = watcher.match_domain("test.initial.com").await;
-    // The source tag should be derived from the filename, not the map value
-    let expected_tag = temp_path.file_stem().and_then(|s| s.to_str()).unwrap().to_string();
-    assert_eq!(result, Some(expected_tag.clone()), "Initial pattern should match");
-
-    let result = watcher.match_domain("test.newpattern.com").await;
-    assert_eq!(result, None, "New pattern should not match initially");
-
-    // Update the pattern file with new content
-    let new_content = r#"# Updated patterns
-.*\.initial\.com$
-.*\.newpattern\.com$
-"#;
-    fs::write(&temp_path, new_content).await?;
-
-    // Wait for file watcher to detect the change and reload patterns
-    // File watchers can be a bit slow, so we give it some time
-    sleep(Duration::from_millis(1000)).await;
-
-    // Test that new pattern now matches
-    let result = watcher.match_domain("test.newpattern.com").await;
-    assert_eq!(result, Some(expected_tag.clone()), "New pattern should match after reload");
-
-    // Test that old pattern still works
-    let result = watcher.match_domain("test.initial.com").await;
-    assert_eq!(result, Some(expected_tag), "Initial pattern should still match");
-
-    Ok(())
-}
 
 #[tokio::test]
 async fn test_pattern_watcher_multiple_files() -> Result<()> {
@@ -99,45 +42,6 @@ async fn test_pattern_watcher_multiple_files() -> Result<()> {
 
     let result = watcher.match_domain("test.phishing.com").await;
     assert!(result.is_some(), "Phishing pattern should match");
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "Hot-reload file watching is flaky in test environment - functionality works but test needs improvement"]
-async fn test_pattern_watcher_empty_initial_file() -> Result<()> {
-    // Initialize logging for the test
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    // Create a temporary pattern file that's initially empty
-    let mut temp_file = NamedTempFile::new()?;
-    let temp_path = temp_file.path().to_path_buf();
-    
-    // Write empty content (just comments)
-    temp_file.write_all(b"# Empty pattern file\n")?;
-    temp_file.flush()?;
-
-    // Create pattern files map
-    let mut pattern_files = HashMap::new();
-    pattern_files.insert(temp_path.clone(), "test".to_string());
-
-    // Create PatternWatcher
-    let watcher = PatternWatcher::new(pattern_files).await?;
-
-    // Test that no patterns match initially
-    let result = watcher.match_domain("any.domain.com").await;
-    assert_eq!(result, None, "No patterns should match initially");
-
-    // Add a pattern to the file
-    fs::write(&temp_path, "# Now with patterns\n.*\\.test\\.com$\n").await?;
-
-    // Wait for reload
-    sleep(Duration::from_millis(1000)).await;
-
-    // Test that the new pattern now matches
-    let result = watcher.match_domain("example.test.com").await;
-    let expected_tag = temp_path.file_stem().and_then(|s| s.to_str()).unwrap().to_string();
-    assert_eq!(result, Some(expected_tag), "New pattern should match after reload");
 
     Ok(())
 }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::mpsc;
 use crate::core::PatternMatcher;
+use chrono::Local;
 
 /// High-performance regex matcher using RegexSet for efficient multi-pattern matching
 pub struct RegexMatcher {
@@ -107,6 +108,7 @@ pub async fn load_patterns_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec
 }
 
 /// Pattern watcher that provides hot-reload capability for pattern files
+#[derive(Clone)]
 pub struct PatternWatcher {
     /// Current active matcher, atomically swappable
     current_matcher: Arc<ArcSwap<RegexMatcher>>,
@@ -203,14 +205,25 @@ impl PatternWatcher {
         // Process file events
         while let Some(event) = rx.recv().await {
             if Self::should_reload_patterns(&event, &pattern_files) {
-                log::info!("Pattern file changed, reloading...");
+                println!(
+                    "[RELOAD-STARTED] {} Pattern file change detected, reloading...",
+                    Local::now().to_rfc3339()
+                );
                 
                 match Self::load_all_patterns(&pattern_files).await {
                     Ok(patterns) => {
                         match RegexMatcher::new(patterns) {
                             Ok(new_matcher) => {
+                                let old_count = current_matcher.load().patterns_count();
+                                let new_count = new_matcher.patterns_count();
+                                let diff = new_count as isize - old_count as isize;
                                 current_matcher.store(Arc::new(new_matcher));
-                                log::info!("Successfully reloaded patterns");
+                                println!(
+                                    "[RELOAD-COMPLETED] {} Successfully reloaded {} patterns ({:+})",
+                                    Local::now().to_rfc3339(),
+                                    new_count,
+                                    diff
+                                );
                             }
                             Err(e) => {
                                 log::error!("Failed to compile new patterns: {}", e);

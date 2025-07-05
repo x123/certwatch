@@ -15,6 +15,7 @@ use certwatch::core::PatternMatcher;
 use certwatch::matching::{load_patterns_from_file, RegexMatcher};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use chrono::Local;
 
 mod common;
 use common::run_live_test;
@@ -34,16 +35,20 @@ async fn live_pattern_matching() -> Result<()> {
     // 1. Load patterns
     let patterns = load_patterns_from_file("tests/data/test-regex.txt").await?;
     let matcher = RegexMatcher::new(patterns)?;
-    println!("Loaded {} patterns.", matcher.patterns_count());
+    println!("[INFO] {} Loaded {} patterns.", Local::now().to_rfc3339(), matcher.patterns_count());
 
     // 2. Define the test logic using the harness
     let test_duration = Duration::from_secs(5);
     let test_logic = |mut rx: mpsc::Receiver<Vec<String>>| async move {
         while let Some(domains) = rx.recv().await {
-            println!("[DEBUG] Received {} domains: {:?}", domains.len(), domains);
             for domain in domains {
                 if let Some(source_tag) = matcher.match_domain(&domain).await {
-                    println!("[MATCH] Domain: '{}' matched pattern from source: '{}'", domain, source_tag);
+                    println!(
+                        "[MATCH] {} {}: '{}'",
+                        Local::now().to_rfc3339(),
+                        source_tag,
+                        domain
+                    );
                 }
             }
         }

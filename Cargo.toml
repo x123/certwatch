@@ -10,6 +10,7 @@ anyhow = "1.0"
 log = "0.4"
 env_logger = "0.10"
 async-trait = "0.1"
+chrono = "0.4"
 
 # Dependencies for later tasks
 regex = "1.10"
@@ -36,3 +37,4 @@ tokio-test = "0.4"
 tempfile = "3.8"
 serde_json = "1.0"
 ipnetwork = "0.20"
+gag = "1.0.0"
