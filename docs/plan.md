@@ -94,13 +94,13 @@ This epic focuses on paying down technical debt by leveraging our live testing c
     - [x] The test will connect to the live feed, match against initial patterns, update the pattern file, and assert that the new patterns are loaded and used correctly.
     - [x] Remove obsolete, flaky hot-reload tests from `tests/pattern_hot_reload.rs`.
 
-- [ ] **#7.3 - Add Live Integration Test for Enrichment Pipeline**
+- [x] **#7.3 - Add Live Integration Test for Enrichment Pipeline**
   - **Context:** The DNS and ASN enrichment services are only validated with unit tests. A live integration test will provide higher confidence in their implementation.
   - **Dependencies:** #6, #7
   - **Subtasks:**
-    - [ ] Create a new test file `tests/live_enrichment.rs`.
-    - [ ] The test will pull domains from the live stream, resolve them using `TrustDnsResolver`, and enrich them with `MaxmindAsnLookup`.
-    - [ ] Assert that the pipeline runs without errors and successfully enriches a sample of domains.
+    - [x] Create a new test file `tests/live_enrichment.rs`.
+    - [x] The test will pull domains from the live stream, resolve them using `TrustDnsResolver`, and enrich them with `MaxmindAsnLookup`.
+    - [x] Assert that the pipeline runs without errors and successfully enriches a sample of domains.
 
 ---
 ### **Epic 5: Output & Alerting**

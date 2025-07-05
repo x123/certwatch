@@ -115,6 +115,8 @@ pub struct PatternWatcher {
     /// Pattern file paths being watched (kept for potential future use)
     #[allow(dead_code)]
     pattern_files: HashMap<PathBuf, String>,
+    /// Notifier for when a reload has completed, used for testing
+    reload_notifier: Option<mpsc::Sender<()>>,
 }
 
 impl PatternWatcher {
@@ -127,15 +129,24 @@ impl PatternWatcher {
     /// * `Ok(PatternWatcher)` if initialization succeeds
     /// * `Err` if pattern loading or file watching setup fails
     pub async fn new(pattern_files: HashMap<PathBuf, String>) -> Result<Self> {
+        Self::with_notifier(pattern_files, None).await
+    }
+
+    /// Creates a new PatternWatcher with a reload notifier for testing
+    pub async fn with_notifier(
+        pattern_files: HashMap<PathBuf, String>,
+        reload_notifier: Option<mpsc::Sender<()>>,
+    ) -> Result<Self> {
         // Load initial patterns from all files
         let initial_patterns = Self::load_all_patterns(&pattern_files).await?;
         let initial_matcher = RegexMatcher::new(initial_patterns)?;
-        
+
         let current_matcher = Arc::new(ArcSwap::from_pointee(initial_matcher));
-        
+
         let watcher = Self {
             current_matcher: current_matcher.clone(),
             pattern_files: pattern_files.clone(),
+            reload_notifier,
         };
 
         // Start file watching in background
@@ -166,9 +177,10 @@ impl PatternWatcher {
     /// Starts the file watcher in a background task
     async fn start_file_watcher(&self, pattern_files: HashMap<PathBuf, String>) -> Result<()> {
         let current_matcher = self.current_matcher.clone();
-        
+        let reload_notifier = self.reload_notifier.clone();
+
         tokio::spawn(async move {
-            if let Err(e) = Self::run_file_watcher(current_matcher, pattern_files).await {
+            if let Err(e) = Self::run_file_watcher(current_matcher, pattern_files, reload_notifier).await {
                 log::error!("File watcher error: {}", e);
             }
         });
@@ -180,6 +192,7 @@ impl PatternWatcher {
     async fn run_file_watcher(
         current_matcher: Arc<ArcSwap<RegexMatcher>>,
         pattern_files: HashMap<PathBuf, String>,
+        reload_notifier: Option<mpsc::Sender<()>>,
     ) -> Result<()> {
         let (tx, mut rx) = mpsc::channel(100);
         
@@ -209,7 +222,7 @@ impl PatternWatcher {
                     "[RELOAD-STARTED] {} Pattern file change detected, reloading...",
                     Local::now().to_rfc3339()
                 );
-                
+
                 match Self::load_all_patterns(&pattern_files).await {
                     Ok(patterns) => {
                         match RegexMatcher::new(patterns) {
@@ -224,6 +237,12 @@ impl PatternWatcher {
                                     new_count,
                                     diff
                                 );
+                                // Notify listeners that reload is complete
+                                if let Some(ref notifier) = reload_notifier {
+                                    if notifier.send(()).await.is_err() {
+                                        log::warn!("Reload notifier channel closed");
+                                    }
+                                }
                             }
                             Err(e) => {
                                 log::error!("Failed to compile new patterns: {}", e);
