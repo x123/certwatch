@@ -103,6 +103,41 @@ This epic focuses on paying down technical debt by leveraging our live testing c
     - [x] Assert that the pipeline runs without errors and successfully enriches a sample of domains.
 
 ---
+### **Epic 4.5: Pre-Flight Refactoring**
+This epic addresses technical debt and feature gaps identified during the 2025-07-05 code review before proceeding to the next major feature set.
+
+- [ ] **#A - Fix DNS Resolution Pipeline**
+  - **Context:** The current DNS implementation has two critical flaws: the "First Resolution" alert for `NXDOMAIN` domains is not fully implemented, and the error handling in `TrustDnsResolver` swallows specific errors.
+  - **Dependencies:** #6
+  - **Subtasks:**
+    - [ ] Refactor the `nxdomain_retry_task` to send successfully resolved domains to the main application pipeline for alert generation.
+    - [ ] Correct the error handling in `TrustDnsResolver` to propagate specific DNS errors instead of replacing them with a generic message.
+    - [ ] Write unit tests for the `nxdomain_retry_task` logic.
+
+- [ ] **#B - Implement Configurable Sampling**
+  - **Context:** The `CertStreamClient` lacks the required sampling feature to manage high-volume streams.
+  - **Dependencies:** #3
+  - **Subtasks:**
+    - [ ] Add a `sample_rate` field to the application's configuration.
+    - [ ] In `CertStreamClient`, implement logic to process only a percentage of incoming domains based on the `sample_rate`.
+
+- [ ] **#C - Add GeoIP Country Enrichment**
+  - **Context:** The enrichment service currently uses a placeholder for the `country_code`. A real implementation is needed to match the spec.
+  - **Dependencies:** #7
+  - **Subtasks:**
+    - [ ] Add a `GeoIpLookup` trait and a `MaxmindGeoIpLookup` implementation that uses the `GeoLite2-Country.mmdb` database.
+    - [ ] Integrate the `GeoIpLookup` service into the main pipeline to add the country code to the `AsnInfo` struct.
+
+- [ ] **#D - General Code Cleanup**
+  - **Context:** Address medium-priority cleanup tasks identified in the code review.
+  - **Dependencies:** #3, #5
+  - **Subtasks:**
+    - [ ] Refactor the duplicated message handling logic in `network.rs`.
+    - [ ] Replace `println!` calls in `matching.rs` with `log::info!`.
+    - [ ] Simplify the `PatternWatcher` API to remove the confusing `HashMap` parameter.
+    - [ ] Make the self-signed certificate handling in `network.rs` an explicit configuration option.
+
+---
 ### **Epic 5: Output & Alerting**
 This phase builds the flexible output system for delivering alerts.
 
