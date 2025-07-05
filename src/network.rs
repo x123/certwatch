@@ -20,21 +20,11 @@ pub fn parse_message(text: &str) -> Result<Vec<String>> {
     // Temporary structs for parsing certstream JSON structure
     #[derive(Deserialize)]
     struct CertStreamMessage {
-        data: MessageData,
-    }
-
-    #[derive(Deserialize)]
-    struct MessageData {
-        leaf_cert: LeafCert,
-    }
-
-    #[derive(Deserialize)]
-    struct LeafCert {
-        all_domains: Vec<String>,
+        data: Vec<String>,
     }
 
     let message: CertStreamMessage = serde_json::from_str(text)?;
-    Ok(message.data.leaf_cert.all_domains)
+    Ok(message.data)
 }
 
 /// Trait for WebSocket connections to enable testing with fake implementations
@@ -157,14 +147,50 @@ impl CertStreamClient {
     /// Connects to the WebSocket URL and runs the message processing loop
     async fn connect_and_run(&self) -> Result<()> {
         use futures_util::stream::StreamExt;
-        use tokio_tungstenite::{connect_async, tungstenite::Message};
+        use tokio_tungstenite::{connect_async_with_config, connect_async, Connector};
 
+        // For local testing with self-signed certificates, use a custom connector
+        if self.url.starts_with("wss://") && self.url.contains("127.0.0.1") {
+            // Create TLS connector that accepts self-signed certificates
+            let mut tls_connector = native_tls::TlsConnector::builder();
+            tls_connector.danger_accept_invalid_certs(true);
+            tls_connector.danger_accept_invalid_hostnames(true);
+            let tls_connector = tls_connector.build()
+                .map_err(|e| anyhow::anyhow!("Failed to create TLS connector: {}", e))?;
+            
+            let connector = Connector::NativeTls(tls_connector);
+
+            // Connect with custom TLS configuration
+            let request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(&self.url).unwrap();
+            let (ws_stream, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector)).await
+                .map_err(|e| anyhow::anyhow!("Failed to connect to {} with custom TLS: {}", self.url, e))?;
+
+            log::info!("Connected to {} with custom TLS", self.url);
+            return self.process_messages(ws_stream).await;
+        }
+
+        // Standard connection for non-local or non-SSL URLs
         let (ws_stream, _) = connect_async(&self.url).await
             .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
 
         log::info!("Connected to {}", self.url);
+        self.process_messages(ws_stream).await
+    }
 
-        let (_, mut read) = ws_stream.split();
+    /// Process WebSocket messages from any type of stream
+    async fn process_messages<S>(&self, mut ws_stream: S) -> Result<()>
+    where
+        S: futures_util::stream::Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
+            + futures_util::sink::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
+            + Unpin,
+    {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        // Send a ping to the server to keep the connection alive
+        ws_stream.send(Message::Ping(vec![])).await?;
+
+        let mut read = ws_stream;
 
         while let Some(msg_result) = read.next().await {
             match msg_result {
