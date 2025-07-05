@@ -1,165 +1,192 @@
-//! ASN enrichment service for IP address geolocation
+//! IP address enrichment services
 //!
-//! This module provides ASN (Autonomous System Number) lookup functionality
-//! using MaxMind GeoLite2-ASN database for IP address enrichment.
+//! This module provides services for enriching IP addresses with ASN and GeoIP
+//! data using MaxMind databases.
 
-use crate::core::{AsnInfo, AsnLookup};
+use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider, GeoIpInfo};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use maxminddb::{geoip2, MaxMindDBError, Reader};
 use std::net::IpAddr;
 use std::path::Path;
 
-/// ASN lookup implementation using MaxMind GeoLite2-ASN database
+/// An enrichment provider that uses MaxMind DB files for ASN and GeoIP lookups.
 #[derive(Debug)]
-pub struct MaxmindAsnLookup {
-    reader: Reader<Vec<u8>>,
+pub struct MaxmindEnrichmentProvider {
+    asn_reader: Reader<Vec<u8>>,
+    // In the future, a geoip_reader would go here.
+    // For now, we'll keep the structure but won't use it.
 }
 
-impl MaxmindAsnLookup {
-    /// Creates a new ASN lookup service from a MaxMind database file
+impl MaxmindEnrichmentProvider {
+    /// Creates a new enrichment service from MaxMind database files.
     ///
     /// # Arguments
-    /// * `db_path` - Path to the MaxMind GeoLite2-ASN.mmdb file
-    ///
-    /// # Returns
-    /// * `Ok(MaxmindAsnLookup)` if the database was loaded successfully
-    /// * `Err` if the database file could not be read or is invalid
-    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self> {
-        let reader = Reader::open_readfile(db_path)
-            .map_err(|e| anyhow!("Failed to open MaxMind database: {}", e))?;
+    /// * `asn_db_path` - Path to the MaxMind GeoLite2-ASN.mmdb file.
+    /// * `geoip_db_path` - Path to the MaxMind GeoLite2-Country.mmdb file.
+    pub fn new<P: AsRef<Path>>(asn_db_path: P, _geoip_db_path: P) -> Result<Self> {
+        let asn_reader = Reader::open_readfile(asn_db_path)
+            .map_err(|e| anyhow!("Failed to open MaxMind ASN database: {}", e))?;
         
-        Ok(Self { reader })
-    }
+        // In the future, we would open the GeoIP database here.
+        // let geoip_reader = Reader::open_readfile(geoip_db_path)
+        //     .map_err(|e| anyhow!("Failed to open MaxMind GeoIP database: {}", e))?;
 
-    /// Creates a new ASN lookup service from raw database bytes
-    ///
-    /// This is useful for testing with embedded test databases
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        let reader = Reader::from_source(bytes)
-            .map_err(|e| anyhow!("Failed to create MaxMind reader from bytes: {}", e))?;
-        
-        Ok(Self { reader })
+        Ok(Self { asn_reader })
     }
 }
 
 #[async_trait]
-impl AsnLookup for MaxmindAsnLookup {
-    async fn lookup(&self, ip: IpAddr) -> Result<AsnInfo> {
-        // Perform the ASN lookup
-        let asn_data: geoip2::Asn = self.reader
-            .lookup(ip)
-            .map_err(|e| match e {
-                MaxMindDBError::AddressNotFoundError(_) => {
-                    anyhow!("IP address {} not found in ASN database", ip)
-                }
-                _ => anyhow!("ASN lookup failed for {}: {}", ip, e),
-            })?;
-
-        // Extract ASN information
-        let as_number = asn_data.autonomous_system_number
-            .ok_or_else(|| anyhow!("No ASN number found for IP {}", ip))?;
-
-        let as_name = asn_data.autonomous_system_organization
-            .map(|org| org.to_string())
-            .unwrap_or_else(|| format!("AS{}", as_number));
-
-        // For the country code, we need to do a separate GeoIP lookup
-        // Since we only have the ASN database, we'll use a placeholder
-        // In a real implementation, you'd want to use GeoLite2-Country.mmdb as well
-        let country_code = "XX".to_string(); // Placeholder
-
-        Ok(AsnInfo {
+impl EnrichmentProvider for MaxmindEnrichmentProvider {
+    async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
+        let mut info = EnrichmentInfo {
             ip,
-            as_number,
-            as_name,
-            country_code,
-        })
+            ..Default::default()
+        };
+
+        // Perform ASN lookup
+        match self.asn_reader.lookup::<geoip2::Asn>(ip) {
+            Ok(asn_data) => {
+                if let Some(as_number) = asn_data.autonomous_system_number {
+                    let as_name = asn_data
+                        .autonomous_system_organization
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("AS{}", as_number));
+                    info.asn = Some(AsnData {
+                        as_number,
+                        as_name,
+                    });
+                }
+            }
+            Err(e) => {
+                if !matches!(e, MaxMindDBError::AddressNotFoundError(_)) {
+                    log::warn!("ASN lookup failed for {}: {}", ip, e);
+                }
+            }
+        }
+
+        // Perform GeoIP lookup (placeholder)
+        // In the future, this would use the geoip_reader.
+        info.geoip = Some(GeoIpInfo {
+            country_code: "XX".to_string(), // Placeholder until GeoIP DB is integrated
+        });
+
+        Ok(info)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::net::Ipv4Addr;
+    use std::sync::Mutex;
 
-    /// Fake ASN lookup for testing
-    pub struct FakeAsnLookup {
-        responses: std::collections::HashMap<IpAddr, Result<AsnInfo, String>>,
+    /// Fake enrichment provider for testing.
+    #[derive(Default)]
+    pub struct FakeEnrichmentProvider {
+        responses: Mutex<HashMap<IpAddr, Result<EnrichmentInfo, String>>>,
     }
 
-    impl FakeAsnLookup {
+    impl FakeEnrichmentProvider {
         pub fn new() -> Self {
-            Self {
-                responses: std::collections::HashMap::new(),
-            }
+            Default::default()
         }
 
-        /// Configure the lookup to return a successful response for an IP
-        pub fn set_success_response(&mut self, ip: IpAddr, asn_info: AsnInfo) {
-            self.responses.insert(ip, Ok(asn_info));
+        /// Configure the provider to return a successful response for an IP.
+        pub fn add_response(&self, ip: IpAddr, info: EnrichmentInfo) {
+            let mut responses = self.responses.lock().unwrap();
+            responses.insert(ip, Ok(info));
         }
 
-        /// Configure the lookup to return an error for an IP
-        pub fn set_error_response(&mut self, ip: IpAddr, error: &str) {
-            self.responses.insert(ip, Err(error.to_string()));
+        /// Configure the provider to return an error for an IP.
+        pub fn add_error(&self, ip: IpAddr, error: &str) {
+            let mut responses = self.responses.lock().unwrap();
+            responses.insert(ip, Err(error.to_string()));
         }
     }
 
     #[async_trait]
-    impl AsnLookup for FakeAsnLookup {
-        async fn lookup(&self, ip: IpAddr) -> Result<AsnInfo> {
-            match self.responses.get(&ip) {
-                Some(Ok(asn_info)) => Ok(asn_info.clone()),
+    impl EnrichmentProvider for FakeEnrichmentProvider {
+        async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
+            let responses = self.responses.lock().unwrap();
+            match responses.get(&ip) {
+                Some(Ok(info)) => Ok(info.clone()),
                 Some(Err(error)) => Err(anyhow!("{}", error)),
-                None => Err(anyhow!("No response configured for IP {}", ip)),
+                None => Ok(EnrichmentInfo {
+                    ip,
+                    ..Default::default()
+                }), // Return empty info if not configured
             }
         }
     }
 
     #[tokio::test]
-    async fn test_fake_asn_lookup_success() {
-        let mut lookup = FakeAsnLookup::new();
+    async fn test_fake_enrichment_provider_success() {
+        let provider = FakeEnrichmentProvider::new();
         let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
-        let expected_asn = AsnInfo {
+        let expected_info = EnrichmentInfo {
             ip,
-            as_number: 15169,
-            as_name: "Google LLC".to_string(),
-            country_code: "US".to_string(),
+            asn: Some(AsnData {
+                as_number: 15169,
+                as_name: "Google LLC".to_string(),
+            }),
+            geoip: Some(GeoIpInfo {
+                country_code: "US".to_string(),
+            }),
         };
 
-        lookup.set_success_response(ip, expected_asn.clone());
+        provider.add_response(ip, expected_info.clone());
 
-        let result = lookup.lookup(ip).await.unwrap();
-        assert_eq!(result.ip, expected_asn.ip);
-        assert_eq!(result.as_number, expected_asn.as_number);
-        assert_eq!(result.as_name, expected_asn.as_name);
-        assert_eq!(result.country_code, expected_asn.country_code);
+        let result = provider.enrich(ip).await.unwrap();
+        assert_eq!(result.ip, expected_info.ip);
+        assert_eq!(result.asn.unwrap().as_number, 15169);
+        assert_eq!(result.geoip.unwrap().country_code, "US");
     }
 
     #[tokio::test]
-    async fn test_fake_asn_lookup_error() {
-        let mut lookup = FakeAsnLookup::new();
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-        
-        lookup.set_error_response(ip, "Private IP address not in database");
-
-        let result = lookup.lookup(ip).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Private IP address not in database"));
-    }
-
-    #[tokio::test]
-    async fn test_fake_asn_lookup_no_response_configured() {
-        let lookup = FakeAsnLookup::new();
+    async fn test_fake_enrichment_provider_partial_data() {
+        let provider = FakeEnrichmentProvider::new();
         let ip = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
+        let expected_info = EnrichmentInfo {
+            ip,
+            asn: Some(AsnData {
+                as_number: 13335,
+                as_name: "Cloudflare, Inc.".to_string(),
+            }),
+            geoip: None,
+        };
 
-        let result = lookup.lookup(ip).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No response configured"));
+        provider.add_response(ip, expected_info.clone());
+
+        let result = provider.enrich(ip).await.unwrap();
+        assert_eq!(result.ip, expected_info.ip);
+        assert!(result.asn.is_some());
+        assert!(result.geoip.is_none());
     }
 
-    // Note: We can't easily test the real MaxmindAsnLookup without a real database file
-    // In a production environment, you would want to include a small test database
-    // or mock the MaxMind reader for more comprehensive testing
+    #[tokio::test]
+    async fn test_fake_enrichment_provider_error() {
+        let provider = FakeEnrichmentProvider::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        provider.add_error(ip, "Critical database failure");
+
+        let result = provider.enrich(ip).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Critical database failure"));
+    }
+
+    #[tokio::test]
+    async fn test_fake_enrichment_provider_no_response_configured() {
+        let provider = FakeEnrichmentProvider::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+        let result = provider.enrich(ip).await.unwrap();
+        assert_eq!(result.ip, ip);
+        assert!(result.asn.is_none());
+        assert!(result.geoip.is_none());
+    }
 }

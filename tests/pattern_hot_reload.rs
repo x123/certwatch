@@ -6,7 +6,6 @@
 use anyhow::Result;
 use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
-use std::collections::HashMap;
 use tempfile::NamedTempFile;
 use std::io::Write;
 
@@ -28,10 +27,8 @@ async fn test_pattern_watcher_multiple_files() -> Result<()> {
     temp_file2.write_all(b".*\\.phishing\\.com$\n")?;
     temp_file2.flush()?;
 
-    // Create pattern files map
-    let mut pattern_files = HashMap::new();
-    pattern_files.insert(temp_path1.clone(), "malware".to_string());
-    pattern_files.insert(temp_path2.clone(), "phishing".to_string());
+    // Create a list of pattern files
+    let pattern_files = vec![temp_path1, temp_path2];
 
     // Create PatternWatcher
     let watcher = PatternWatcher::new(pattern_files).await?;

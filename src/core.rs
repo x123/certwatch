@@ -21,8 +21,8 @@ pub struct Alert {
     pub resolved_after_nxdomain: bool,
     /// DNS resolution information
     pub dns: DnsInfo,
-    /// ASN enrichment data for resolved IPs
-    pub enrichment: Vec<AsnInfo>,
+    /// Enrichment data for resolved IPs
+    pub enrichment: Vec<EnrichmentInfo>,
 }
 
 /// DNS resolution information for a domain
@@ -36,16 +36,42 @@ pub struct DnsInfo {
     pub ns_records: Vec<String>,
 }
 
-/// ASN (Autonomous System Number) information for an IP address
+/// Combined enrichment information for an IP address
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AsnInfo {
+pub struct EnrichmentInfo {
     /// The IP address this information relates to
     pub ip: IpAddr,
+    /// ASN (Autonomous System Number) information
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asn: Option<AsnData>,
+    /// GeoIP (Country) information
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geoip: Option<GeoIpInfo>,
+}
+
+impl Default for EnrichmentInfo {
+    fn default() -> Self {
+        Self {
+            ip: std::net::Ipv4Addr::UNSPECIFIED.into(),
+            asn: None,
+            geoip: None,
+        }
+    }
+}
+
+/// ASN-specific data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AsnData {
     /// Autonomous System Number
     pub as_number: u32,
     /// Human-readable name of the AS
     pub as_name: String,
-    /// ISO country code where the AS is registered
+}
+
+/// GeoIP-specific data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoIpInfo {
+    /// ISO country code where the IP is located
     pub country_code: String,
 }
 
@@ -81,18 +107,18 @@ pub trait DnsResolver: Send + Sync {
     async fn resolve(&self, domain: &str) -> Result<DnsInfo>;
 }
 
-/// Looks up ASN information for IP addresses
+/// Provides enrichment data (ASN, GeoIP, etc.) for an IP address
 #[async_trait]
-pub trait AsnLookup: Send + Sync {
-    /// Retrieves ASN information for an IP address
+pub trait EnrichmentProvider: Send + Sync {
+    /// Retrieves all available enrichment data for an IP address
     ///
     /// # Arguments
     /// * `ip` - The IP address to look up
     ///
     /// # Returns
-    /// * `Ok(AsnInfo)` if the IP is found in the database
-    /// * `Err` if the IP is not found or database access fails
-    async fn lookup(&self, ip: IpAddr) -> Result<AsnInfo>;
+    /// * `Ok(EnrichmentInfo)` containing all data that could be found
+    /// * `Err` only if a critical, unrecoverable error occurs
+    async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo>;
 }
 
 /// Sends alerts to output destinations

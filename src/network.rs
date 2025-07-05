@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
+use rand::Rng;
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -44,74 +45,56 @@ pub trait WebSocketConnection: Send + Sync {
 pub struct CertStreamClient {
     url: String,
     output_tx: tokio::sync::mpsc::Sender<Vec<String>>,
+    sample_rate: f64,
 }
 
 impl CertStreamClient {
     /// Creates a new CertStream client
-    /// 
+    ///
     /// # Arguments
     /// * `url` - The WebSocket URL to connect to (e.g., "wss://certstream.calidog.io")
     /// * `output_tx` - Channel sender to send parsed domain lists to the next stage
-    pub fn new(url: String, output_tx: tokio::sync::mpsc::Sender<Vec<String>>) -> Self {
-        Self { url, output_tx }
+    /// * `sample_rate` - A float between 0.0 and 1.0 indicating the percentage of domains to process
+    pub fn new(
+        url: String,
+        output_tx: tokio::sync::mpsc::Sender<Vec<String>>,
+        sample_rate: f64,
+    ) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&sample_rate),
+            "sample_rate must be between 0.0 and 1.0"
+        );
+        Self {
+            url,
+            output_tx,
+            sample_rate,
+        }
     }
 
     /// Runs the client with a custom WebSocket connection (primarily for testing)
-    /// 
+    ///
     /// This method processes messages from the provided connection until it closes,
     /// then returns. It does not implement reconnection logic.
-    pub async fn run_with_connection(&self, mut connection: Box<dyn WebSocketConnection>) -> Result<()> {
+    pub async fn run_with_connection(
+        &self,
+        mut connection: Box<dyn WebSocketConnection>,
+    ) -> Result<()> {
         log::info!("Starting CertStream client message processing");
-
-        loop {
-            match connection.read_message().await {
-                Some(Ok(Message::Text(text))) => {
-                    // Parse the message and extract domains
-                    match parse_message(&text) {
-                        Ok(domains) => {
-                            if !domains.is_empty() {
-                                log::debug!("Parsed {} domains from certstream message", domains.len());
-                                
-                                // Send domains to the next stage
-                                if let Err(e) = self.output_tx.send(domains).await {
-                                    log::error!("Failed to send domains to output channel: {}", e);
-                                    return Err(anyhow::anyhow!("Output channel closed: {}", e));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to parse certstream message: {}", e);
-                            // Continue processing other messages
-                        }
+        while let Some(msg_result) = connection.read_message().await {
+            match msg_result {
+                Ok(message) => {
+                    if let Err(e) = self.handle_message(message).await {
+                        // A closed channel is a critical error that should stop the client
+                        return Err(e);
                     }
                 }
-                Some(Ok(Message::Binary(_))) => {
-                    log::debug!("Received binary message, ignoring");
-                }
-                Some(Ok(Message::Ping(_))) => {
-                    log::debug!("Received ping message");
-                }
-                Some(Ok(Message::Pong(_))) => {
-                    log::debug!("Received pong message");
-                }
-                Some(Ok(Message::Close(_))) => {
-                    log::info!("Received close message from server");
-                    break;
-                }
-                Some(Ok(Message::Frame(_))) => {
-                    log::debug!("Received frame message, ignoring");
-                }
-                Some(Err(e)) => {
+                Err(e) => {
                     log::error!("WebSocket error: {}", e);
                     return Err(anyhow::anyhow!("WebSocket error: {}", e));
                 }
-                None => {
-                    log::info!("WebSocket connection closed");
-                    break;
-                }
             }
         }
-
+        log::info!("WebSocket connection closed");
         Ok(())
     }
 
@@ -146,30 +129,42 @@ impl CertStreamClient {
 
     /// Connects to the WebSocket URL and runs the message processing loop
     async fn connect_and_run(&self) -> Result<()> {
-        use tokio_tungstenite::{connect_async, Connector};
+        use tokio_tungstenite::connect_async;
 
         // For local testing with self-signed certificates, use a custom connector
+        #[cfg(feature = "live-tests")]
         if self.url.starts_with("wss://") && self.url.contains("127.0.0.1") {
+            use tokio_tungstenite::Connector;
             // Create TLS connector that accepts self-signed certificates
             let mut tls_connector = native_tls::TlsConnector::builder();
             tls_connector.danger_accept_invalid_certs(true);
             tls_connector.danger_accept_invalid_hostnames(true);
-            let tls_connector = tls_connector.build()
+            let tls_connector = tls_connector
+                .build()
                 .map_err(|e| anyhow::anyhow!("Failed to create TLS connector: {}", e))?;
-            
+
             let connector = Connector::NativeTls(tls_connector);
 
             // Connect with custom TLS configuration
             let request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(&self.url).unwrap();
-            let (ws_stream, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector)).await
-                .map_err(|e| anyhow::anyhow!("Failed to connect to {} with custom TLS: {}", self.url, e))?;
+            let (ws_stream, _) =
+                tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector))
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to connect to {} with custom TLS: {}",
+                            self.url,
+                            e
+                        )
+                    })?;
 
             log::info!("Connected to {} with custom TLS", self.url);
             return self.process_messages(ws_stream).await;
         }
 
         // Standard connection for non-local or non-SSL URLs
-        let (ws_stream, _) = connect_async(&self.url).await
+        let (ws_stream, _) = connect_async(&self.url)
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
 
         log::info!("Connected to {}", self.url);
@@ -179,55 +174,23 @@ impl CertStreamClient {
     /// Process WebSocket messages from any type of stream
     async fn process_messages<S>(&self, mut ws_stream: S) -> Result<()>
     where
-        S: futures_util::stream::Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
-            + futures_util::sink::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
+        S: futures_util::stream::Stream<
+                Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>,
+            > + futures_util::sink::Sink<Message, Error = tokio_tungstenite::tungstenite::Error>
             + Unpin,
     {
         use futures_util::{SinkExt, StreamExt};
-        use tokio_tungstenite::tungstenite::Message;
 
         // Send a ping to the server to keep the connection alive
         ws_stream.send(Message::Ping(vec![])).await?;
 
-        let mut read = ws_stream;
-
-        while let Some(msg_result) = read.next().await {
+        while let Some(msg_result) = ws_stream.next().await {
             match msg_result {
-                Ok(Message::Text(text)) => {
-                    // Parse the message and extract domains
-                    match parse_message(&text) {
-                        Ok(domains) => {
-                            if !domains.is_empty() {
-                                log::debug!("Parsed {} domains from certstream message", domains.len());
-                                
-                                // Send domains to the next stage
-                                if let Err(e) = self.output_tx.send(domains).await {
-                                    log::error!("Failed to send domains to output channel: {}", e);
-                                    return Err(anyhow::anyhow!("Output channel closed: {}", e));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to parse certstream message: {}", e);
-                            // Continue processing other messages
-                        }
+                Ok(message) => {
+                    if let Err(e) = self.handle_message(message).await {
+                        // A closed channel is a critical error that should stop the client
+                        return Err(e);
                     }
-                }
-                Ok(Message::Binary(_)) => {
-                    log::debug!("Received binary message, ignoring");
-                }
-                Ok(Message::Ping(_)) => {
-                    log::debug!("Received ping message");
-                }
-                Ok(Message::Pong(_)) => {
-                    log::debug!("Received pong message");
-                }
-                Ok(Message::Close(_)) => {
-                    log::info!("Received close message from server");
-                    break;
-                }
-                Ok(Message::Frame(_)) => {
-                    log::debug!("Received frame message, ignoring");
                 }
                 Err(e) => {
                     return Err(anyhow::anyhow!("WebSocket error: {}", e));
@@ -236,6 +199,58 @@ impl CertStreamClient {
         }
 
         Ok(())
+    }
+
+    /// Handles a single WebSocket message, including parsing, sampling, and sending
+    async fn handle_message(&self, message: Message) -> Result<()> {
+        match message {
+            Message::Text(text) => {
+                match parse_message(&text) {
+                    Ok(domains) => {
+                        if domains.is_empty() {
+                            return Ok(());
+                        }
+
+                        let sampled_domains = self.sample_domains(domains);
+
+                        if !sampled_domains.is_empty() {
+                            log::debug!(
+                                "Sending {} sampled domains to output channel",
+                                sampled_domains.len()
+                            );
+                            if let Err(e) = self.output_tx.send(sampled_domains).await {
+                                log::error!("Failed to send domains to output channel: {}", e);
+                                return Err(anyhow::anyhow!("Output channel closed: {}", e));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to parse certstream message: {}", e);
+                    }
+                }
+            }
+            Message::Close(_) => {
+                log::info!("Received close message from server");
+                // This will be handled by the calling loop, which will exit
+            }
+            _ => {
+                // Ignore other message types (Ping, Pong, Binary, etc.)
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies sampling to a vector of domains
+    fn sample_domains(&self, domains: Vec<String>) -> Vec<String> {
+        if self.sample_rate >= 1.0 {
+            return domains;
+        }
+
+        let mut rng = rand::thread_rng();
+        domains
+            .into_iter()
+            .filter(|_| rng.r#gen::<f64>() < self.sample_rate)
+            .collect()
     }
 }
 

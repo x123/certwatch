@@ -77,7 +77,7 @@ async fn test_certstream_client_basic_functionality() {
     let (tx, mut rx) = mpsc::channel::<Vec<String>>(10);
 
     // Create the client
-    let client = CertStreamClient::new("ws://fake-url".to_string(), tx);
+    let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0);
 
     // Run the client with the fake WebSocket (this should process one message then stop)
     let client_handle = tokio::spawn(async move {
@@ -116,7 +116,7 @@ async fn test_certstream_client_handles_invalid_messages() {
     let (tx, mut rx) = mpsc::channel::<Vec<String>>(10);
 
     // Create the client
-    let client = CertStreamClient::new("ws://fake-url".to_string(), tx);
+    let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0);
 
     // Run the client with the fake WebSocket
     let client_handle = tokio::spawn(async move {
