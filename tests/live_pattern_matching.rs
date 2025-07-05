@@ -13,13 +13,11 @@
 use anyhow::Result;
 use certwatch::core::PatternMatcher;
 use certwatch::matching::{load_patterns_from_file, RegexMatcher};
-use certwatch::network::CertStreamClient;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::timeout;
 
 mod common;
-use common::TEST_CERTSTREAM_URL;
+use common::run_live_test;
 
 /// Test the pattern matcher against a live CertStream feed.
 ///
@@ -33,33 +31,14 @@ use common::TEST_CERTSTREAM_URL;
 /// 7. The test passes if it can process the stream without errors.
 #[tokio::test]
 async fn live_pattern_matching() -> Result<()> {
-    // Initialize the logger to see output from the client
-    let _ = env_logger::try_init();
-    println!("Starting live pattern matching test...");
-
     // 1. Load patterns
     let patterns = load_patterns_from_file("tests/data/test-regex.txt").await?;
     let matcher = RegexMatcher::new(patterns)?;
     println!("Loaded {} patterns.", matcher.patterns_count());
 
-    // 2. Setup communication channel
-    let (tx, mut rx) = mpsc::channel(100);
-
-    // 3. Connect to CertStream
-    let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx);
-    println!("CertStreamClient initialized.");
-
-    // Spawn the client to run in the background.
-    // The client will connect and start sending messages to the channel.
-    tokio::spawn(async move {
-        if let Err(e) = client.run().await {
-            eprintln!("CertStreamClient run error: {}", e);
-        }
-    });
-
-    // 4. Listen for messages and match domains
-    let test_duration = Duration::from_secs(3);
-    let processing_future = async {
+    // 2. Define the test logic using the harness
+    let test_duration = Duration::from_secs(5);
+    let test_logic = |mut rx: mpsc::Receiver<Vec<String>>| async move {
         while let Some(domains) = rx.recv().await {
             println!("[DEBUG] Received {} domains: {:?}", domains.len(), domains);
             for domain in domains {
@@ -70,12 +49,6 @@ async fn live_pattern_matching() -> Result<()> {
         }
     };
 
-    // Run the processing future with a timeout
-    if let Err(e) = timeout(test_duration, processing_future).await {
-        println!("Test finished after {} seconds: {}", test_duration.as_secs(), e);
-    } else {
-        println!("Test finished after {} seconds.", test_duration.as_secs());
-    }
-
-    Ok(())
+    // 3. Run the test
+    run_live_test(test_duration, test_logic).await
 }

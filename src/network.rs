@@ -17,7 +17,7 @@ use tokio_tungstenite::tungstenite::Message;
 /// * `Ok(Vec<String>)` containing all domain names found in the message
 /// * `Err` if the JSON is malformed or doesn't match expected structure
 pub fn parse_message(text: &str) -> Result<Vec<String>> {
-    // Temporary structs for parsing certstream JSON structure
+    // Struct for parsing the "domains-only" certstream JSON format
     #[derive(Deserialize)]
     struct CertStreamMessage {
         data: Vec<String>,
@@ -146,8 +146,7 @@ impl CertStreamClient {
 
     /// Connects to the WebSocket URL and runs the message processing loop
     async fn connect_and_run(&self) -> Result<()> {
-        use futures_util::stream::StreamExt;
-        use tokio_tungstenite::{connect_async_with_config, connect_async, Connector};
+        use tokio_tungstenite::{connect_async, Connector};
 
         // For local testing with self-signed certificates, use a custom connector
         if self.url.starts_with("wss://") && self.url.contains("127.0.0.1") {
@@ -246,28 +245,7 @@ mod tests {
 
     #[test]
     fn test_parse_message_success() {
-        let sample_json = r#"{
-            "message_type": "certificate_update",
-            "data": {
-                "update_type": "X509LogEntry",
-                "leaf_cert": {
-                    "subject": {
-                        "CN": "example.com"
-                    },
-                    "extensions": {
-                        "subjectAltName": "DNS:example.com, DNS:www.example.com"
-                    },
-                    "all_domains": ["example.com", "www.example.com", "*.example.com"]
-                },
-                "chain": [],
-                "cert_index": 12345,
-                "seen": 1234567890.123,
-                "source": {
-                    "url": "ct.googleapis.com/logs/argon2023/",
-                    "name": "Google 'Argon2023' log"
-                }
-            }
-        }"#;
+        let sample_json = r#"{"data": ["example.com", "www.example.com", "*.example.com"]}"#;
 
         let result = parse_message(sample_json);
         assert!(result.is_ok(), "Expected successful parsing, got error: {:?}", result.err());
@@ -289,28 +267,15 @@ mod tests {
 
     #[test]
     fn test_parse_message_missing_fields() {
-        let incomplete_json = r#"{
-            "message_type": "certificate_update",
-            "data": {
-                "update_type": "X509LogEntry"
-            }
-        }"#;
+        let incomplete_json = r#"{"message_type": "certificate_update"}"#;
         
         let result = parse_message(incomplete_json);
-        assert!(result.is_err(), "Expected error for missing required fields");
+        assert!(result.is_err(), "Expected error for missing required 'data' field");
     }
 
     #[test]
     fn test_parse_message_empty_domains() {
-        let empty_domains_json = r#"{
-            "message_type": "certificate_update",
-            "data": {
-                "update_type": "X509LogEntry",
-                "leaf_cert": {
-                    "all_domains": []
-                }
-            }
-        }"#;
+        let empty_domains_json = r#"{"data": []}"#;
         
         let result = parse_message(empty_domains_json);
         assert!(result.is_ok(), "Expected successful parsing even with empty domains");

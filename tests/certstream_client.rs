@@ -64,16 +64,8 @@ impl WebSocketConnection for FakeWebSocket {
 
 #[tokio::test]
 async fn test_certstream_client_basic_functionality() {
-    // Create a sample valid certstream message
-    let sample_message = r#"{
-        "message_type": "certificate_update",
-        "data": {
-            "update_type": "X509LogEntry",
-            "leaf_cert": {
-                "all_domains": ["test.example.com", "www.test.example.com"]
-            }
-        }
-    }"#;
+    // Create a sample valid "domains-only" certstream message
+    let sample_message = r#"{"data": ["test.example.com", "www.test.example.com"]}"#;
 
     // Set up fake WebSocket with one valid message, then connection close
     let fake_ws = FakeWebSocket::new_with_text_messages(vec![
@@ -100,7 +92,7 @@ async fn test_certstream_client_basic_functionality() {
 
     // Verify we received the expected domains
     assert!(received_domains.is_ok(), "Should have received domains within timeout");
-    let domains = received_domains.unwrap().unwrap();
+    let domains = received_domains.unwrap().expect("Should have received domains, not None");
     assert_eq!(domains.len(), 2);
     assert!(domains.contains(&"test.example.com".to_string()));
     assert!(domains.contains(&"www.test.example.com".to_string()));

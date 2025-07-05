@@ -7,7 +7,6 @@ use anyhow::Result;
 use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::time::{sleep, Duration};

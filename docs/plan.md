@@ -75,6 +75,33 @@ This phase focuses on enriching domains with DNS/ASN data, using a fully testabl
     - [x] The constructor for the struct will load the MaxMindDB file. The lookup method will handle cases where an IP is not found in the database by returning a `Result`.
 
 ---
+### **Epic Tech Debt 1: Improve Live Integration Testing**
+This epic focuses on paying down technical debt by leveraging our live testing capabilities to improve the robustness and maintainability of existing features.
+
+- [x] **#7.1 - Refactor Duplicated Live Test Setup**
+  - **Context:** Our live tests (`live_certstream_client.rs`, `live_pattern_matching.rs`) contain duplicated boilerplate for setting up the `CertStreamClient` and `tokio` runtime. This should be refactored into a reusable test harness.
+  - **Dependencies:** #3
+  - **Subtasks:**
+    - [x] Create a test harness function in `tests/common.rs` that encapsulates the common setup and teardown logic for live tests.
+    - [x] Refactor `live_certstream_client.rs` to use the new harness.
+    - [x] Refactor `live_pattern_matching.rs` to use the new harness.
+
+- [ ] **#7.2 - Add Live Integration Test for Pattern Hot-Reload**
+  - **Context:** The pattern hot-reloading mechanism is currently only validated by a unit test. A live test is needed to verify its correctness in a concurrent environment.
+  - **Dependencies:** #5
+  - **Subtasks:**
+    - [ ] Create a new test file `tests/live_hot_reload.rs`.
+    - [ ] The test will connect to the live feed, match against initial patterns, update the pattern file, and assert that the new patterns are loaded and used correctly.
+
+- [ ] **#7.3 - Add Live Integration Test for Enrichment Pipeline**
+  - **Context:** The DNS and ASN enrichment services are only validated with unit tests. A live integration test will provide higher confidence in their implementation.
+  - **Dependencies:** #6, #7
+  - **Subtasks:**
+    - [ ] Create a new test file `tests/live_enrichment.rs`.
+    - [ ] The test will pull domains from the live stream, resolve them using `TrustDnsResolver`, and enrich them with `MaxmindAsnLookup`.
+    - [ ] Assert that the pipeline runs without errors and successfully enriches a sample of domains.
+
+---
 ### **Epic 5: Output & Alerting**
 This phase builds the flexible output system for delivering alerts.
 
