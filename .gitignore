@@ -1,6 +1,6 @@
 .direnv/
 flake.lock
-
+.roo/
 
 # Added by cargo
 
