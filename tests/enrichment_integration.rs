@@ -84,13 +84,13 @@ async fn test_maxmind_enrichment_with_real_db() {
         
         assert_eq!(result.ip, test_ip);
         
-        if let Some(asn_info) = result.asn {
-            assert_eq!(asn_info.as_number, test_case.expected_asn);
+        if let Some(data) = result.data {
+            assert_eq!(data.as_number, test_case.expected_asn);
             if let Some(ref expected_org) = test_case.expected_org {
-                assert_eq!(&asn_info.as_name, expected_org);
+                assert_eq!(&data.as_name, expected_org);
             }
             successful_tests += 1;
-            println!("✓ IPv4 test case passed for IP {}: AS{} {}", test_ip, asn_info.as_number, asn_info.as_name);
+            println!("✓ IPv4 test case passed for IP {}: AS{} {}", test_ip, data.as_number, data.as_name);
         } else {
             println!("- IPv4 test case skipped for IP {}: Not found in DB", test_ip);
         }
@@ -108,13 +108,13 @@ async fn test_maxmind_enrichment_with_real_db() {
         
         assert_eq!(result.ip, test_ip);
 
-        if let Some(asn_info) = result.asn {
-            assert_eq!(asn_info.as_number, test_case.expected_asn);
+        if let Some(data) = result.data {
+            assert_eq!(data.as_number, test_case.expected_asn);
             if let Some(ref expected_org) = test_case.expected_org {
-                assert_eq!(&asn_info.as_name, expected_org);
+                assert_eq!(&data.as_name, expected_org);
             }
             successful_tests += 1;
-            println!("✓ IPv6 test case passed for IP {}: AS{} {}", test_ip, asn_info.as_number, asn_info.as_name);
+            println!("✓ IPv6 test case passed for IP {}: AS{} {}", test_ip, data.as_number, data.as_name);
         } else {
             println!("- IPv6 test case skipped for IP {}: Not found in DB", test_ip);
         }
@@ -127,7 +127,7 @@ async fn test_maxmind_enrichment_with_real_db() {
     let private_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
     let private_result = provider.enrich(private_ip).await.unwrap();
     
-    assert!(private_result.asn.is_none(), "Private IP should not have ASN info");
+    assert!(private_result.data.is_none(), "Private IP should not have enrichment data");
     println!("✓ Private IP correctly not found in database");
 }
 

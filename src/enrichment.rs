@@ -4,7 +4,7 @@ pub mod tsv_lookup;
 // This module provides services for enriching IP addresses with ASN and GeoIP
 // data using MaxMind databases.
 
-use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider, GeoIpInfo};
+use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use maxminddb::{geoip2, MaxMindDBError, Reader};
@@ -41,51 +41,53 @@ impl MaxmindEnrichmentProvider {
 #[async_trait]
 impl EnrichmentProvider for MaxmindEnrichmentProvider {
     async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
-        let mut info = EnrichmentInfo {
-            ip,
-            ..Default::default()
-        };
+        let asn_result = self.asn_reader.lookup::<geoip2::Asn>(ip);
+        let geoip_result = self.geoip_reader.lookup::<geoip2::Country>(ip);
 
-        // Perform ASN lookup
-        match self.asn_reader.lookup::<geoip2::Asn>(ip) {
-            Ok(asn_data) => {
-                if let Some(as_number) = asn_data.autonomous_system_number {
-                    let as_name = asn_data
-                        .autonomous_system_organization
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("AS{}", as_number));
-                    info.asn = Some(AsnData {
-                        as_number,
-                        as_name,
-                    });
-                }
-            }
+        let asn_data = match asn_result {
+            Ok(asn) => Some(asn),
             Err(e) => {
                 if !matches!(e, MaxMindDBError::AddressNotFoundError(_)) {
                     log::warn!("ASN lookup failed for {}: {}", ip, e);
                 }
+                None
             }
-        }
+        };
 
-        // Perform GeoIP lookup
-        match self.geoip_reader.lookup::<geoip2::Country>(ip) {
-            Ok(country_data) => {
-                if let Some(country) = country_data.country {
-                    if let Some(iso_code) = country.iso_code {
-                        info.geoip = Some(GeoIpInfo {
-                            country_code: iso_code.to_string(),
-                        });
-                    }
-                }
-            }
+        let country_code = match geoip_result {
+            Ok(country) => country
+                .country
+                .and_then(|c| c.iso_code)
+                .map(|s| s.to_string()),
             Err(e) => {
                 if !matches!(e, MaxMindDBError::AddressNotFoundError(_)) {
                     log::warn!("GeoIP lookup failed for {}: {}", ip, e);
                 }
+                None
             }
-        }
+        };
 
-        Ok(info)
+        let data = if asn_data.is_some() || country_code.is_some() {
+            let as_number = asn_data
+                .as_ref()
+                .and_then(|a| a.autonomous_system_number)
+                .unwrap_or(0);
+
+            let as_name = asn_data
+                .and_then(|a| a.autonomous_system_organization)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("AS{}", as_number));
+
+            Some(AsnData {
+                as_number,
+                as_name,
+                country_code,
+            })
+        } else {
+            None
+        };
+
+        Ok(EnrichmentInfo { ip, data })
     }
 }
 
@@ -141,12 +143,10 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
         let expected_info = EnrichmentInfo {
             ip,
-            asn: Some(AsnData {
+            data: Some(AsnData {
                 as_number: 15169,
                 as_name: "Google LLC".to_string(),
-            }),
-            geoip: Some(GeoIpInfo {
-                country_code: "US".to_string(),
+                country_code: Some("US".to_string()),
             }),
         };
 
@@ -154,8 +154,9 @@ mod tests {
 
         let result = provider.enrich(ip).await.unwrap();
         assert_eq!(result.ip, expected_info.ip);
-        assert_eq!(result.asn.unwrap().as_number, 15169);
-        assert_eq!(result.geoip.unwrap().country_code, "US");
+        let data = result.data.unwrap();
+        assert_eq!(data.as_number, 15169);
+        assert_eq!(data.country_code.unwrap(), "US");
     }
 
     #[tokio::test]
@@ -164,19 +165,19 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
         let expected_info = EnrichmentInfo {
             ip,
-            asn: Some(AsnData {
+            data: Some(AsnData {
                 as_number: 13335,
                 as_name: "Cloudflare, Inc.".to_string(),
+                country_code: None,
             }),
-            geoip: None,
         };
 
         provider.add_response(ip, expected_info.clone());
 
         let result = provider.enrich(ip).await.unwrap();
         assert_eq!(result.ip, expected_info.ip);
-        assert!(result.asn.is_some());
-        assert!(result.geoip.is_none());
+        let data = result.data.unwrap();
+        assert!(data.country_code.is_none());
     }
 
     #[tokio::test]
@@ -200,7 +201,6 @@ mod tests {
 
         let result = provider.enrich(ip).await.unwrap();
         assert_eq!(result.ip, ip);
-        assert!(result.asn.is_none());
-        assert!(result.geoip.is_none());
+        assert!(result.data.is_none());
     }
 }

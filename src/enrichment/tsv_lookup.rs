@@ -54,6 +54,7 @@ impl TsvAsnLookup {
                 data: AsnData {
                     as_number: row.asn,
                     as_name: row.description,
+                    country_code: Some(row.country),
                 },
             });
         }
@@ -105,11 +106,9 @@ impl TsvAsnLookup {
 #[async_trait]
 impl EnrichmentProvider for TsvAsnLookup {
     async fn enrich(&self, ip: IpAddr) -> Result<crate::core::EnrichmentInfo> {
-        // Placeholder: This will call the `find` method and format the result.
         Ok(crate::core::EnrichmentInfo {
             ip,
-            asn: self.find(ip),
-            geoip: None, // This provider only handles ASN data.
+            data: self.find(ip),
         })
     }
 }
@@ -162,6 +161,7 @@ mod tests {
         let result1 = lookup.find(ip1).expect("Should find ASN for ip1");
         assert_eq!(result1.as_number, 19248);
         assert_eq!(result1.as_name, "ACSC1000");
+        assert_eq!(result1.country_code.unwrap(), "US");
 
         // Test Case 2: IPv6 address inside a range
         let ip2: IpAddr = "2800:860:7161::1".parse().unwrap();

@@ -48,38 +48,30 @@ impl DnsInfo {
 pub struct EnrichmentInfo {
     /// The IP address this information relates to
     pub ip: IpAddr,
-    /// ASN (Autonomous System Number) information
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub asn: Option<AsnData>,
-    /// GeoIP (Country) information
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub geoip: Option<GeoIpInfo>,
+    /// ASN and GeoIP information
+    #[serde(flatten)]
+    pub data: Option<AsnData>,
 }
 
 impl Default for EnrichmentInfo {
     fn default() -> Self {
         Self {
             ip: std::net::Ipv4Addr::UNSPECIFIED.into(),
-            asn: None,
-            geoip: None,
+            data: None,
         }
     }
 }
 
-/// ASN-specific data
+/// ASN and GeoIP data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AsnData {
     /// Autonomous System Number
     pub as_number: u32,
     /// Human-readable name of the AS
     pub as_name: String,
-}
-
-/// GeoIP-specific data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeoIpInfo {
     /// ISO country code where the IP is located
-    pub country_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
 }
 
 // =============================================================================

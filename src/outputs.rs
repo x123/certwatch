@@ -153,7 +153,7 @@ impl Output for SlackOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{AsnData, DnsInfo, EnrichmentInfo, GeoIpInfo};
+    use crate::core::{AsnData, DnsInfo, EnrichmentInfo};
     use std::sync::{Arc, Mutex};
 
     fn create_test_alert() -> Alert {
@@ -169,12 +169,10 @@ mod tests {
             },
             enrichment: vec![EnrichmentInfo {
                 ip: "1.1.1.1".parse().unwrap(),
-                asn: Some(AsnData {
+                data: Some(AsnData {
                     as_number: 12345,
                     as_name: "Test ASN".to_string(),
-                }),
-                geoip: Some(GeoIpInfo {
-                    country_code: "US".to_string(),
+                    country_code: Some("US".to_string()),
                 }),
             }],
         }
