@@ -203,3 +203,17 @@ This epic introduces a new, self-contained ASN enrichment provider that uses a l
     - [x] Add a `tsv_path` field to the configuration to specify the location of the data file.
     - [x] In `main.rs`, add logic to read the configuration and instantiate the selected `AsnLookup` provider.
     - [x] Write an integration test in `/tests` that runs the full pipeline with the `TsvAsnLookup` provider enabled.
+
+
+---
+### **Epic 8: Implement Configurable Sampling**
+This epic addresses the feature gap identified in the 2025-07-06 code review, implementing the configurable sampling required by the specification to manage high-volume data streams.
+
+- **#14 - Implement Sampling in CertStreamClient**
+  - **Context:** The `CertStreamClient` currently processes every message from the websocket. To handle high-volume feeds and reduce resource usage, a sampling mechanism must be added as specified in `docs/specs.md` §2.1.
+  - **Dependencies:** #10 (Configuration Management)
+  - **Subtasks:**
+    - [ ] In `src/config.rs`, ensure a `sample_rate: f64` field exists in the `Config` struct with a default value of `1.0`.
+    - [ ] In `src/network.rs`, modify the `CertStreamClient` to read the `sample_rate` from the configuration.
+    - [ ] In the message processing loop within `CertStreamClient`, add logic to process only a percentage of incoming messages. Use a random number generator to decide whether to keep or drop each message based on the `sample_rate`.
+    - [ ] Add a unit test to `src/network.rs` to verify the sampling logic. The test should simulate a stream of messages and assert that, on average, the correct percentage is processed.
