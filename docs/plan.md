@@ -662,17 +662,17 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **User Story:** As a security operator, I want the application to process every domain from the CertStream source without dropping messages, so that I have maximum visibility and do not miss potential threats due to internal performance bottlenecks.
 **Technical Goal:** Refactor the application to use a fan-out worker pool architecture. This will decouple the high-speed network client from the slower, resource-intensive domain processing logic, eliminating the current performance bottleneck and allowing the system to process the full volume of the CertStream firehose.
 
-- [ ] **#73 - Introduce Central Domain Queue**
+- [x] **#73 - Introduce Central Domain Queue**
   - **Action:** In `main.rs`, create a new `mpsc` channel specifically for queuing individual `String` domains.
   - **Details:** This channel will act as the central work buffer between the network client and the processing workers. It should be configured with a large capacity (e.g., 100,000) to handle traffic bursts.
 
-- [ ] **#74 - Refactor `CertStreamClient` for Fan-Out**
+- [x] **#74 - Refactor `CertStreamClient` for Fan-Out**
   - **Action:** Modify the `CertStreamClient` in `src/network.rs` to push individual domains into the new central queue.
   - **Details:**
-    - [ ] Update `CertStreamClient::new` to accept a `Sender<String>`.
-    - [ ] In `handle_message`, iterate through the parsed `Vec<String>` of domains.
-    - [ ] For each domain, use a non-blocking `try_send` to place it onto the central queue.
-    - [ ] If `try_send` fails (meaning the queue is full), increment a "dropped_domains" metric and log a warning. This prevents the network client from ever blocking on a full channel.
+    - [x] Update `CertStreamClient::new` to accept a `Sender<String>`.
+    - [x] In `handle_message`, iterate through the parsed `Vec<String>` of domains.
+    - [x] For each domain, use a non-blocking `try_send` to place it onto the central queue.
+    - [x] If `try_send` fails (meaning the queue is full), increment a "dropped_domains" metric and log a warning. This prevents the network client from ever blocking on a full channel.
 
 - [ ] **#75 - Implement the Worker Pool**
   - **Action:** In `main.rs`, replace the existing single processing loop with a pool of worker tasks.

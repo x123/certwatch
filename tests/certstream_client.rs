@@ -74,7 +74,7 @@ async fn test_certstream_client_basic_functionality() {
     ]);
 
     // Create a channel to receive parsed domains
-    let (tx, mut rx) = mpsc::channel::<Vec<String>>(10);
+    let (tx, mut rx) = mpsc::channel::<String>(10);
 
     // Create the client
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0, false);
@@ -84,18 +84,21 @@ async fn test_certstream_client_basic_functionality() {
         client.run_with_connection(Box::new(fake_ws)).await
     });
 
-    // Wait for the parsed domains
-    let received_domains = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv()
-    ).await;
+    // Wait for the parsed domains. We expect two separate messages.
+    let mut received_domains = Vec::new();
+    for _ in 0..2 {
+        let domain = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            rx.recv()
+        ).await;
+        assert!(domain.is_ok(), "Should have received a domain within the timeout");
+        received_domains.push(domain.unwrap().unwrap());
+    }
 
     // Verify we received the expected domains
-    assert!(received_domains.is_ok(), "Should have received domains within timeout");
-    let domains = received_domains.unwrap().expect("Should have received domains, not None");
-    assert_eq!(domains.len(), 2);
-    assert!(domains.contains(&"test.example.com".to_string()));
-    assert!(domains.contains(&"www.test.example.com".to_string()));
+    assert_eq!(received_domains.len(), 2);
+    assert!(received_domains.contains(&"test.example.com".to_string()));
+    assert!(received_domains.contains(&"www.test.example.com".to_string()));
 
     // Clean up the client task
     client_handle.abort();
@@ -113,7 +116,7 @@ async fn test_certstream_client_handles_invalid_messages() {
     ]);
 
     // Create a channel to receive parsed domains
-    let (tx, mut rx) = mpsc::channel::<Vec<String>>(10);
+    let (tx, mut rx) = mpsc::channel::<String>(10);
 
     // Create the client
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0, false);

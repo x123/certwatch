@@ -24,6 +24,8 @@ pub struct Config {
     pub concurrency: usize,
     /// Configuration for metrics.
     pub metrics: MetricsConfig,
+    /// Configuration for performance tuning.
+    pub performance: PerformanceConfig,
     /// Configuration for the CertStream network client.
     pub network: NetworkConfig,
     /// Configuration for pattern matching.
@@ -36,6 +38,21 @@ pub struct Config {
     pub output: OutputConfig,
     /// Configuration for alert deduplication.
     pub deduplication: DeduplicationConfig,
+}
+
+/// Configuration for performance tuning.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct PerformanceConfig {
+    /// The capacity of the central domain queue.
+    pub queue_capacity: usize,
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            queue_capacity: 100_000,
+        }
+    }
 }
 
 /// Configuration for the CertStream network client.
@@ -201,6 +218,7 @@ impl Default for Config {
             log_level: "info".to_string(),
             concurrency: num_cpus::get(),
             metrics: MetricsConfig::default(),
+            performance: PerformanceConfig::default(),
             network: NetworkConfig {
                 certstream_url: "wss://certstream.calidog.io".to_string(),
                 sample_rate: 1.0,

@@ -18,11 +18,9 @@ use certwatch::{
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };
 use clap::Parser;
-use futures::stream::StreamExt;
 use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
-use tokio_stream;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -52,6 +50,10 @@ async fn main() -> Result<()> {
         config.metrics.log_aggregation_seconds
     );
     info!("Concurrency: {}", config.concurrency);
+    info!(
+        "Domain Queue Capacity: {}",
+        config.performance.queue_capacity
+    );
     info!("CertStream URL: {}", config.network.certstream_url);
     info!("Sample Rate: {}", config.network.sample_rate);
     let (dns_resolver, nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
@@ -162,7 +164,8 @@ async fn main() -> Result<()> {
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    let (domains_tx, mut domains_rx) = mpsc::channel::<Vec<String>>(1000);
+    let (domains_tx, mut domains_rx) =
+        mpsc::channel::<String>(config.performance.queue_capacity);
     let (alerts_tx, mut alerts_rx) = mpsc::channel::<Alert>(1000);
 
     // =========================================================================
@@ -204,59 +207,53 @@ async fn main() -> Result<()> {
         info!("Domain processing concurrency limit set to: {}", concurrency_limit);
 
         tokio::spawn(async move {
-            while let Some(domains) = domains_rx.recv().await {
-                let stream = tokio_stream::iter(domains);
+            while let Some(domain) = domains_rx.recv().await {
+                let pattern_matcher = pattern_matcher.clone();
+                let dns_manager = dns_manager.clone();
+                let enrichment_provider = enrichment_provider.clone();
+                let alerts_tx = alerts_tx.clone();
 
-                stream
-                    .for_each_concurrent(concurrency_limit, |domain| {
-                        let pattern_matcher = pattern_matcher.clone();
-                        let dns_manager = dns_manager.clone();
-                        let enrichment_provider = enrichment_provider.clone();
-                        let alerts_tx = alerts_tx.clone();
-
-                        async move {
-                            if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                                info!("Matched domain: {} (source: {})", domain, source_tag);
-                                match dns_manager.resolve_with_retry(&domain, &source_tag).await {
-                                    Ok(dns_info) => {
-                                        let alert = build_alert(
-                                            domain,
-                                            source_tag.to_string(),
-                                            false,
-                                            dns_info,
-                                            enrichment_provider,
-                                        )
-                                        .await;
-                                        if let Err(e) = alerts_tx.send(alert).await {
-                                            error!("Failed to send alert to channel: {}", e);
-                                        }
+                tokio::spawn(async move {
+                    if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
+                        info!("Matched domain: {} (source: {})", domain, source_tag);
+                        match dns_manager.resolve_with_retry(&domain, &source_tag).await {
+                            Ok(dns_info) => {
+                                let alert = build_alert(
+                                    domain,
+                                    source_tag.to_string(),
+                                    false,
+                                    dns_info,
+                                    enrichment_provider,
+                                )
+                                .await;
+                                if let Err(e) = alerts_tx.send(alert).await {
+                                    error!("Failed to send alert to channel: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                if e.to_string().contains("NXDOMAIN") {
+                                    // Create an initial alert for the NXDOMAIN finding
+                                    let alert = build_alert(
+                                        domain,
+                                        source_tag.to_string(),
+                                        false,
+                                        DnsInfo::default(),
+                                        enrichment_provider,
+                                    )
+                                    .await;
+                                    if let Err(e) = alerts_tx.send(alert).await {
+                                        error!(
+                                            "Failed to send NXDOMAIN alert to channel: {}",
+                                            e
+                                        );
                                     }
-                                    Err(e) => {
-                                        if e.to_string().contains("NXDOMAIN") {
-                                            // Create an initial alert for the NXDOMAIN finding
-                                            let alert = build_alert(
-                                                domain,
-                                                source_tag.to_string(),
-                                                false,
-                                                DnsInfo::default(),
-                                                enrichment_provider,
-                                            )
-                                            .await;
-                                            if let Err(e) = alerts_tx.send(alert).await {
-                                                error!(
-                                                    "Failed to send NXDOMAIN alert to channel: {}",
-                                                    e
-                                                );
-                                            }
-                                        } else {
-                                            warn!("DNS resolution failed for {}: {}", domain, e);
-                                        }
-                                    }
+                                } else {
+                                    warn!("DNS resolution failed for {}: {}", domain, e);
                                 }
                             }
                         }
-                    })
-                    .await;
+                    }
+                });
             }
         })
     };

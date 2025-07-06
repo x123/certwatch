@@ -44,7 +44,7 @@ pub trait WebSocketConnection: Send + Sync {
 /// and processes incoming certificate transparency log entries
 pub struct CertStreamClient {
     url: String,
-    output_tx: tokio::sync::mpsc::Sender<Vec<String>>,
+    output_tx: tokio::sync::mpsc::Sender<String>,
     sample_rate: f64,
     allow_invalid_certs: bool,
 }
@@ -54,12 +54,12 @@ impl CertStreamClient {
     ///
     /// # Arguments
     /// * `url` - The WebSocket URL to connect to (e.g., "wss://certstream.calidog.io")
-    /// * `output_tx` - Channel sender to send parsed domain lists to the next stage
+    /// * `output_tx` - Channel sender to send individual domains to the next stage
     /// * `sample_rate` - A float between 0.0 and 1.0 indicating the percentage of domains to process
     /// * `allow_invalid_certs` - Whether to allow self-signed TLS certificates
     pub fn new(
         url: String,
-        output_tx: tokio::sync::mpsc::Sender<Vec<String>>,
+        output_tx: tokio::sync::mpsc::Sender<String>,
         sample_rate: f64,
         allow_invalid_certs: bool,
     ) -> Self {
@@ -200,11 +200,21 @@ impl CertStreamClient {
                         let sampled_domains = self.sample_domains(domains);
 
                         if !sampled_domains.is_empty() {
-                            metrics::counter!("agg.domains_sent_to_output")
+                            metrics::counter!("agg.domains_sent_to_queue")
                                 .increment(sampled_domains.len() as u64);
-                            if let Err(e) = self.output_tx.send(sampled_domains).await {
-                                log::error!("Failed to send domains to output channel: {}", e);
-                                return Err(anyhow::anyhow!("Output channel closed: {}", e));
+                            for domain in sampled_domains {
+                                // Use a non-blocking send to avoid backpressure on the client.
+                                // If the queue is full, we drop the domain and record it.
+                                if let Err(e) = self.output_tx.try_send(domain) {
+                                    if let tokio::sync::mpsc::error::TrySendError::Full(_) = e {
+                                        metrics::counter!("agg.dropped_domains_total").increment(1);
+                                        log::warn!("Domain queue is full. Dropping domain.");
+                                    } else {
+                                        // The receiver has been dropped, which is a critical error.
+                                        log::error!("Domain channel receiver dropped: {}", e);
+                                        return Err(anyhow::anyhow!("Domain channel closed: {}", e));
+                                    }
+                                }
                             }
                         }
                     }

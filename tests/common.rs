@@ -24,11 +24,11 @@ pub const TEST_CERTSTREAM_URL: &str = "wss://127.0.0.1:8181/domains-only";
 /// # Arguments
 ///
 /// * `duration` - The `Duration` for which the test should run.
-/// * `test_logic` - An async block or function that takes a `mpsc::Receiver<Vec<String>>`
+/// * `test_logic` - An async block or function that takes a `mpsc::Receiver<String>`
 ///   and performs the specific assertions for the test.
 pub async fn run_live_test<F, Fut>(duration: Duration, test_logic: F) -> Result<()>
 where
-    F: FnOnce(mpsc::Receiver<Vec<String>>) -> Fut,
+    F: FnOnce(mpsc::Receiver<String>) -> Fut,
     Fut: Future<Output = ()>,
 {
     // Initialize the logger to see output from the client
