@@ -2,7 +2,7 @@ use anyhow::Result;
 use certwatch::{
     config::Config,
     core::{DnsInfo, EnrichmentProvider, PatternMatcher},
-    dns::{DnsHealthMonitor, DnsResolutionManager, DnsResolver},
+    dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, DnsResolver},
 };
 use futures::stream::StreamExt;
 use std::{
@@ -38,9 +38,9 @@ impl EnrichmentProvider for MockEnrichmentProvider {
 struct MockDnsResolver;
 #[async_trait::async_trait]
 impl DnsResolver for MockDnsResolver {
-    async fn resolve(&self, _domain: &str) -> Result<DnsInfo> {
+    async fn resolve(&self, _domain: &str) -> Result<DnsInfo, DnsError> {
         Ok(DnsInfo {
-            a_records: vec!["1.1.1.1".parse()?],
+            a_records: vec!["1.1.1.1".parse().unwrap()],
             ..Default::default()
         })
     }

@@ -15,7 +15,8 @@ pub use health::DnsHealthMonitor;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use thiserror::Error;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep, Instant};
 use hickory_resolver::{
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
@@ -47,6 +48,15 @@ impl Default for DnsRetryConfig {
             nxdomain_initial_backoff_ms: 10000,
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum DnsError {
+    #[error("DNS resolution failed: {0}")]
+    Resolution(#[from] anyhow::Error),
+
+    #[error("DNS resolution cancelled due to shutdown")]
+    Shutdown,
 }
 
 /// DNS resolver implementation using trust-dns-resolver
@@ -111,7 +121,7 @@ impl HickoryDnsResolver {
 
 #[async_trait]
 impl DnsResolver for HickoryDnsResolver {
-    async fn resolve(&self, domain: &str) -> Result<DnsInfo> {
+    async fn resolve(&self, domain: &str) -> Result<DnsInfo, DnsError> {
         use hickory_resolver::proto::rr::RecordType;
 
         // Perform concurrent lookups for A, AAAA, and NS records
@@ -168,12 +178,19 @@ impl DnsResolver for HickoryDnsResolver {
             if let Some(err) = first_error {
                 let anyhow_err = anyhow::Error::from(err);
                 if is_nxdomain_error(&anyhow_err) {
-                    return Err(anyhow_err);
+                    return Err(DnsError::Resolution(anyhow_err));
                 }
-                return Err(anyhow!("All DNS lookups failed for {}: {}", domain, anyhow_err));
+                return Err(DnsError::Resolution(anyhow!(
+                    "All DNS lookups failed for {}: {}",
+                    domain,
+                    anyhow_err
+                )));
             } else {
                 // This case should be rare, but it's possible if all lookups succeed but return no records.
-                return Err(anyhow!("No A, AAAA, or NS records found for {}", domain));
+                return Err(DnsError::Resolution(anyhow!(
+                    "No A, AAAA, or NS records found for {}",
+                    domain
+                )));
             }
         }
 
@@ -206,6 +223,7 @@ pub struct DnsResolutionManager {
     config: DnsRetryConfig,
     nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>, // (domain, source_tag, retry_time)
     health_monitor: Arc<DnsHealthMonitor>,
+    shutdown_rx: watch::Receiver<()>,
 }
 
 impl DnsResolutionManager {
@@ -216,7 +234,7 @@ impl DnsResolutionManager {
         resolver: Arc<dyn DnsResolver>,
         config: DnsRetryConfig,
         health_monitor: Arc<DnsHealthMonitor>,
-        shutdown_rx: tokio::sync::watch::Receiver<()>,
+        shutdown_rx: watch::Receiver<()>,
     ) -> (Self, mpsc::UnboundedReceiver<ResolvedNxDomain>) {
         let (nxdomain_retry_tx, nxdomain_retry_rx) = mpsc::unbounded_channel();
         let (resolved_nxdomain_tx, resolved_nxdomain_rx) = mpsc::unbounded_channel();
@@ -234,8 +252,9 @@ impl DnsResolutionManager {
         ));
 
         // Start the heartbeat task
+        let hb_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            run_heartbeat("DnsResolutionManager", shutdown_rx).await;
+            run_heartbeat("DnsResolutionManager", hb_shutdown_rx).await;
         });
 
         let manager = Self {
@@ -243,62 +262,89 @@ impl DnsResolutionManager {
             config,
             nxdomain_retry_tx,
             health_monitor,
+            shutdown_rx,
         };
 
         (manager, resolved_nxdomain_rx)
     }
 
     /// Attempts to resolve a domain with standard retry logic
-    pub async fn resolve_with_retry(&self, domain: &str, source_tag: &str) -> Result<DnsInfo> {
+    pub async fn resolve_with_retry(
+        &self,
+        domain: &str,
+        source_tag: &str,
+    ) -> Result<DnsInfo, DnsError> {
         let mut last_error = None;
-        
+        let mut shutdown_rx = self.shutdown_rx.clone();
+
         for attempt in 0..=self.config.standard_retries {
-            match self.resolver.resolve(domain).await {
-                Ok(dns_info) => {
-                    self.health_monitor.record_outcome(true);
-                    metrics::counter!("dns_resolutions", "status" => "success").increment(1);
-                    return Ok(dns_info);
+            tokio::select! {
+                biased;
+
+                _ = shutdown_rx.changed() => {
+                    log::debug!("DNS resolution for {} cancelled by shutdown signal", domain);
+                    return Err(DnsError::Shutdown);
                 }
-                Err(e) => {
-                    self.health_monitor.record_outcome(false);
 
-                    // Check if this is an NXDOMAIN error
-                    if is_nxdomain_error(&e) {
-                        metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
-
-                        // Schedule for NXDOMAIN retry queue
-                        let retry_time = Instant::now()
-                            + Duration::from_millis(self.config.nxdomain_initial_backoff_ms);
-                        if let Err(send_err) = self.nxdomain_retry_tx.send((
-                            domain.to_string(),
-                            source_tag.to_string(),
-                            retry_time,
-                        )) {
-                            log::error!("Failed to schedule NXDOMAIN retry: {}", send_err);
+                result = self.resolver.resolve(domain) => {
+                    match result {
+                        Ok(dns_info) => {
+                            self.health_monitor.record_outcome(true);
+                            metrics::counter!("dns_resolutions", "status" => "success").increment(1);
+                            return Ok(dns_info);
                         }
+                        Err(DnsError::Resolution(e)) => {
+                            self.health_monitor.record_outcome(false);
 
-                        // Return the NXDOMAIN error immediately for immediate alert generation
-                        return Err(e);
-                    }
+                            // Check if this is an NXDOMAIN error
+                            if is_nxdomain_error(&e) {
+                                metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
 
-                    let error_str = e.to_string();
-                    if error_str.to_lowercase().contains("timeout") {
-                        metrics::counter!("dns_resolutions", "status" => "timeout").increment(1);
-                    } else {
-                        metrics::counter!("dns_resolutions", "status" => "failure").increment(1);
-                    }
-                    last_error = Some(error_str);
-                    
-                    // For standard errors, apply exponential backoff
-                    if attempt < self.config.standard_retries {
-                        let backoff_ms = self.config.standard_initial_backoff_ms * 2_u64.pow(attempt);
-                        sleep(Duration::from_millis(backoff_ms)).await;
+                                // Schedule for NXDOMAIN retry queue
+                                let retry_time = Instant::now()
+                                    + Duration::from_millis(self.config.nxdomain_initial_backoff_ms);
+                                if let Err(send_err) = self.nxdomain_retry_tx.send((
+                                    domain.to_string(),
+                                    source_tag.to_string(),
+                                    retry_time,
+                                )) {
+                                    log::error!("Failed to schedule NXDOMAIN retry: {}", send_err);
+                                }
+
+                                // Return the NXDOMAIN error immediately for immediate alert generation
+                                return Err(DnsError::Resolution(e));
+                            }
+
+                            let error_str = e.to_string();
+                            if error_str.to_lowercase().contains("timeout") {
+                                metrics::counter!("dns_resolutions", "status" => "timeout").increment(1);
+                            } else {
+                                metrics::counter!("dns_resolutions", "status" => "failure").increment(1);
+                            }
+                            last_error = Some(error_str);
+
+                            // For standard errors, apply exponential backoff
+                            if attempt < self.config.standard_retries {
+                                let backoff_ms = self.config.standard_initial_backoff_ms * 2_u64.pow(attempt);
+                                sleep(Duration::from_millis(backoff_ms)).await;
+                            }
+                        }
+                        Err(DnsError::Shutdown) => {
+                            // This should not happen as the resolver itself doesn't know about shutdown
+                            log::warn!("Resolver unexpectedly returned a shutdown error");
+                            return Err(DnsError::Shutdown);
+                        }
                     }
                 }
             }
         }
 
-        Err(anyhow!(last_error.unwrap_or_else(|| format!("DNS resolution failed after {} retries", self.config.standard_retries))))
+        Err(DnsError::Resolution(anyhow!(last_error.unwrap_or_else(
+            || format!(
+                "DNS resolution failed after {} retries",
+                self.config.standard_retries
+            )
+        ))))
     }
 
     /// Background task that handles NXDOMAIN retries
@@ -367,13 +413,17 @@ impl DnsResolutionManager {
                                     }
                                 }
                                 Err(e) => {
-                                    if is_nxdomain_error(&e) && attempt < config.nxdomain_retries {
-                                        let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
-                                        let next_retry = now + Duration::from_millis(backoff_ms);
-                                        retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
-                                        metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
+                                    if let DnsError::Resolution(res_err) = e {
+                                       if is_nxdomain_error(&res_err) && attempt < config.nxdomain_retries {
+                                           let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
+                                           let next_retry = now + Duration::from_millis(backoff_ms);
+                                           retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
+                                           metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
+                                       } else {
+                                           log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, res_err);
+                                       }
                                     } else {
-                                        log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, e);
+                                       log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, e);
                                     }
                                 }
                             }
@@ -436,7 +486,7 @@ mod tests {
 
     #[async_trait]
     impl DnsResolver for FakeDnsResolver {
-        async fn resolve(&self, domain: &str) -> Result<DnsInfo> {
+        async fn resolve(&self, domain: &str) -> Result<DnsInfo, DnsError> {
             // Increment call count
             {
                 let mut call_count = self.call_count.lock().unwrap();
@@ -462,16 +512,20 @@ mod tests {
                                         trusted: false,
                                     };
                                 let proto_error = hickory_resolver::proto::ProtoError::from(kind);
-                                let resolve_error = ResolveError::from(ResolveErrorKind::Proto(proto_error));
-                                Err(resolve_error.into())
+                                let resolve_error =
+                                    ResolveError::from(ResolveErrorKind::Proto(proto_error));
+                                Err(DnsError::Resolution(resolve_error.into()))
                             } else {
-                                Err(anyhow!("{}", error))
+                                Err(DnsError::Resolution(anyhow!("{}", error)))
                             }
                         }
                     };
                 }
             }
-            Err(anyhow!("No more responses configured for {}", domain))
+            Err(DnsError::Resolution(anyhow!(
+                "No more responses configured for {}",
+                domain
+            )))
         }
     }
 
@@ -495,7 +549,11 @@ mod tests {
 
         let result = resolver.resolve("nonexistent.com").await;
         assert!(result.is_err());
-        assert!(is_nxdomain_error(&result.unwrap_err()));
+        if let Err(DnsError::Resolution(e)) = result {
+            assert!(is_nxdomain_error(&e));
+        } else {
+            panic!("Expected a resolution error");
+        }
         assert_eq!(resolver.get_call_count("nonexistent.com"), 1);
     }
 
@@ -560,7 +618,11 @@ mod tests {
 
         // Should return NXDOMAIN error immediately (no standard retries)
         assert!(result.is_err());
-        assert!(is_nxdomain_error(&result.unwrap_err()));
+        if let Err(DnsError::Resolution(e)) = result {
+            assert!(is_nxdomain_error(&e));
+        } else {
+            panic!("Expected a resolution error");
+        }
         assert_eq!(fake_resolver.get_call_count("nonexistent.com"), 1);
     }
 
@@ -618,7 +680,11 @@ mod tests {
         // This first call should fail immediately and queue the domain for retry
         let result = manager.resolve_with_retry("newly-active.com", "test-tag").await;
         assert!(result.is_err());
-        assert!(is_nxdomain_error(&result.unwrap_err()));
+        if let Err(DnsError::Resolution(e)) = result {
+            assert!(is_nxdomain_error(&e));
+        } else {
+            panic!("Expected a resolution error");
+        }
         assert_eq!(fake_resolver.get_call_count("newly-active.com"), 1);
 
         // Now, configure the resolver to return a success response

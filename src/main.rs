@@ -10,7 +10,7 @@ use certwatch::{
     config::{Config, OutputFormat},
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
-    dns::{DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
+    dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     enrichment::tsv_lookup::TsvAsnLookup,
     matching::PatternWatcher,
     metrics::logging_recorder::LoggingRecorder,
@@ -308,7 +308,8 @@ async fn main() -> Result<()> {
                                     error!("Worker {} failed to send alert to channel: {}", i, e);
                                 }
                             }
-                            Err(e) => {
+                            Err(DnsError::Resolution(e)) => {
+                                // This is a resolution failure (timeout, server error, etc.)
                                 if e.to_string().contains("NXDOMAIN") {
                                     let alert = build_alert(
                                         domain,
@@ -327,6 +328,10 @@ async fn main() -> Result<()> {
                                 } else {
                                     warn!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
                                 }
+                            }
+                            Err(DnsError::Shutdown) => {
+                                info!("Worker {} DNS resolution cancelled by shutdown.", i);
+                                // The outer loop will catch the shutdown signal on the next iteration and exit gracefully.
                             }
                         }
                     }

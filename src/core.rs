@@ -3,6 +3,7 @@
 //! This module defines the fundamental data structures and trait contracts
 //! that govern component interactions throughout the application.
 
+use crate::dns::DnsError;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -103,7 +104,7 @@ pub trait DnsResolver: Send + Sync {
     /// # Returns
     /// * `Ok(DnsInfo)` with populated records on successful resolution
     /// * `Err` for DNS errors including NXDOMAIN, timeouts, server errors
-    async fn resolve(&self, domain: &str) -> Result<DnsInfo>;
+    async fn resolve(&self, domain: &str) -> Result<DnsInfo, DnsError>;
 }
 
 /// Provides enrichment data (ASN, GeoIP, etc.) for an IP address
