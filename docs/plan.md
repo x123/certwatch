@@ -177,3 +177,29 @@ This final phase ties all the decoupled components together into a running appli
     - [x] Create the `mpsc` channels that will connect the pipeline stages.
     - [x] "Wire" the application by passing the concrete instances (as `Box<dyn Trait>`) into the constructors of the services that need them.
     - [x] Spawn a `tokio` task for each concurrent process (client, matcher, resolver pool, etc.) and start the runtime.
+
+
+---
+### **Epic 7: Alternative TSV-Based Enrichment Provider**
+This epic introduces a new, self-contained ASN enrichment provider that uses a local TSV file, reducing reliance on the MaxMind database format.
+
+- **#12 - Implement High-Performance TSV/CSV IP Lookup Engine**
+  - **Context:** Build the core engine for parsing a TSV file of IP ranges and looking up addresses efficiently. Performance is critical, so the implementation must avoid linear scans.
+  - **Dependencies:** #1
+  - **Subtasks:**
+    - [ ] Create a new module `src/enrichment/tsv_lookup.rs`.
+    - [ ] Implement a parser for the tab-separated format (`start_ip`, `end_ip`, `asn`, `country`, `description`).
+    - [ ] Implement logic to convert both IPv4 and IPv6 address strings into `u128` integers for unified comparison.
+    - [ ] Create a data structure that stores `(start: u128, end: u128, data: AsnInfo)` records in a sorted `Vec`.
+    - [ ] Implement the lookup function using a binary search on the sorted `Vec` to achieve `O(log n)` performance.
+    - [ ] Write unit tests to verify the parser and the binary search lookup logic against the `ip2asn-combined-test.tsv` data.
+
+- **#13 - Integrate TSV Provider into Application**
+  - **Context:** Integrate the new lookup engine into the application as a selectable alternative to the MaxMind provider.
+  - **Dependencies:** #7, #12
+  - **Subtasks:**
+    - [ ] Create a `struct TsvAsnLookup` that implements the `trait AsnLookup`.
+    - [ ] In `config.rs`, add an `enum AsnProvider { Maxmind, Tsv }` and a corresponding field to the `Config` struct.
+    - [ ] Add a `tsv_path` field to the configuration to specify the location of the data file.
+    - [ ] In `main.rs`, add logic to read the configuration and instantiate the selected `AsnLookup` provider.
+    - [ ] Write an integration test in `/tests` that runs the full pipeline with the `TsvAsnLookup` provider enabled.
