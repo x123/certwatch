@@ -32,7 +32,8 @@ impl LoggingRecorder {
                     log::info!("[Counter] {}: {}", key, counter.load(Ordering::Relaxed));
                 }
                 for (key, gauge) in registry.get_gauge_handles() {
-                    log::info!("[Gauge] {}: {}", key, gauge.load(Ordering::Relaxed));
+                    let value = f64::from_bits(gauge.load(Ordering::Relaxed));
+                    log::info!("[Gauge] {}: {}", key, value as u64);
                 }
                 // Note: Histograms are not logged in this simple implementation
             }

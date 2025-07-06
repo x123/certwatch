@@ -39,7 +39,7 @@ impl Deduplicator {
             self.cache.insert(key, ()).await;
         }
         
-        metrics::gauge!("deduplication_cache_size").set(self.cache.entry_count() as f64);
+        metrics::gauge!("deduplication_cache_entries").set(self.cache.entry_count() as f64);
         
         is_dupe
     }

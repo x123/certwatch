@@ -505,5 +505,5 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **User Story:** As an operator, I want to see metrics that are intuitively named and formatted so that I can quickly understand the state of the application.
 
 **Tasks:**
-  - [ ] **#46: Rename cache metric for clarity:** Change the `deduplication_cache_size` metric to `deduplication_cache_entries` to accurately reflect that it counts the number of items in the cache, not its memory footprint.
-  - [ ] **#47: Fix gauge number formatting:** Modify the logging recorder to format `f64` gauge values as integers to prevent confusing floating-point representations in the logs.
+  - [x] **#46: Rename cache metric for clarity:** Change the `deduplication_cache_size` metric to `deduplication_cache_entries` to accurately reflect that it counts the number of items in the cache, not its memory footprint.
+  - [x] **#47: Fix gauge number formatting:** Modify the logging recorder to format `f64` gauge values as integers to prevent confusing floating-point representations in the logs.
