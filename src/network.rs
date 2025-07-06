@@ -284,4 +284,39 @@ mod tests {
         let domains = result.unwrap();
         assert_eq!(domains.len(), 0);
     }
+
+    #[test]
+    fn test_sample_domains() {
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let domains: Vec<String> = (0..10000).map(|i| format!("domain{}.com", i)).collect();
+
+        // Test case 1: sample_rate = 0.5 (50%)
+        let client_half = CertStreamClient::new("".to_string(), tx.clone(), 0.5, false);
+        let sampled_half = client_half.sample_domains(domains.clone());
+        // Check if the sampled count is roughly 50% +/- 5%
+        let count_half = sampled_half.len();
+        assert!(
+            (4500..=5500).contains(&count_half),
+            "Expected around 5000 domains, but got {}",
+            count_half
+        );
+
+        // Test case 2: sample_rate = 1.0 (100%)
+        let client_full = CertStreamClient::new("".to_string(), tx.clone(), 1.0, false);
+        let sampled_full = client_full.sample_domains(domains.clone());
+        assert_eq!(
+            sampled_full.len(),
+            domains.len(),
+            "Expected all domains with sample_rate = 1.0"
+        );
+
+        // Test case 3: sample_rate = 0.0 (0%)
+        let client_none = CertStreamClient::new("".to_string(), tx, 0.0, false);
+        let sampled_none = client_none.sample_domains(domains);
+        assert_eq!(
+            sampled_none.len(),
+            0,
+            "Expected no domains with sample_rate = 0.0"
+        );
+    }
 }
