@@ -27,10 +27,30 @@ impl LoggingRecorder {
             let mut ticker = tokio::time::interval(interval);
             loop {
                 ticker.tick().await;
-                log::info!("--- Metrics Snapshot ---");
+                log::debug!("--- Metrics Snapshot ---");
+
                 for (key, counter) in registry.get_counter_handles() {
-                    log::info!("[Counter] {}: {}", key, counter.load(Ordering::Relaxed));
+                    let value = counter.load(Ordering::Relaxed);
+                    if key.name().starts_with("agg.") {
+                        // Aggregated metrics are logged at DEBUG level and reset.
+                        if value > 0 {
+                            let key_name = key.name();
+                            let message = if key_name == "agg.domains_sent_to_output" {
+                                format!("Sent {} domains to output channel in the last {}s", value, interval.as_secs())
+                            } else if key_name == "agg.alerts_sent" {
+                                format!("Sent {} alerts in the last {}s", value, interval.as_secs())
+                            } else {
+                                format!("[Agg. Counter] {}: {}", key, value)
+                            };
+                            log::debug!("{}", message);
+                            counter.store(0, Ordering::Relaxed);
+                        }
+                    } else {
+                        // Standard metrics are logged at INFO level.
+                        log::info!("[Counter] {}: {}", key, value);
+                    }
                 }
+
                 for (key, gauge) in registry.get_gauge_handles() {
                     let value = f64::from_bits(gauge.load(Ordering::Relaxed));
                     log::info!("[Gauge] {}: {}", key, value as u64);

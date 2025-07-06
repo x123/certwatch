@@ -255,7 +255,7 @@ async fn main() -> Result<()> {
     let output_task = tokio::spawn(async move {
         while let Some(alert) = alerts_rx.recv().await {
             if !deduplicator.is_duplicate(&alert).await {
-                info!("Sending alert for domain: {}", alert.domain);
+                metrics::counter!("agg.alerts_sent").increment(1);
                 if let Err(e) = output_manager.send_alert(&alert).await {
                     error!("Failed to send alert via output manager: {}", e);
                 }

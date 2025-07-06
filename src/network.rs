@@ -200,10 +200,8 @@ impl CertStreamClient {
                         let sampled_domains = self.sample_domains(domains);
 
                         if !sampled_domains.is_empty() {
-                            log::debug!(
-                                "Sending {} sampled domains to output channel",
-                                sampled_domains.len()
-                            );
+                            metrics::counter!("agg.domains_sent_to_output")
+                                .increment(sampled_domains.len() as u64);
                             if let Err(e) = self.output_tx.send(sampled_domains).await {
                                 log::error!("Failed to send domains to output channel: {}", e);
                                 return Err(anyhow::anyhow!("Output channel closed: {}", e));
