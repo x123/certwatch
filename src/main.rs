@@ -72,9 +72,8 @@ async fn main() -> Result<()> {
     // 2. Setup Output Manager
     // =========================================================================
     let mut outputs: Vec<Box<dyn Output>> = Vec::new();
-    if config.output.stdout_enabled {
-        outputs.push(Box::new(StdoutOutput::new()));
-    }
+    // Always add stdout output, but its behavior is controlled by the format.
+    outputs.push(Box::new(StdoutOutput::new(config.output.format.clone())));
     if let Some(slack_config) = &config.output.slack {
         outputs.push(Box::new(SlackOutput::new(
             slack_config.webhook_url.clone(),

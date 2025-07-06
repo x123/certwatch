@@ -1,10 +1,10 @@
 # CertWatch Configuration File
 
-log_level = "info"
+log_level = "warn"
 
 [network]
 certstream_url = "wss://127.0.0.1:8181/domains-only"
-sample_rate = 1.0
+sample_rate = 0.01
 allow_invalid_certs = true
 
 [matching]
@@ -35,7 +35,8 @@ asn_tsv_path = "ignored/ip2asn-combined.tsv"
 geoip_db_path = "tests/data/GeoLite2-Country-Test.mmdb"
 
 [output]
-stdout_enabled = true
+# The format to use for stdout output. Can be "Json" or "PlainText".
+format = "Json"
 # slack = { webhook_url = "https://hooks.slack.com/services/..." }
 
 [deduplication]

@@ -82,11 +82,18 @@ pub struct EnrichmentConfig {
     pub geoip_db_path: PathBuf,
 }
 
+/// The format for stdout output.
+#[derive(Debug, Deserialize, Clone)]
+pub enum OutputFormat {
+    Json,
+    PlainText,
+}
+
 /// Configuration for output and alerting.
 #[derive(Debug, Deserialize, Clone)]
 pub struct OutputConfig {
-    /// Whether to enable the stdout (console) output.
-    pub stdout_enabled: bool,
+    /// The format to use for stdout output.
+    pub format: OutputFormat,
     /// Configuration for Slack alerts.
     pub slack: Option<SlackConfig>,
 }
@@ -144,7 +151,7 @@ impl Default for Config {
                 geoip_db_path: "data/GeoLite2-Country.mmdb".into(),
             },
             output: OutputConfig {
-                stdout_enabled: true,
+                format: OutputFormat::PlainText,
                 slack: None,
             },
             deduplication: DeduplicationConfig {

@@ -256,42 +256,42 @@ This epic refactors the output system to support multiple, configurable formats 
   - **Context:** The current configuration in `src/config.rs` only has a boolean `stdout_enabled`. This needs to be more expressive to allow format selection.
   - **Dependencies:** #10
   - **Subtasks:**
-    - [ ] In `src/config.rs`, create a new `OutputFormat` enum with `Json` and `PlainText` variants.
-    - [ ] In the `OutputConfig` struct, replace `stdout_enabled: bool` with a new `format: OutputFormat` field.
-    - [ ] Set the default value for `format` to `PlainText` in the `impl Default for Config`.
+    - [x] In `src/config.rs`, create a new `OutputFormat` enum with `Json` and `PlainText` variants.
+    - [x] In the `OutputConfig` struct, replace `stdout_enabled: bool` with a new `format: OutputFormat` field.
+    - [x] Set the default value for `format` to `PlainText` in the `impl Default for Config`.
 
 - **#19 - Update `certwatch.toml` Configuration File**
   - **Context:** The `certwatch.toml` file needs to be updated to reflect the new configuration options.
   - **Dependencies:** #18
   - **Subtasks:**
-    - [ ] In `certwatch.toml`, remove the `stdout_enabled` key.
-    - [ ] Add a new `format` key to the `[output]` section, e.g., `format = "PlainText"`.
+    - [x] In `certwatch.toml`, remove the `stdout_enabled` key.
+    - [x] Add a new `format` key to the `[output]` section, e.g., `format = "PlainText"`.
 
 - **#20 - Implement Plain Text Formatter**
   - **Context:** A new function is needed in `src/outputs.rs` to generate the human-readable summary string from an `Alert` object.
   - **Dependencies:** #18
   - **Subtasks:**
-    - [ ] In `src/outputs.rs`, create a new `format_plain_text(&Alert) -> String` function.
-    - [ ] Implement the formatting logic: `[tag] domain -> first_ip [country, as_number, as_name] (+n other IPs)`.
-    - [ ] Ensure the function correctly handles edge cases, such as alerts with no IP addresses or missing enrichment data.
+    - [x] In `src/outputs.rs`, create a new `format_plain_text(&Alert) -> String` function.
+    - [x] Implement the formatting logic: `[tag] domain -> first_ip [country, as_number, as_name] (+n other IPs)`.
+    - [x] Ensure the function correctly handles edge cases, such as alerts with no IP addresses or missing enrichment data.
 
 - **#21 - Update Output Logic**
   - **Context:** The `StdoutOutput` struct in `src/outputs.rs` must be modified to use the new formatter.
   - **Dependencies:** #20
   - **Subtasks:**
-    - [ ] Modify `StdoutOutput` to store the configured `OutputFormat`.
-    - [ ] In the `send_alert` method, use a `match` statement on the format. If `Json`, serialize the alert as before. If `PlainText`, call the new `format_plain_text` function and print the resulting string.
+    - [x] Modify `StdoutOutput` to store the configured `OutputFormat`.
+    - [x] In the `send_alert` method, use a `match` statement on the format. If `Json`, serialize the alert as before. If `PlainText`, call the new `format_plain_text` function and print the resulting string.
 
 - **#22 - Update Application Integration**
   - **Context:** The main application logic in `main.rs` needs to be updated to wire up the new configuration.
   - **Dependencies:** #21
   - **Subtasks:**
-    - [ ] In `main.rs`, when initializing the `OutputManager`, read the `output.format` from the configuration.
-    - [ ] Pass the configured format into the `StdoutOutput` constructor.
+    - [x] In `main.rs`, when initializing the `OutputManager`, read the `output.format` from the configuration.
+    - [x] Pass the configured format into the `StdoutOutput` constructor.
 
 - **#23 - Update Tests**
   - **Context:** The test suite must be updated to validate the new functionality and prevent regressions.
   - **Dependencies:** #21
   - **Subtasks:**
-    - [ ] In `src/outputs.rs`, add unit tests specifically for the `format_plain_text` function, covering various alert types.
-    - [ ] Update the existing `StdoutOutput` tests to verify that both `Json` and `PlainText` formats work correctly based on the configuration.
+    - [x] In `src/outputs.rs`, add unit tests specifically for the `format_plain_text` function, covering various alert types.
+    - [x] Update the existing `StdoutOutput` tests to verify that both `Json` and `PlainText` formats work correctly based on the configuration.

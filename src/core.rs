@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
 /// Represents a security alert for a suspicious domain
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Alert {
     /// ISO 8601 timestamp when the alert was generated
     pub timestamp: String,
@@ -26,7 +26,7 @@ pub struct Alert {
 }
 
 /// DNS resolution information for a domain
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct DnsInfo {
     /// IPv4 addresses from A records
     pub a_records: Vec<IpAddr>,
@@ -44,7 +44,7 @@ impl DnsInfo {
 
 
 /// Combined enrichment information for an IP address
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EnrichmentInfo {
     /// The IP address this information relates to
     pub ip: IpAddr,
@@ -63,7 +63,7 @@ impl Default for EnrichmentInfo {
 }
 
 /// ASN and GeoIP data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AsnData {
     /// Autonomous System Number
     pub as_number: u32,
