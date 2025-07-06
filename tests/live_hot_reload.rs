@@ -11,7 +11,6 @@
 use anyhow::Result;
 use certwatch::core::PatternMatcher;
 use certwatch::matching::PatternWatcher;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use certwatch::network::CertStreamClient;

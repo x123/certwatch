@@ -31,17 +31,8 @@ window_seconds = 120
 recovery_check_domain = "google.com"
 
 [enrichment]
-# The ASN provider to use. Can be "Maxmind" or "Tsv".
-asn_provider = "Tsv"
-
-# Path to the MaxMind GeoLite2-ASN database file (only used if provider is "Maxmind").
-# asn_db_path = "tests/data/GeoLite2-ASN-Test.mmdb"
-
-# Path to the TSV ASN database file (only used if provider is "Tsv").
+# Path to the TSV ASN database file.
 asn_tsv_path = "ignored/ip2asn-combined.tsv"
-
-# Path to the MaxMind GeoLite2-Country database file.
-# geoip_db_path = "tests/data/GeoLite2-Country-Test.mmdb"
 
 [output]
 # The format to use for stdout output. Can be "Json" or "PlainText".

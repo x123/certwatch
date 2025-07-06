@@ -5,11 +5,11 @@
 
 use anyhow::Result;
 use certwatch::{
-    config::{AsnProvider, Config},
+    config::Config,
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
     dns::{DnsHealthMonitor, DnsResolutionManager, TrustDnsResolver},
-    enrichment::{tsv_lookup::TsvAsnLookup, MaxmindEnrichmentProvider},
+    enrichment::tsv_lookup::TsvAsnLookup,
     matching::PatternWatcher,
     metrics::logging_recorder::LoggingRecorder,
     network::CertStreamClient,
@@ -53,36 +53,18 @@ async fn main() -> Result<()> {
     // =========================================================================
     let pattern_matcher = Arc::new(PatternWatcher::new(config.matching.pattern_files.clone()).await?);
     let dns_resolver = Arc::new(TrustDnsResolver::new()?);
-    let enrichment_provider: Arc<dyn EnrichmentProvider> =
-        match config.enrichment.asn_provider {
-            AsnProvider::Maxmind => {
-                let asn_db_path = config.enrichment.asn_db_path.clone().ok_or_else(|| {
-                    anyhow::anyhow!("asn_db_path is required for Maxmind provider")
-                })?;
-                let geoip_db_path = config.enrichment.geoip_db_path.clone().ok_or_else(|| {
-                    anyhow::anyhow!("geoip_db_path is required for Maxmind provider")
-                })?;
-                if !asn_db_path.exists() {
-                    return Err(anyhow::anyhow!("Maxmind ASN database not found at {:?}", asn_db_path));
-                }
-                if !geoip_db_path.exists() {
-                    return Err(anyhow::anyhow!("Maxmind GeoIP database not found at {:?}", geoip_db_path));
-                }
-                Arc::new(MaxmindEnrichmentProvider::new(
-                    &asn_db_path,
-                    &geoip_db_path,
-                )?)
-            }
-            AsnProvider::Tsv => {
-                let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
-                    anyhow::anyhow!("asn_tsv_path is required for Tsv provider")
-                })?;
-                if !tsv_path.exists() {
-                    return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
-                }
-                Arc::new(TsvAsnLookup::new(&tsv_path)?)
-            }
-        };
+    // The enrichment provider is now determined by the presence of the tsv_path.
+    // If the path is not provided, the program will fail to start.
+    // A future improvement could be to use a "null" provider.
+    let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
+        anyhow::anyhow!("asn_tsv_path is required for enrichment")
+    })?;
+
+    if !tsv_path.exists() {
+        return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
+    }
+
+    let enrichment_provider: Arc<dyn EnrichmentProvider> = Arc::new(TsvAsnLookup::new(&tsv_path)?);
     let deduplicator = Arc::new(Deduplicator::new(
         Duration::from_secs(config.deduplication.cache_ttl_seconds),
         config.deduplication.cache_size as u64,

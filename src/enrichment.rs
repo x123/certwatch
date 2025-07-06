@@ -1,99 +1,17 @@
 pub mod tsv_lookup;
 // IP address enrichment services
 //
-// This module provides services for enriching IP addresses with ASN and GeoIP
-// data using MaxMind databases.
+// This module provides services for enriching IP addresses with ASN data.
 
-use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use maxminddb::{geoip2, Reader};
-use std::net::IpAddr;
-use std::path::Path;
-
-/// An enrichment provider that uses MaxMind DB files for ASN and GeoIP lookups.
-#[derive(Debug)]
-pub struct MaxmindEnrichmentProvider {
-    asn_reader: Reader<Vec<u8>>,
-    geoip_reader: Reader<Vec<u8>>,
-}
-
-impl MaxmindEnrichmentProvider {
-    /// Creates a new enrichment service from MaxMind database files.
-    ///
-    /// # Arguments
-    /// * `asn_db_path` - Path to the MaxMind GeoLite2-ASN.mmdb file.
-    /// * `geoip_db_path` - Path to the MaxMind GeoLite2-Country.mmdb file.
-    pub fn new<P: AsRef<Path>>(asn_db_path: P, geoip_db_path: P) -> Result<Self> {
-        let asn_reader = Reader::open_readfile(asn_db_path)
-            .map_err(|e| anyhow!("Failed to open MaxMind ASN database: {}", e))?;
-
-        let geoip_reader = Reader::open_readfile(geoip_db_path)
-            .map_err(|e| anyhow!("Failed to open MaxMind GeoIP database: {}", e))?;
-
-        Ok(Self {
-            asn_reader,
-            geoip_reader,
-        })
-    }
-}
-
-#[async_trait]
-impl EnrichmentProvider for MaxmindEnrichmentProvider {
-    async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
-        let asn_result = self.asn_reader.lookup::<geoip2::Asn>(ip);
-        let geoip_result = self.geoip_reader.lookup::<geoip2::Country>(ip);
-
-        let asn_data = match asn_result {
-            Ok(Some(asn)) => Some(asn),
-            Ok(None) => None, // Address not found in DB
-            Err(e) => {
-                log::warn!("ASN lookup failed for {}: {}", ip, e);
-                None
-            }
-        };
-
-        let country_code = match geoip_result {
-            Ok(Some(country)) => country
-                .country
-                .and_then(|c| c.iso_code)
-                .map(|s| s.to_string()),
-            Ok(None) => None, // Address not found in DB
-            Err(e) => {
-                log::warn!("GeoIP lookup failed for {}: {}", ip, e);
-                None
-            }
-        };
-
-        let data = if asn_data.is_some() || country_code.is_some() {
-            let as_number = asn_data
-                .as_ref()
-                .and_then(|a| a.autonomous_system_number)
-                .unwrap_or(0);
-
-            let as_name = asn_data
-                .and_then(|a| a.autonomous_system_organization)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("AS{}", as_number));
-
-            Some(AsnData {
-                as_number,
-                as_name,
-                country_code,
-            })
-        } else {
-            None
-        };
-
-        Ok(EnrichmentInfo { ip, data })
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
+    use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
+    use anyhow::{anyhow, Result};
+    use async_trait::async_trait;
     use std::collections::HashMap;
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Mutex;
 
     /// Fake enrichment provider for testing.

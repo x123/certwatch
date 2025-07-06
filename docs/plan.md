@@ -449,18 +449,18 @@ This epic refactors the output system to support multiple, configurable formats 
 ### **Epic 15: Simplify ASN Enrichment with High-Performance TSV Provider**
 This epic replaces the binary `maxminddb` dependency with a more transparent and simpler TSV-based provider, using an interval tree for high-performance lookups. This removes a complex dependency, simplifies the build, and makes the enrichment data easier to manage.
 
-- **#37 - Remove MaxMind Dependency and Implementation**
+- [x] **#37 - Remove MaxMind Dependency and Implementation**
   - **Context:** Completely remove all code, configuration, and dependencies related to the `MaxmindEnrichmentProvider`.
   - **Dependencies:** None
   - **Subtasks:**
-    - [ ] In `Cargo.toml`, remove the `maxminddb` dependency.
-    - [ ] In `src/config.rs`, remove the `Maxmind` variant from the `AsnProvider` enum and delete the `asn_db_path` and `geoip_db_path` fields.
-    - [ ] In `certwatch.toml`, remove the configuration examples for `asn_db_path` and `geoip_db_path`.
-    - [ ] In `src/main.rs`, delete the logic block for initializing the `MaxmindEnrichmentProvider`.
-    - [ ] In `src/enrichment.rs`, delete the `MaxmindEnrichmentProvider` struct and its `impl`.
-    - [ ] Delete the `tests/live_enrichment.rs` file.
-    - [ ] Delete the `tests/enrichment_integration.rs` file.
-    - [ ] Delete the `tests/data/GeoLite2-ASN-Test.mmdb` and `tests/data/GeoLite2-Country-Test.mmdb` files.
+    - [x] In `Cargo.toml`, remove the `maxminddb` dependency.
+    - [x] In `src/config.rs`, remove the `Maxmind` variant from the `AsnProvider` enum and delete the `asn_db_path` and `geoip_db_path` fields.
+    - [x] In `certwatch.toml`, remove the configuration examples for `asn_db_path` and `geoip_db_path`.
+    - [x] In `src/main.rs`, delete the logic block for initializing the `MaxmindEnrichmentProvider`.
+    - [x] In `src/enrichment.rs`, delete the `MaxmindEnrichmentProvider` struct and its `impl`.
+    - [x] Delete the `tests/live_enrichment.rs` file.
+    - [x] Delete the `tests/enrichment_integration.rs` file.
+    - [x] Delete the `tests/data/GeoLite2-ASN-Test.mmdb` and `tests/data/GeoLite2-Country-Test.mmdb` files.
 
 - **#38 - Implement Performance-Optimized TSV Provider**
   - **Context:** Create a new `TsvAsnLookup` that uses an interval tree for fast IP-to-ASN lookups from a TSV file.

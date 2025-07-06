@@ -18,7 +18,6 @@ ipnetwork = { version = "0.21.1", features = ["serde"] }
 # Dependencies for later tasks
 regex = "1.10"
 trust-dns-resolver = "0.23"
-maxminddb = "0.26.0"
 reqwest = { version = "0.12.22", features = ["json"] }
 moka = { version = "0.12", features = ["future"] }
 figment = { version = "0.10", features = ["toml", "env"] }
@@ -57,6 +56,3 @@ required-features = ["live-tests"]
 name = "live_hot_reload"
 required-features = ["live-tests"]
 
-[[test]]
-name = "live_enrichment"
-required-features = ["live-tests"]

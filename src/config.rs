@@ -79,23 +79,11 @@ pub struct DnsHealthConfig {
 }
 
 /// Configuration for IP address enrichment.
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum AsnProvider {
-    Maxmind,
-    Tsv,
-}
-
 /// Configuration for IP address enrichment.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct EnrichmentConfig {
-    /// The ASN provider to use.
-    pub asn_provider: AsnProvider,
-    /// Path to the MaxMind GeoLite2-ASN database file (if using Maxmind).
-    pub asn_db_path: Option<PathBuf>,
-    /// Path to the TSV ASN database file (if using Tsv).
+    /// Path to the TSV ASN database file.
     pub asn_tsv_path: Option<PathBuf>,
-    /// Path to the MaxMind GeoLite2-Country database file.
-    pub geoip_db_path: Option<PathBuf>,
 }
 
 /// The format for stdout output.
@@ -170,10 +158,7 @@ impl Default for Config {
                 },
             },
             enrichment: EnrichmentConfig {
-                asn_provider: AsnProvider::Maxmind,
-                asn_db_path: None,
                 asn_tsv_path: None,
-                geoip_db_path: None,
             },
             output: OutputConfig {
                 format: OutputFormat::PlainText,

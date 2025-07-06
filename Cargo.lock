@@ -300,7 +300,6 @@ dependencies = [
  "gag",
  "ipnetwork",
  "log",
- "maxminddb",
  "metrics",
  "metrics-util",
  "mockito",
@@ -1288,19 +1287,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
 dependencies = [
  "regex-automata 0.1.10",
-]
-
-[[package]]
-name = "maxminddb"
-version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a197e44322788858682406c74b0b59bf8d9b4954fe1f224d9a25147f1880bba"
-dependencies = [
- "ipnetwork",
- "log",
- "memchr",
- "serde",
- "thiserror 2.0.12",
 ]
 
 [[package]]
