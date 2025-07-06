@@ -7,7 +7,7 @@ use metrics;
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher, event::EventKind};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use regex::RegexSet;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -16,6 +16,7 @@ use tokio::fs;
 use crate::core::PatternMatcher;
 use crate::utils::heartbeat::run_heartbeat;
 use tokio::sync::{mpsc, watch};
+use tokio::time::Duration;
 
 /// High-performance regex matcher using RegexSet for efficient multi-pattern matching
 pub struct RegexMatcher {
@@ -171,11 +172,15 @@ impl PatternWatcher {
     async fn load_all_patterns(pattern_files: &[PathBuf]) -> Result<Vec<(String, String)>> {
         let mut all_patterns = Vec::new();
         for file_path in pattern_files {
-            match load_patterns_from_file(file_path).await {
-                Ok(mut patterns) => all_patterns.append(&mut patterns),
-                Err(e) => {
-                    log::warn!("Failed to load patterns from {:?}: {}", file_path, e);
-                    // Continue loading other files even if one fails
+            // Only attempt to load files that currently exist to avoid generating
+            // noisy errors and potential event loops on deleted files.
+            if tokio::fs::try_exists(file_path).await.unwrap_or(false) {
+                match load_patterns_from_file(file_path).await {
+                    Ok(mut patterns) => all_patterns.append(&mut patterns),
+                    Err(e) => {
+                        log::warn!("Failed to load patterns from {:?}: {}", file_path, e);
+                        // Continue loading other files even if one fails
+                    }
                 }
             }
         }
@@ -208,81 +213,104 @@ impl PatternWatcher {
     }
 
     /// Runs the file watcher loop
+    /// Runs the file watcher loop with debouncing
     async fn run_file_watcher(
         current_matcher: Arc<ArcSwap<RegexMatcher>>,
         pattern_files: Vec<PathBuf>,
         reload_notifier: Option<mpsc::Sender<()>>,
     ) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
-        
+        let (tx, mut rx) = mpsc::channel(1); // Channel capacity can be small
+
+        let watched_paths: Arc<HashSet<PathBuf>> = Arc::new(pattern_files.into_iter().collect());
+
         let mut watcher = RecommendedWatcher::new(
             move |res: Result<Event, notify::Error>| {
                 if let Ok(event) = res {
-                    if let Err(e) = tx.blocking_send(event) {
-                        log::error!("Failed to send file event: {}", e);
+                    // Ignore pure metadata events (like access/read) to prevent feedback
+                    // loops where our own reload logic triggers another watch event.
+                    // We are interested in creation, deletion, modification, and renames.
+                    if !matches!(event.kind, EventKind::Access(_)) {
+                        if let Err(e) = tx.blocking_send(()) {
+                            // This can happen on shutdown, so a warning is sufficient.
+                            log::warn!("Failed to send file event notification: {}", e);
+                        }
                     }
                 }
             },
             Config::default(),
         )?;
 
-        let watched_paths: HashSet<PathBuf> = pattern_files.into_iter().collect();
-
-        // Watch all parent directories of the pattern files
-        for path in &watched_paths {
+        // Watch all parent directories to capture renames, moves, and atomic writes.
+        for path in watched_paths.iter() {
             if let Some(parent) = path.parent() {
                 watcher.watch(parent, RecursiveMode::NonRecursive)?;
                 log::info!("Watching for changes to pattern file: {:?}", path);
             }
         }
 
-        // Process file events
-        while let Some(event) = rx.recv().await {
-            if Self::should_reload_patterns(&event, &watched_paths) {
-                log::info!("Pattern file change detected, reloading...");
+        const DEBOUNCE_DURATION: Duration = Duration::from_millis(250);
 
-                match Self::load_all_patterns(&watched_paths.iter().cloned().collect::<Vec<_>>()).await {
-                    Ok(patterns) => match RegexMatcher::new(patterns) {
-                        Ok(new_matcher) => {
-                            let old_count = current_matcher.load().patterns_count();
-                            let new_count = new_matcher.patterns_count();
-                            let diff = new_count as isize - old_count as isize;
-                            current_matcher.store(Arc::new(new_matcher));
-                            log::info!(
-                                "Successfully reloaded {} patterns ({:+})",
-                                new_count,
-                                diff
-                            );
-                            // Notify listeners that reload is complete
-                            if let Some(ref notifier) = reload_notifier {
-                                if notifier.send(()).await.is_err() {
-                                    log::warn!("Reload notifier channel closed");
-                                }
+        // Main event loop with debouncing logic
+        loop {
+            // Wait for the first event to start the debouncing window.
+            if rx.recv().await.is_none() {
+                break; // Exit if the channel is closed.
+            }
+
+            // Debounce: keep draining events until a quiet period is observed.
+            loop {
+                // If we don't receive another event within the debounce duration,
+                // we can proceed with the reload.
+                match tokio::time::timeout(DEBOUNCE_DURATION, rx.recv()).await {
+                    Ok(Some(_)) => {
+                        // Event received, continue draining.
+                        continue;
+                    }
+                    Ok(None) => {
+                        // Channel closed, exit the watcher loop.
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        // Timeout elapsed, meaning a quiet period was observed.
+                        // Break the drain loop to proceed with reloading.
+                        break;
+                    }
+                }
+            }
+
+            log::info!("File activity detected. Reloading patterns after debounce.");
+
+            let paths_to_load: Vec<PathBuf> = watched_paths.iter().cloned().collect();
+            match Self::load_all_patterns(&paths_to_load).await {
+                Ok(patterns) => match RegexMatcher::new(patterns) {
+                    Ok(new_matcher) => {
+                        let old_count = current_matcher.load().patterns_count();
+                        let new_count = new_matcher.patterns_count();
+                        let diff = new_count as isize - old_count as isize;
+                        current_matcher.store(Arc::new(new_matcher));
+                        log::info!(
+                            "Successfully reloaded {} patterns ({:+})",
+                            new_count,
+                            diff
+                        );
+                        // Notify listeners that reload is complete
+                        if let Some(ref notifier) = reload_notifier {
+                            if notifier.send(()).await.is_err() {
+                                log::warn!("Reload notifier channel closed");
                             }
                         }
-                        Err(e) => {
-                            log::error!("Failed to compile new patterns: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        log::error!("Failed to load patterns for reload: {}", e);
                     }
+                    Err(e) => {
+                        log::error!("Failed to compile new patterns: {}", e);
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to load patterns for reload: {}", e);
                 }
             }
         }
 
         Ok(())
-    }
-
-    /// Determines if a file event should trigger pattern reload
-    fn should_reload_patterns(event: &Event, watched_paths: &HashSet<PathBuf>) -> bool {
-        match event.kind {
-            EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                // Check if any of the changed paths match our pattern files
-                event.paths.iter().any(|path| watched_paths.contains(path))
-            }
-            _ => false,
-        }
     }
 }
 
@@ -466,61 +494,3 @@ mod tests {
         assert!(result.is_err(), "Expected error for nonexistent file");
     }
 }
-    #[tokio::test]
-    async fn test_pattern_file_deletion_triggers_reload() {
-        use tempfile::NamedTempFile;
-        use std::io::Write;
-        use tokio::sync::mpsc;
-        use notify::event::RemoveKind;
-
-        // Create two temporary files with one pattern each
-        let mut file1 = NamedTempFile::new().unwrap();
-        writeln!(file1, "pattern1.com").unwrap();
-        let path1 = file1.path().to_path_buf();
-
-        let mut file2 = NamedTempFile::new().unwrap();
-        writeln!(file2, "pattern2.com").unwrap();
-        let path2 = file2.path().to_path_buf();
-
-        let pattern_files = vec![path1.clone(), path2.clone()];
-        let watched_paths: HashSet<PathBuf> = pattern_files.into_iter().collect();
-
-        // Create a channel to receive reload notifications
-        let (reload_tx, mut reload_rx) = mpsc::channel(1);
-
-        // Create a mock event channel for the watcher
-        let (event_tx, mut event_rx) = mpsc::channel(1);
-
-        let initial_patterns = PatternWatcher::load_all_patterns(&watched_paths.iter().cloned().collect::<Vec<_>>()).await.unwrap();
-        let initial_matcher = RegexMatcher::new(initial_patterns).unwrap();
-        let current_matcher = Arc::new(ArcSwap::from_pointee(initial_matcher));
-
-        assert_eq!(current_matcher.load().patterns_count(), 2);
-
-        // Spawn a task that simulates the file watcher's core logic
-        let watcher_task = tokio::spawn(async move {
-            if let Some(event) = event_rx.recv().await {
-                if PatternWatcher::should_reload_patterns(&event, &watched_paths) {
-                    let patterns = PatternWatcher::load_all_patterns(&watched_paths.iter().cloned().collect::<Vec<_>>()).await.unwrap();
-                    let new_matcher = RegexMatcher::new(patterns).unwrap();
-                    current_matcher.store(Arc::new(new_matcher));
-                    reload_tx.send(()).await.unwrap();
-                }
-            }
-            current_matcher
-        });
-
-        // Drop the tempfile guard to delete the file on disk
-        drop(file1);
-
-        // Simulate a remove event
-        let remove_event = Event::new(EventKind::Remove(RemoveKind::File)).add_path(path1);
-        event_tx.send(remove_event).await.unwrap();
-
-        // Wait for the reload to complete
-        tokio::time::timeout(tokio::time::Duration::from_secs(2), reload_rx.recv()).await
-            .expect("Watcher did not reload after file deletion");
-
-        let final_matcher = watcher_task.await.unwrap();
-        assert_eq!(final_matcher.load().patterns_count(), 1, "Pattern count should be 1 after one file was deleted");
-    }

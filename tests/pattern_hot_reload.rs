@@ -6,9 +6,11 @@
 use anyhow::Result;
 use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
-use tempfile::NamedTempFile;
 use std::io::Write;
-use tokio::sync::watch;
+use tempfile::NamedTempFile;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::{mpsc, watch};
+use tokio::time::{sleep, Duration};
 
 #[tokio::test]
 async fn test_pattern_watcher_multiple_files() -> Result<()> {
@@ -89,6 +91,82 @@ async fn test_load_patterns_from_file_integration() -> Result<()> {
     assert!(pattern_strings.contains(&".*paypal.*".to_string()));
     assert!(pattern_strings.contains(&".*amazon.*secure.*".to_string()));
     assert!(pattern_strings.contains(&".*gooogle.*".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_debounced_hot_reload() -> Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    // --- Setup ---
+    // Create a temporary directory to ensure a clean watch environment
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.path().join("patterns.txt");
+
+    // Initial pattern - use fs::write to ensure truncation
+    tokio::fs::write(&temp_path, "initial.com\n").await?;
+
+    let (reload_tx, mut reload_rx) = mpsc::channel(10);
+    let (_shutdown_tx, mut shutdown_rx) = watch::channel(());
+
+    let watcher = PatternWatcher::with_notifier(
+        vec![temp_path.clone()],
+        Some(reload_tx),
+        Some(&mut shutdown_rx),
+    )
+    .await?;
+
+    // --- Initial State Verification ---
+    assert!(
+        watcher.match_domain("initial.com").await.is_some(),
+        "Initial pattern should match"
+    );
+    assert!(
+        watcher.match_domain("final.com").await.is_none(),
+        "Final pattern should not match yet"
+    );
+
+    // --- Simulate Rapid File Changes ---
+    // 1. Overwrite with a new pattern
+    tokio::fs::write(&temp_path, "interim.com\n").await?;
+    sleep(Duration::from_millis(50)).await;
+
+    // 2. Append another pattern using an async-aware file handle
+    let mut file = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(&temp_path)
+        .await?;
+    file.write_all(b"final.com\n").await?;
+    file.flush().await?;
+
+    // --- Verification ---
+    // Wait for the debounced reload to occur.
+    // The timeout should be longer than the debounce duration in `matching.rs`.
+    match tokio::time::timeout(Duration::from_secs(1), reload_rx.recv()).await {
+        Ok(Some(_)) => log::info!("Reload detected."),
+        _ => panic!("Watcher did not reload after file modification"),
+    }
+
+    // Ensure only one reload occurred despite multiple writes.
+    assert!(
+        reload_rx.try_recv().is_err(),
+        "Should only be one reload notification"
+    );
+
+    // Verify the final state of the patterns.
+    assert!(
+        watcher.match_domain("initial.com").await.is_none(),
+        "Initial pattern should be gone"
+    );
+    assert!(
+        watcher.match_domain("interim.com").await.is_some(),
+        "Interim pattern should match"
+    );
+    assert!(
+        watcher.match_domain("final.com").await.is_some(),
+        "Final pattern should match"
+    );
 
     Ok(())
 }

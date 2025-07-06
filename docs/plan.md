@@ -771,11 +771,12 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 ### Epic 26: Robust Pattern Hot-Reloading
 **User Story:** As an operator, I want the pattern hot-reloading to be completely reliable, correctly detecting all file changes, including renames and deletions, so that I can manage my detection rules with confidence.
 
-- [ ] **#73 - Implement Debounced Reloading**
-  - **Context:** The current file watcher is fragile and misses many filesystem events (e.g., `mv`), leading to stale rules. This task will replace the complex event-filtering logic with a simple, robust, time-based debouncing mechanism.
+- [x] **#73 - Implement Robust, Debounced Reloading**
+  - **Context:** The file watcher was fragile and prone to infinite loops. This task replaces the original logic with a robust, multi-stage solution: watching parent directories for all event types, using a "wait for quiescence" debouncer to handle event storms, and filtering out noisy `Access` events to prevent feedback loops.
   - **Dependencies:** #5
   - **Subtasks:**
-    - [ ] In `src/matching.rs`, remove the `should_reload_patterns` function.
-    - [ ] Modify the `run_file_watcher` task to use a debouncing strategy. When any relevant file event is received, the watcher will wait for a short, fixed period (e.g., 250ms) to ensure the filesystem is stable.
-    - [ ] After the debounce period, the watcher will unconditionally reload all patterns from the configured file paths.
-    - [ ] Update the unit tests to verify the new debounced reload logic.
+    - [x] Watch parent directories to reliably capture creations, deletions, and atomic renames.
+    - [x] Implement a "wait for quiescence" debouncer that only reloads after a period of filesystem stability.
+    - [x] Add `try_exists` check before loading files to prevent errors on deleted files.
+    - [x] Filter out `notify::EventKind::Access` events to break the reload-triggering-reload feedback loop.
+    - [x] Update integration tests to validate the final, robust implementation.
