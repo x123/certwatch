@@ -18,6 +18,8 @@ use crate::dns::DnsRetryConfig;
 /// The main configuration struct for the application.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    /// The logging level for the application.
+    pub log_level: String,
     /// Configuration for the CertStream network client.
     pub network: NetworkConfig,
     /// Configuration for pattern matching.
@@ -111,6 +113,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            log_level: "info".to_string(),
             network: NetworkConfig {
                 certstream_url: "wss://certstream.calidog.io".to_string(),
                 sample_rate: 1.0,

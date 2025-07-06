@@ -28,11 +28,11 @@ blake3 = "1.5"
 # WebSocket dependencies for Epic 2
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 futures-util = "0.3"
-native-tls = { version = "0.2", optional = true }
-tokio-native-tls = { version = "0.3", optional = true }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 
 [features]
-live-tests = ["native-tls", "tokio-native-tls"]
+live-tests = []
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -46,6 +46,7 @@ pub struct CertStreamClient {
     url: String,
     output_tx: tokio::sync::mpsc::Sender<Vec<String>>,
     sample_rate: f64,
+    allow_invalid_certs: bool,
 }
 
 impl CertStreamClient {
@@ -55,10 +56,12 @@ impl CertStreamClient {
     /// * `url` - The WebSocket URL to connect to (e.g., "wss://certstream.calidog.io")
     /// * `output_tx` - Channel sender to send parsed domain lists to the next stage
     /// * `sample_rate` - A float between 0.0 and 1.0 indicating the percentage of domains to process
+    /// * `allow_invalid_certs` - Whether to allow self-signed TLS certificates
     pub fn new(
         url: String,
         output_tx: tokio::sync::mpsc::Sender<Vec<String>>,
         sample_rate: f64,
+        allow_invalid_certs: bool,
     ) -> Self {
         assert!(
             (0.0..=1.0).contains(&sample_rate),
@@ -68,6 +71,7 @@ impl CertStreamClient {
             url,
             output_tx,
             sample_rate,
+            allow_invalid_certs,
         }
     }
 
@@ -129,43 +133,25 @@ impl CertStreamClient {
 
     /// Connects to the WebSocket URL and runs the message processing loop
     async fn connect_and_run(&self) -> Result<()> {
-        use tokio_tungstenite::connect_async;
+        use tokio_tungstenite::Connector;
 
-        // For local testing with self-signed certificates, use a custom connector
-        #[cfg(feature = "live-tests")]
-        if self.url.starts_with("wss://") && self.url.contains("127.0.0.1") {
-            use tokio_tungstenite::Connector;
-            // Create TLS connector that accepts self-signed certificates
+        let connector = if self.allow_invalid_certs {
             let mut tls_connector = native_tls::TlsConnector::builder();
             tls_connector.danger_accept_invalid_certs(true);
-            tls_connector.danger_accept_invalid_hostnames(true);
             let tls_connector = tls_connector
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to create TLS connector: {}", e))?;
+            Some(Connector::NativeTls(tls_connector))
+        } else {
+            None
+        };
 
-            let connector = Connector::NativeTls(tls_connector);
+        let request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(&self.url).unwrap();
 
-            // Connect with custom TLS configuration
-            let request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(&self.url).unwrap();
-            let (ws_stream, _) =
-                tokio_tungstenite::connect_async_tls_with_config(request, None, false, Some(connector))
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "Failed to connect to {} with custom TLS: {}",
-                            self.url,
-                            e
-                        )
-                    })?;
-
-            log::info!("Connected to {} with custom TLS", self.url);
-            return self.process_messages(ws_stream).await;
-        }
-
-        // Standard connection for non-local or non-SSL URLs
-        let (ws_stream, _) = connect_async(&self.url)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
+        let (ws_stream, _) =
+            tokio_tungstenite::connect_async_tls_with_config(request, None, false, connector)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
 
         log::info!("Connected to {}", self.url);
         self.process_messages(ws_stream).await

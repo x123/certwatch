@@ -39,7 +39,7 @@ where
     let (tx, rx) = mpsc::channel(100);
 
     // Connect to CertStream
-    let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx, 1.0); // 1.0 sample rate for tests
+    let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx, 1.0, true); // 1.0 sample rate for tests, allow invalid certs
     println!("CertStreamClient initialized.");
 
     // Spawn the client to run in the background

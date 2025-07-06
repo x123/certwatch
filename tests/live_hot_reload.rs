@@ -35,13 +35,12 @@ async fn live_hot_reload() -> Result<()> {
     let (reload_tx, mut reload_rx) = mpsc::channel(1);
 
     // 3. Initialize the PatternWatcher with the notifier
-    let mut pattern_files = HashMap::new();
-    pattern_files.insert(pattern_path.clone(), "live-hot-reload-test".to_string());
+    let pattern_files = vec![pattern_path.clone()];
     let watcher = PatternWatcher::with_notifier(pattern_files, Some(reload_tx)).await?;
 
     // 4. Setup communication channel and client
     let (tx, mut rx) = mpsc::channel(100);
-    let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx);
+    let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx, 1.0, true);
 
     // 5. Spawn the client to run in the background
     tokio::spawn(async move {

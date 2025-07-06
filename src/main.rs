@@ -21,18 +21,24 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load configuration first, so we can use it for logging
+    // In a real app, this path would come from a CLI argument.
+    let config = Config::load("certwatch.toml").unwrap_or_else(|err| {
+        // Manually initialize logger for this error message
+        env_logger::init();
+        error!("Failed to load configuration: {}", err);
+        // Fallback to default for basic operation if config file is missing
+        Config::default()
+    });
+
     // Initialize logging
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&config.log_level))
+        .init();
 
     info!("CertWatch starting up...");
 
     // Load configuration
     // In a real app, this path would come from a CLI argument.
-    let config = Config::load("certwatch.toml").unwrap_or_else(|err| {
-        error!("Failed to load configuration: {}", err);
-        // Fallback to default for basic operation if config file is missing
-        Config::default()
-    });
 
     // =========================================================================
     // 1. Instantiate Services
@@ -77,6 +83,7 @@ async fn main() -> Result<()> {
         config.network.certstream_url.clone(),
         domains_tx,
         config.network.sample_rate,
+        config.network.allow_invalid_certs,
     );
     tokio::spawn(async move {
         if let Err(e) = certstream_client.run().await {

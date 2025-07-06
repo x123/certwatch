@@ -1,0 +1,36 @@
+# CertWatch Configuration File
+
+log_level = "debug"
+
+[network]
+certstream_url = "wss://127.0.0.1:8181/domains-only"
+sample_rate = 1.0
+allow_invalid_certs = true
+
+[matching]
+# A list of file paths containing regex patterns.
+# For example: pattern_files = ["/path/to/your/patterns.txt"]
+pattern_files = ["tests/data/test-regex.txt"]
+
+[dns]
+resolver_pool_size = 10
+
+# DNS retry and backoff settings.
+standard_retries = 3
+standard_initial_backoff_ms = 500
+nxdomain_retries = 5
+nxdomain_initial_backoff_ms = 10000
+
+[enrichment]
+# Path to the MaxMind GeoLite2-ASN database file.
+asn_db_path = "tests/data/GeoLite2-ASN-Test.mmdb"
+# Path to the MaxMind GeoLite2-Country database file.
+geoip_db_path = "tests/data/GeoLite2-Country-Test.mmdb"
+
+[output]
+stdout_enabled = true
+# slack = { webhook_url = "https://hooks.slack.com/services/..." }
+
+[deduplication]
+cache_size = 100000
+cache_ttl_seconds = 3600
