@@ -40,3 +40,12 @@
 
         Ticket: CERT-15
         ```
+
+
+## 6. Task Completion & Handoff Protocol
+
+- **Update Plan:** Upon completing a task, the agent **must** first mark the corresponding task(s) as complete (e.g., `[x]`) in `docs/plan.md`.
+- **Validate Before Committing:** After updating the plan, the agent **must** run the full test suite (`cargo test --all-features`) to ensure no regressions have been introduced.
+- **Propose a Clear Commit:** After successful test execution, the agent **must** propose a well-structured commit message that adheres to the project's established conventions.
+- **Await User Approval:** The agent **must not** proceed to the next task until the user has explicitly confirmed that they have tested the application's functionality and approved the changes. This serves as a formal handoff and validation gate.
+
