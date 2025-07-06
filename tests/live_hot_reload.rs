@@ -17,7 +17,7 @@ use certwatch::network::CertStreamClient;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use chrono::Local;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 mod common;
@@ -35,7 +35,10 @@ async fn live_hot_reload() -> Result<()> {
 
     // 3. Initialize the PatternWatcher with the notifier
     let pattern_files = vec![pattern_path.clone()];
-    let watcher = PatternWatcher::with_notifier(pattern_files, Some(reload_tx)).await?;
+    let (_shutdown_tx, mut shutdown_rx) = watch::channel(());
+    let watcher =
+        PatternWatcher::with_notifier(pattern_files, Some(reload_tx), Some(&mut shutdown_rx))
+            .await?;
 
     // 4. Setup communication channel and client
     let (tx, mut rx) = mpsc::channel(100);

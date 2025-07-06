@@ -5,6 +5,8 @@ use metrics_util::registry::{AtomicStorage, Registry};
 use std::sync::Arc;
 use std::time::Duration;
 use std::sync::atomic::Ordering;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 /// A metrics recorder that periodically logs all captured metrics to `log::info!`.
 pub struct LoggingRecorder {
@@ -16,50 +18,60 @@ impl LoggingRecorder {
     ///
     /// # Arguments
     /// * `aggregation_interval` - The interval at which to log the metrics.
-    pub fn new(aggregation_interval: Duration) -> Self {
+    pub fn new(
+        aggregation_interval: Duration,
+        mut shutdown_rx: watch::Receiver<()>,
+    ) -> (Self, JoinHandle<()>) {
         let registry = Arc::new(Registry::new(AtomicStorage));
         let recorder = Self {
             registry: registry.clone(),
         };
 
         // Spawn a background task to log metrics periodically
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(aggregation_interval);
             loop {
-                ticker.tick().await;
-                log::debug!("--- Metrics Snapshot ---");
+                tokio::select! {
+                    _ = ticker.tick() => {
+                        log::debug!("--- Metrics Snapshot ---");
 
-                for (key, counter) in registry.get_counter_handles() {
-                    let value = counter.load(Ordering::Relaxed);
-                    if key.name().starts_with("agg.") {
-                        // Aggregated metrics are logged at DEBUG level and reset.
-                        if value > 0 {
-                            let key_name = key.name();
-                            let message = if key_name == "agg.domains_sent_to_output" {
-                                format!("Sent {} domains to output channel in the last {}s", value, aggregation_interval.as_secs())
-                            } else if key_name == "agg.alerts_sent" {
-                                format!("Sent {} alerts in the last {}s", value, aggregation_interval.as_secs())
+                        for (key, counter) in registry.get_counter_handles() {
+                            let value = counter.load(Ordering::Relaxed);
+                            if key.name().starts_with("agg.") {
+                                // Aggregated metrics are logged at DEBUG level and reset.
+                                if value > 0 {
+                                    let key_name = key.name();
+                                    let message = if key_name == "agg.domains_sent_to_output" {
+                                        format!("Sent {} domains to output channel in the last {}s", value, aggregation_interval.as_secs())
+                                    } else if key_name == "agg.alerts_sent" {
+                                        format!("Sent {} alerts in the last {}s", value, aggregation_interval.as_secs())
+                                    } else {
+                                        format!("[Agg. Counter] {}: {}", key, value)
+                                    };
+                                    log::debug!("{}", message);
+                                    counter.store(0, Ordering::Relaxed);
+                                }
                             } else {
-                                format!("[Agg. Counter] {}: {}", key, value)
-                            };
-                            log::debug!("{}", message);
-                            counter.store(0, Ordering::Relaxed);
+                                // Standard metrics are logged at INFO level.
+                                log::info!("[Counter] {}: {}", key, value);
+                            }
                         }
-                    } else {
-                        // Standard metrics are logged at INFO level.
-                        log::info!("[Counter] {}: {}", key, value);
+
+                        for (key, gauge) in registry.get_gauge_handles() {
+                            let value = f64::from_bits(gauge.load(Ordering::Relaxed));
+                            log::info!("[Gauge] {}: {}", key, value as u64);
+                        }
+                        // Note: Histograms are not logged in this simple implementation
+                    }
+                    _ = shutdown_rx.changed() => {
+                        log::info!("Metrics logging task received shutdown signal.");
+                        break;
                     }
                 }
-
-                for (key, gauge) in registry.get_gauge_handles() {
-                    let value = f64::from_bits(gauge.load(Ordering::Relaxed));
-                    log::info!("[Gauge] {}: {}", key, value as u64);
-                }
-                // Note: Histograms are not logged in this simple implementation
             }
         });
 
-        recorder
+        (recorder, handle)
     }
 }
 
@@ -99,7 +111,9 @@ mod tests {
     async fn test_aggregation_resets_counter() {
         // 1. Create a recorder with a short interval.
         let interval = Duration::from_millis(50);
-        let recorder = LoggingRecorder::new(interval);
+        // Keep the sender alive so the background task doesn't exit immediately.
+        let (tx, rx) = watch::channel(());
+        let (recorder, handle) = LoggingRecorder::new(interval, rx);
         let registry = recorder.registry.clone();
 
         // 2. Register a counter.
@@ -116,7 +130,10 @@ mod tests {
             .get(&counter_key)
             .unwrap()
             .load(Ordering::Relaxed);
-        assert_eq!(initial_value, 5, "Counter should have the initial incremented value");
+        assert_eq!(
+            initial_value, 5,
+            "Counter should have the initial incremented value"
+        );
 
         // 4. Wait for the aggregation task to run.
         tokio::time::sleep(interval + Duration::from_millis(20)).await;
@@ -127,6 +144,13 @@ mod tests {
             .get(&counter_key)
             .unwrap()
             .load(Ordering::Relaxed);
-        assert_eq!(value_after_reset, 0, "Aggregated counter should be reset to 0 after the interval");
+        assert_eq!(
+            value_after_reset, 0,
+            "Aggregated counter should be reset to 0 after the interval"
+        );
+
+        // 6. Cleanly shut down the task to avoid test warnings.
+        drop(tx);
+        let _ = handle.await;
     }
 }

@@ -684,6 +684,13 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
   - **Action:** The core logic currently in the `main` processing loop will be moved inside each worker task.
   - **Details:** Each worker will loop, receiving a single domain from the queue and then performing the full sequence of operations on it: pattern matching, DNS resolution, enrichment, and alert generation.
 
+- [x] **#76.1 - Implement Ordered Graceful Shutdown**
+  - **Action:** Refactor the shutdown logic to prevent race conditions and ensure clean termination.
+  - **Details:**
+    - [x] Implement a cascading shutdown sequence where the `CertStreamClient` termination closes the domain channel, which in turn signals workers to exit.
+    - [x] The `output_task` and `nxdomain_feedback_task` now terminate naturally when their upstream channels close, preventing "channel closed" errors.
+    - [x] This resolves a critical deadlock that prevented the application from exiting cleanly with Ctrl-C.
+
 - [ ] **#77 - Add Configuration and Metrics for the New Queue**
   - **Action:** Add a new configuration option and a metric to monitor the new architecture.
   - **Details:**

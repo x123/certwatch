@@ -8,6 +8,7 @@ use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
 use tempfile::NamedTempFile;
 use std::io::Write;
+use tokio::sync::watch;
 
 #[tokio::test]
 async fn test_pattern_watcher_multiple_files() -> Result<()> {
@@ -31,7 +32,8 @@ async fn test_pattern_watcher_multiple_files() -> Result<()> {
     let pattern_files = vec![temp_path1, temp_path2];
 
     // Create PatternWatcher
-    let watcher = PatternWatcher::new(pattern_files).await?;
+    let (_shutdown_tx, shutdown_rx) = watch::channel(());
+    let watcher = PatternWatcher::new(pattern_files, shutdown_rx).await?;
 
     // Test that patterns from both files work
     let result = watcher.match_domain("test.malware.com").await;

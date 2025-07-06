@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use crate::core::PatternMatcher;
 
 /// High-performance regex matcher using RegexSet for efficient multi-pattern matching
@@ -127,14 +127,18 @@ impl PatternWatcher {
     /// # Returns
     /// * `Ok(PatternWatcher)` if initialization succeeds
     /// * `Err` if pattern loading or file watching setup fails
-    pub async fn new(pattern_files: Vec<PathBuf>) -> Result<Self> {
-        Self::with_notifier(pattern_files, None).await
+    pub async fn new(
+        pattern_files: Vec<PathBuf>,
+        mut shutdown_rx: watch::Receiver<()>,
+    ) -> Result<Self> {
+        Self::with_notifier(pattern_files, None, Some(&mut shutdown_rx)).await
     }
 
     /// Creates a new PatternWatcher with a reload notifier for testing
     pub async fn with_notifier(
         pattern_files: Vec<PathBuf>,
         reload_notifier: Option<mpsc::Sender<()>>,
+        shutdown_rx: Option<&mut watch::Receiver<()>>,
     ) -> Result<Self> {
         // Load initial patterns from all files
         let initial_patterns = Self::load_all_patterns(&pattern_files).await?;
@@ -148,7 +152,11 @@ impl PatternWatcher {
         };
 
         // Start file watching in background
-        watcher.start_file_watcher(pattern_files, reload_notifier).await?;
+        if let Some(shutdown_rx) = shutdown_rx {
+            watcher
+                .start_file_watcher(pattern_files, reload_notifier, shutdown_rx.clone())
+                .await?;
+        }
 
         Ok(watcher)
     }
@@ -173,14 +181,20 @@ impl PatternWatcher {
         &self,
         pattern_files: Vec<PathBuf>,
         reload_notifier: Option<mpsc::Sender<()>>,
+        mut shutdown_rx: watch::Receiver<()>,
     ) -> Result<()> {
         let current_matcher = self.current_matcher.clone();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                Self::run_file_watcher(current_matcher, pattern_files, reload_notifier).await
-            {
-                log::error!("File watcher error: {}", e);
+            tokio::select! {
+                res = Self::run_file_watcher(current_matcher, pattern_files, reload_notifier) => {
+                    if let Err(e) = res {
+                        log::error!("File watcher error: {}", e);
+                    }
+                }
+                _ = shutdown_rx.changed() => {
+                    log::info!("Pattern watcher received shutdown signal.");
+                }
             }
         });
 

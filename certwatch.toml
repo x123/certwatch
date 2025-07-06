@@ -1,6 +1,6 @@
 # CertWatch Configuration File
 
-log_level = "info"
+log_level = "debug"
 #log_level = "error"
 
 # The number of concurrent domain processing tasks.

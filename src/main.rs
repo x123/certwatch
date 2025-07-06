@@ -20,7 +20,7 @@ use certwatch::{
 use clap::Parser;
 use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{mpsc, Mutex, watch};
+use tokio::{sync::{mpsc, Mutex, watch}, task::JoinHandle};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -112,23 +112,33 @@ async fn main() -> Result<()> {
     info!("-------------------------------------------------------");
 
     // =========================================================================
+    // Create Shutdown Channel
+    // =========================================================================
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+
+    // =========================================================================
     // Initialize Metrics Recorder if enabled
     // =========================================================================
+    let mut metrics_task: Option<JoinHandle<()>> = None;
     if config.metrics.log_metrics {
         info!(
             "Logging recorder enabled. Metrics will be printed every {} seconds.",
             config.metrics.log_aggregation_seconds
         );
-        let recorder = LoggingRecorder::new(Duration::from_secs(
-            config.metrics.log_aggregation_seconds,
-        ));
+        let (recorder, handle) = LoggingRecorder::new(
+            Duration::from_secs(config.metrics.log_aggregation_seconds),
+            shutdown_rx.clone(),
+        );
         metrics::set_global_recorder(recorder).expect("Failed to install logging recorder");
+        metrics_task = Some(handle);
     }
 
     // =========================================================================
     // 1. Instantiate Services
     // =========================================================================
-    let pattern_matcher = Arc::new(PatternWatcher::new(config.matching.pattern_files.clone()).await?);
+    let pattern_matcher = Arc::new(
+        PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
+    );
     let dns_resolver = Arc::new(dns_resolver);
     // The enrichment provider is now determined by the presence of the tsv_path.
     // If the path is not provided, the program will fail to start.
@@ -166,7 +176,6 @@ async fn main() -> Result<()> {
     // =========================================================================
     let (domains_tx, domains_rx) = mpsc::channel::<String>(config.performance.queue_capacity);
     let (alerts_tx, mut alerts_rx) = mpsc::channel::<Alert>(1000);
-    let (shutdown_tx, shutdown_rx) = watch::channel(());
 
     // =========================================================================
     // 4. Start the CertStream Client
@@ -201,7 +210,7 @@ async fn main() -> Result<()> {
     let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
         dns_resolver.clone(),
         config.dns.retry_config.clone(),
-        dns_health_monitor,
+        dns_health_monitor.clone(),
     );
     let dns_manager = Arc::new(dns_manager);
 
@@ -276,32 +285,35 @@ async fn main() -> Result<()> {
         worker_handles.push(handle);
     }
 
+    // Drop the main thread's reference to the DNS manager. This allows the
+    // NXDOMAIN feedback loop to terminate when all workers are done and drop
+    // their references to the manager.
+
     // =========================================================================
     // 7. NXDOMAIN Resolution Feedback Loop
     // =========================================================================
     let nxdomain_feedback_task = {
         let alerts_tx = alerts_tx.clone();
         let enrichment_provider = enrichment_provider.clone();
-        let mut shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv() => {
-                        info!(
-                            "Domain previously NXDOMAIN now resolves: {} ({})",
-                            domain, source_tag
-                        );
-                        let alert = build_alert(domain, source_tag, true, dns_info, enrichment_provider.clone()).await;
-                        if let Err(e) = alerts_tx.send(alert).await {
-                            error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
-                        }
-                    },
-                    _ = shutdown_rx.changed() => {
-                        info!("NXDOMAIN feedback loop received shutdown signal.");
-                        break;
-                    }
+            while let Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv().await {
+                info!(
+                    "Domain previously NXDOMAIN now resolves: {} ({})",
+                    domain, source_tag
+                );
+                let alert = build_alert(
+                    domain,
+                    source_tag,
+                    true,
+                    dns_info,
+                    enrichment_provider.clone(),
+                )
+                .await;
+                if let Err(e) = alerts_tx.send(alert).await {
+                    error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
                 }
             }
+            info!("NXDOMAIN feedback loop finished.");
         })
     };
 
@@ -309,24 +321,16 @@ async fn main() -> Result<()> {
     // 8. Alert Deduplication and Output Task
     // =========================================================================
     let output_task = {
-        let mut shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    Some(alert) = alerts_rx.recv() => {
-                        if !deduplicator.is_duplicate(&alert).await {
-                            metrics::counter!("agg.alerts_sent").increment(1);
-                            if let Err(e) = output_manager.send_alert(&alert).await {
-                                error!("Failed to send alert via output manager: {}", e);
-                            }
-                        }
-                    },
-                    _ = shutdown_rx.changed() => {
-                        info!("Output task received shutdown signal.");
-                        break;
+            while let Some(alert) = alerts_rx.recv().await {
+                if !deduplicator.is_duplicate(&alert).await {
+                    metrics::counter!("agg.alerts_sent").increment(1);
+                    if let Err(e) = output_manager.send_alert(&alert).await {
+                        error!("Failed to send alert via output manager: {}", e);
                     }
                 }
             }
+            info!("Output task finished.");
         })
     };
 
@@ -361,7 +365,20 @@ async fn main() -> Result<()> {
         error!("Output task panicked: {:?}", e);
     }
 
+    if let Some(handle) = metrics_task {
+        if let Err(e) = handle.await {
+            error!("Metrics task panicked: {:?}", e);
+        }
+    }
+
     info!("All tasks shut down. Exiting.");
+
+    // Explicitly drop all components holding an Arc to the DNS resolver.
+    // This ensures the resolver's background threads are shut down correctly.
+    drop(dns_manager);
+    drop(dns_health_monitor);
+    drop(dns_resolver);
+    info!("DNS resolver shut down.");
 
     Ok(())
 }
