@@ -3,6 +3,7 @@
 //! This library provides the core functionality for monitoring certificate
 //! transparency logs and detecting suspicious domain registrations.
 
+pub mod cli;
 pub mod config;
 pub mod core;
 pub mod deduplication;
