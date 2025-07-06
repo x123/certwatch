@@ -15,7 +15,7 @@ pub mod deduplication;
 pub mod dns;
 pub mod enrichment;
 pub mod matching;
-pub mod metrics;
+pub mod internal_metrics;
 pub mod network;
 pub mod outputs;
 

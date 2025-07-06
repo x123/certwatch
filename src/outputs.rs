@@ -1,4 +1,5 @@
-//! Service for sending alerts to various output destinations.
+use metrics;
+// Service for sending alerts to various output destinations.
 
 use crate::{
     config::OutputFormat,

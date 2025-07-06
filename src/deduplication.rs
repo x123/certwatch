@@ -1,4 +1,5 @@
-//! Service for filtering duplicate alerts.
+use metrics;
+// Service for filtering duplicate alerts.
 
 use crate::core::Alert;
 use moka::future::Cache;

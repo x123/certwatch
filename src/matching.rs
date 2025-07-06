@@ -1,7 +1,8 @@
-//! Pattern matching engine for domain detection
-//!
-//! This module implements high-performance regex matching against thousands
-//! of patterns with hot-reload capability.
+use metrics;
+// Pattern matching engine for domain detection
+//
+// This module implements high-performance regex matching against thousands
+// of patterns with hot-reload capability.
 
 use anyhow::Result;
 use arc_swap::ArcSwap;

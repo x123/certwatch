@@ -1,7 +1,8 @@
-//! Network client for CertStream WebSocket connection
-//! 
-//! This module handles connecting to the certstream websocket, parsing
-//! messages, and managing reconnection logic.
+use metrics;
+// Network client for CertStream WebSocket connection
+//
+// This module handles connecting to the certstream websocket, parsing
+// messages, and managing reconnection logic.
 
 use crate::utils::heartbeat::run_heartbeat;
 use anyhow::Result;

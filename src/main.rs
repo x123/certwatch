@@ -1,7 +1,8 @@
-//! CertWatch - Certificate Transparency Log Monitor
-//!
-//! A high-performance Rust application for monitoring certificate transparency
-//! logs and detecting suspicious domain registrations in real-time.
+use metrics;
+// CertWatch - Certificate Transparency Log Monitor
+//
+// A high-performance Rust application for monitoring certificate transparency
+// logs and detecting suspicious domain registrations in real-time.
 
 use anyhow::Result;
 use certwatch::{
@@ -13,7 +14,7 @@ use certwatch::{
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     enrichment::tsv_lookup::TsvAsnLookup,
     matching::PatternWatcher,
-    metrics::logging_recorder::LoggingRecorder,
+    internal_metrics::logging_recorder::LoggingRecorder,
     network::CertStreamClient,
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };

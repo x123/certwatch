@@ -1,7 +1,8 @@
-//! DNS resolution service with dual-curve retry logic
-//!
-//! This module implements DNS resolution with separate retry strategies
-//! for standard failures and NXDOMAIN responses.
+use metrics;
+// DNS resolution service with dual-curve retry logic
+//
+// This module implements DNS resolution with separate retry strategies
+// for standard failures and NXDOMAIN responses.
 
 pub mod health;
 
