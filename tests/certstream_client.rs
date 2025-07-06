@@ -49,7 +49,7 @@ impl WebSocketConnection for FakeWebSocket {
             *index += 1;
             
             match message_result {
-                Some(Ok(text)) => Some(Ok(Message::Text(text.clone()))),
+                Some(Ok(text)) => Some(Ok(Message::Text(text.clone().into()))),
                 Some(Err(_e)) => {
                     // Create a simple WebSocket error for testing
                     Some(Err(WsError::ConnectionClosed))

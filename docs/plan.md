@@ -429,13 +429,13 @@ This epic refactors the output system to support multiple, configurable formats 
    - [x] Update `ipnetwork` from `0.20` to `0.21.1`, enabling the `serde` feature.
    - [x] Update `maxminddb` from `0.24` to `0.26.0` and refactor error handling.
 
-- **#35 - Update Network Client Dependencies**
- - **Context:** Update the networking clients, which are more likely to have breaking changes.
- - **Dependencies:** #34
- - **Subtasks:**
-   - [ ] Update `reqwest` from `0.11.27` to `0.12.22`.
-   - [ ] Update `tokio-tungstenite` from `0.20.1` to `0.27`.
-   - [ ] Run all tests, including live tests, to ensure no regressions.
+- [x] **#35 - Update Network Client Dependencies**
+  - **Context:** Update the networking clients, which are more likely to have breaking changes.
+  - **Dependencies:** #34
+  - **Subtasks:**
+    - [x] Update `reqwest` from `0.11.27` to `0.12.22`.
+    - [x] Update `tokio-tungstenite` from `0.20.1` to `0.27`.
+    - [x] Run all tests, including live tests, to ensure no regressions.
 
 - **#36 - Update High-Risk `notify` Dependency**
  - **Context:** Update the `notify` crate, which has a major version bump and is likely to have significant breaking changes.

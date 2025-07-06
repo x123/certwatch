@@ -146,10 +146,8 @@ impl CertStreamClient {
             None
         };
 
-        let request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(&self.url).unwrap();
-
         let (ws_stream, _) =
-            tokio_tungstenite::connect_async_tls_with_config(request, None, false, connector)
+            tokio_tungstenite::connect_async_tls_with_config(&self.url, None, false, connector)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
 
@@ -168,7 +166,7 @@ impl CertStreamClient {
         use futures_util::{SinkExt, StreamExt};
 
         // Send a ping to the server to keep the connection alive
-        ws_stream.send(Message::Ping(vec![])).await?;
+        ws_stream.send(Message::Ping(vec![].into())).await?;
 
         while let Some(msg_result) = ws_stream.next().await {
             match msg_result {
