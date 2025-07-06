@@ -37,6 +37,62 @@ async fn main() -> Result<()> {
 
     info!("CertWatch starting up...");
 
+    // Log the loaded configuration settings for visibility
+    info!("-------------------- Configuration --------------------");
+    info!("Log Level: {}", config.log_level);
+    info!("Log Metrics: {}", config.log_metrics);
+    info!("CertStream URL: {}", config.network.certstream_url);
+    info!("Sample Rate: {}", config.network.sample_rate);
+    let (dns_resolver, nameservers) = TrustDnsResolver::from_config(&config.dns)?;
+    if let Some(resolver) = &config.dns.resolver {
+        info!("DNS Resolver: {}", resolver);
+    } else {
+        let ns_str: Vec<String> = nameservers.iter().map(|s| s.to_string()).collect();
+        info!("DNS Resolver: System Default ({})", ns_str.join(", "));
+    }
+    if let Some(timeout) = config.dns.timeout_ms {
+        info!("DNS Timeout: {}ms", timeout);
+    }
+    info!(
+        "DNS Standard Retries: {}",
+        config.dns.retry_config.standard_retries
+    );
+    info!(
+        "DNS Standard Backoff: {}ms",
+        config.dns.retry_config.standard_initial_backoff_ms
+    );
+    info!(
+        "DNS NXDOMAIN Retries: {}",
+        config.dns.retry_config.nxdomain_retries
+    );
+    info!(
+        "DNS NXDOMAIN Backoff: {}ms",
+        config.dns.retry_config.nxdomain_initial_backoff_ms
+    );
+    if let Some(path) = &config.enrichment.asn_tsv_path {
+        info!("ASN TSV Path: {}", path.display());
+    } else {
+        info!("ASN TSV Path: Not configured");
+    }
+    info!("Output Format: {}", config.output.format);
+    info!(
+        "Slack Output: {}",
+        if config.output.slack.is_some() {
+            "Enabled"
+        } else {
+            "Disabled"
+        }
+    );
+    info!(
+        "Deduplication Cache Size: {}",
+        config.deduplication.cache_size
+    );
+    info!(
+        "Deduplication Cache TTL: {}s",
+        config.deduplication.cache_ttl_seconds
+    );
+    info!("-------------------------------------------------------");
+
     // =========================================================================
     // Initialize Metrics Recorder if enabled
     // =========================================================================
@@ -51,7 +107,7 @@ async fn main() -> Result<()> {
     // 1. Instantiate Services
     // =========================================================================
     let pattern_matcher = Arc::new(PatternWatcher::new(config.matching.pattern_files.clone()).await?);
-    let dns_resolver = Arc::new(TrustDnsResolver::new()?);
+    let dns_resolver = Arc::new(dns_resolver);
     // The enrichment provider is now determined by the presence of the tsv_path.
     // If the path is not provided, the program will fail to start.
     // A future improvement could be to use a "null" provider.

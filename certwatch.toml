@@ -15,6 +15,11 @@ pattern_files = ["ignored/phishing.txt"]
 # pattern_files = ["ignored/phishing.txt", "ignored/dot-top.txt"]
 
 [dns]
+# Optional: Specify a custom DNS resolver. If commented out, uses the system default.
+# resolver = "192.168.1.1:53"
+
+# Optional: Specify the timeout for a single DNS query in milliseconds.
+# timeout_ms = 5000
 
 # DNS retry and backoff settings.
 standard_retries = 3

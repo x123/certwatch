@@ -60,14 +60,12 @@ impl Provider for Cli {
         }
 
         if let Some(timeout) = self.dns_timeout_ms {
-            // TODO: This maps to only one of the two retry backoffs. Re-evaluate.
-            dict.insert(
-                "dns.retry_config.standard_initial_backoff_ms".into(),
-                Value::from(timeout),
-            );
+            dict.insert("dns.timeout_ms".into(), Value::from(timeout));
         }
-        
-        // TODO: The `dns_resolver` argument is not yet supported in the config struct.
+
+        if let Some(resolver) = self.dns_resolver.as_ref() {
+            dict.insert("dns.resolver".into(), Value::from(resolver.clone()));
+        }
 
         if self.log_metrics {
             dict.insert("log_metrics".into(), Value::from(true));

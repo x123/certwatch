@@ -13,6 +13,7 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
 
 /// The main configuration struct for the application.
@@ -58,6 +59,11 @@ pub struct MatchingConfig {
 /// Configuration for DNS resolution.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DnsConfig {
+    /// The IP address of the DNS resolver to use (e.g., "8.8.8.8:53").
+    /// If not set, the system's default resolver will be used.
+    pub resolver: Option<String>,
+    /// The timeout in milliseconds for a single DNS query.
+    pub timeout_ms: Option<u64>,
     /// DNS retry and backoff settings.
     #[serde(flatten)]
     pub retry_config: DnsRetryConfig,
@@ -65,8 +71,19 @@ pub struct DnsConfig {
     pub health: DnsHealthConfig,
 }
 
+impl Default for DnsConfig {
+    fn default() -> Self {
+        Self {
+            resolver: None,
+            timeout_ms: Some(5000),
+            retry_config: DnsRetryConfig::default(),
+            health: DnsHealthConfig::default(),
+        }
+    }
+}
+
 /// Configuration for the DNS health monitor.
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DnsHealthConfig {
     /// The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
     pub failure_threshold: f64,
@@ -74,6 +91,16 @@ pub struct DnsHealthConfig {
     pub window_seconds: u64,
     /// A known-good domain to resolve to check for recovery.
     pub recovery_check_domain: String,
+}
+
+impl Default for DnsHealthConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 0.95,
+            window_seconds: 120,
+            recovery_check_domain: "google.com".to_string(),
+        }
+    }
 }
 
 /// Configuration for IP address enrichment.
@@ -89,6 +116,15 @@ pub struct EnrichmentConfig {
 pub enum OutputFormat {
     Json,
     PlainText,
+}
+
+impl fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OutputFormat::Json => write!(f, "JSON"),
+            OutputFormat::PlainText => write!(f, "PlainText"),
+        }
+    }
 }
 
 /// Configuration for output and alerting.
@@ -154,14 +190,7 @@ impl Default for Config {
             matching: MatchingConfig {
                 pattern_files: vec![],
             },
-            dns: DnsConfig {
-                retry_config: DnsRetryConfig::default(),
-                health: DnsHealthConfig {
-                    failure_threshold: 0.95,
-                    window_seconds: 120,
-                    recovery_check_domain: "google.com".to_string(),
-                },
-            },
+            dns: DnsConfig::default(),
             enrichment: EnrichmentConfig {
                 asn_tsv_path: None,
             },

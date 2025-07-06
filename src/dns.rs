@@ -6,16 +6,19 @@
 pub mod health;
 
 use crate::core::{DnsInfo, DnsResolver};
+use crate::config::DnsConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 pub use health::DnsHealthMonitor;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Instant};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
+use trust_dns_resolver::{
+    config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
+    system_conf, TokioAsyncResolver,
+};
 
 /// Configuration for DNS retry policies
 use serde::{Deserialize, Serialize};
@@ -49,19 +52,57 @@ pub struct TrustDnsResolver {
 }
 
 impl TrustDnsResolver {
-    /// Creates a new DNS resolver with default configuration
-    pub fn new() -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(
-            ResolverConfig::default(),
-            ResolverOpts::default(),
-        );
-        Ok(Self { resolver })
-    }
+    /// Creates a new DNS resolver from the application's DNS configuration.
+    pub fn from_config(config: &DnsConfig) -> Result<(Self, Vec<SocketAddr>)> {
+        let (resolver_config, nameservers) = if let Some(resolver_addr_str) = &config.resolver {
+            // If a specific resolver is provided, use it exclusively.
+            let mut custom_config = ResolverConfig::new();
+            let socket_addr: SocketAddr = resolver_addr_str.parse()?;
+            custom_config.add_name_server(NameServerConfig::new(socket_addr, Protocol::Udp));
+            (custom_config, vec![socket_addr])
+        } else {
+            // Otherwise, try to get the system's nameservers, but nothing else.
+            let (system_config, _) = system_conf::read_system_conf()?;
+            let mut clean_config = ResolverConfig::new();
+            let mut nameservers = Vec::new();
 
-    /// Creates a new DNS resolver with custom configuration
-    pub fn with_config(config: ResolverConfig, opts: ResolverOpts) -> Self {
-        let resolver = TokioAsyncResolver::tokio(config, opts);
-        Self { resolver }
+            if system_config.name_servers().is_empty() {
+                log::warn!("No system DNS servers found, falling back to Cloudflare DNS.");
+                clean_config = ResolverConfig::cloudflare();
+                // We know what Cloudflare's IPs are
+                nameservers.push("1.1.1.1:53".parse()?);
+                nameservers.push("1.0.0.1:53".parse()?);
+            } else {
+                for ns in system_config.name_servers() {
+                    // Only add UDP servers to avoid duplicates in logging
+                    if ns.protocol == Protocol::Udp {
+                        clean_config.add_name_server(ns.clone());
+                        nameservers.push(ns.socket_addr);
+                    }
+                }
+                // If no UDP servers were found, add all to be safe
+                if nameservers.is_empty() {
+                    for ns in system_config.name_servers() {
+                        clean_config.add_name_server(ns.clone());
+                        nameservers.push(ns.socket_addr);
+                    }
+                }
+            }
+            (clean_config, nameservers)
+        };
+
+        let mut resolver_opts = ResolverOpts::default();
+        // Set ndots to 1 to prevent the resolver from appending local search domains.
+        // This ensures that we are always resolving the FQDN from the cert stream.
+        resolver_opts.ndots = 1;
+
+        // Override the timeout if specified in our application config.
+        if let Some(timeout_ms) = config.timeout_ms {
+            resolver_opts.timeout = Duration::from_millis(timeout_ms);
+        }
+
+        let resolver = TokioAsyncResolver::tokio(resolver_config, resolver_opts);
+        Ok((Self { resolver }, nameservers))
     }
 }
 
@@ -405,14 +446,19 @@ mod tests {
     #[tokio::test]
     async fn test_dns_resolution_manager_standard_retry() {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsRetryConfig {
+        let retry_config = DnsRetryConfig {
             standard_retries: 2,
             standard_initial_backoff_ms: 10, // Short delay for testing
             ..Default::default()
         };
+        let config = DnsConfig {
+            retry_config,
+            ..Default::default()
+        };
 
         let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
+        let (manager, _) =
+            DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
 
         // Configure resolver to fail twice, then succeed
         fake_resolver.set_error_response("flaky.com", "Timeout");
@@ -428,10 +474,11 @@ mod tests {
     #[tokio::test]
     async fn test_dns_resolution_manager_nxdomain_immediate_error() {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsRetryConfig::default();
+        let config = DnsConfig::default();
 
         let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
+        let (manager, _) =
+            DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
 
         // Configure resolver to return NXDOMAIN
         fake_resolver.set_error_response("nonexistent.com", "NXDOMAIN");
@@ -447,10 +494,11 @@ mod tests {
     #[tokio::test]
     async fn test_dns_resolution_manager_success() {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsRetryConfig::default();
+        let config = DnsConfig::default();
 
         let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
+        let (manager, _) =
+            DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
 
         let mut dns_info = DnsInfo::default();
         dns_info.a_records.push("1.2.3.4".parse().unwrap());
@@ -465,15 +513,22 @@ mod tests {
     #[tokio::test]
     async fn test_nxdomain_retry_task_sends_resolved_domain() {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsRetryConfig {
+        let retry_config = DnsRetryConfig {
             nxdomain_retries: 1,
             nxdomain_initial_backoff_ms: 10, // Short delay for testing
             ..Default::default()
         };
+        let config = DnsConfig {
+            retry_config,
+            ..Default::default()
+        };
 
         let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, mut resolved_rx) =
-            DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
+        let (manager, mut resolved_rx) = DnsResolutionManager::new(
+            fake_resolver.clone(),
+            config.retry_config,
+            health_monitor,
+        );
 
         // Configure resolver to return NXDOMAIN initially
         fake_resolver.set_error_response("newly-active.com", "NXDOMAIN");

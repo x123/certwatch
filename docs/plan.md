@@ -534,18 +534,20 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **User Story:** As an operator, I want to specify which DNS resolver to use and control the query timeout via the config file or command line, so I can adapt the tool to different network environments.
 
 **Tasks:**
-  - [ ] **#51: Implement DNS Query Timeout:**
+  - [x] **#51: Implement DNS Query Timeout:**
     - In `src/config.rs`, add a `dns_timeout_ms: u64` field to `DnsConfig`.
     - In `src/cli.rs`, ensure the `--dns-timeout-ms` flag correctly maps to this new config field.
     - In `src/dns.rs`, modify `TrustDnsResolver` to accept the timeout and use it to configure the `ResolverOpts` of the underlying resolver. This timeout will apply to each individual query before the retry logic is triggered.
     - In `main.rs`, pass the configured timeout when creating the `TrustDnsResolver`.
-  - [ ] **#52: Implement Selectable DNS Resolver:**
+  - [x] **#52: Implement Selectable DNS Resolver:**
     - In `src/config.rs`, add a `dns_resolver: Option<String>` field to `DnsConfig`.
     - In `src/cli.rs`, ensure the `--dns-resolver` flag maps to this field.
     - In `src/dns.rs`, modify `TrustDnsResolver` to accept an optional resolver IP. If provided, it will configure `trust-dns-resolver` to use that specific nameserver.
     - In `main.rs`, pass the configured resolver when creating the `TrustDnsResolver`.
-  - [ ] **#53: Update DNS Documentation:**
+  - [x] **#53: Update DNS Documentation:**
     - Update `docs/specs.md` and `README.md` to accurately describe the functionality of the `--dns-resolver` and `--dns-timeout-ms` options.
+  - [x] **#53.1: Log active configuration:**
+    - Log the active DNS resolver, timeout, and other important settings at application startup to improve operational visibility.
 
 ---
 

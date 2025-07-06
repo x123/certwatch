@@ -89,16 +89,23 @@ Once configured, you can run the application:
 ./target/release/certwatch
 ```
 
-## Metrics Logging
+## Command-Line Arguments
 
-To enable periodic metrics logging to the console, run the application with the
-`--log-metrics` flag:
+You can override settings from `certwatch.toml` using command-line arguments.
+
+| Flag | Description | Config Key |
+| --- | --- | --- |
+| `-c, --config <FILE>` | Path to a different TOML configuration file. | N/A |
+| `--dns-resolver <IP>` | IP address of the DNS resolver to use (e.g., "8.8.8.8:53"). | `dns.resolver` |
+| `--dns-timeout-ms <MS>` | Timeout for a single DNS query in milliseconds. | `dns.timeout_ms` |
+| `--sample-rate <RATE>` | Sampling rate for the certstream (0.0 to 1.0). | `network.sample_rate` |
+| `--log-metrics` | Periodically log key metrics to the console. | `log_metrics` |
+
+**Example:**
 
 ```bash
-./target/release/certwatch --log-metrics
+./target/release/certwatch --dns-resolver 1.1.1.1:53 --log-metrics
 ```
-
-Metrics will be printed to the standard log output every 10 seconds.
 
 ## Further Reading
 
