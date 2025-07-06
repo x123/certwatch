@@ -444,3 +444,45 @@ This epic refactors the output system to support multiple, configurable formats 
     - [x] Update `notify` from `6.1.1` to `8.1.0`.
     - [x] Refactor the `PatternWatcher` to be compatible with the new version.
     - [x] Run all tests, including live tests, to ensure no regressions.
+
+---
+### **Epic 15: Simplify ASN Enrichment with High-Performance TSV Provider**
+This epic replaces the binary `maxminddb` dependency with a more transparent and simpler TSV-based provider, using an interval tree for high-performance lookups. This removes a complex dependency, simplifies the build, and makes the enrichment data easier to manage.
+
+- **#37 - Remove MaxMind Dependency and Implementation**
+  - **Context:** Completely remove all code, configuration, and dependencies related to the `MaxmindEnrichmentProvider`.
+  - **Dependencies:** None
+  - **Subtasks:**
+    - [ ] In `Cargo.toml`, remove the `maxminddb` dependency.
+    - [ ] In `src/config.rs`, remove the `Maxmind` variant from the `AsnProvider` enum and delete the `asn_db_path` and `geoip_db_path` fields.
+    - [ ] In `certwatch.toml`, remove the configuration examples for `asn_db_path` and `geoip_db_path`.
+    - [ ] In `src/main.rs`, delete the logic block for initializing the `MaxmindEnrichmentProvider`.
+    - [ ] In `src/enrichment.rs`, delete the `MaxmindEnrichmentProvider` struct and its `impl`.
+    - [ ] Delete the `tests/live_enrichment.rs` file.
+    - [ ] Delete the `tests/enrichment_integration.rs` file.
+    - [ ] Delete the `tests/data/GeoLite2-ASN-Test.mmdb` and `tests/data/GeoLite2-Country-Test.mmdb` files.
+
+- **#38 - Implement Performance-Optimized TSV Provider**
+  - **Context:** Create a new `TsvAsnLookup` that uses an interval tree for fast IP-to-ASN lookups from a TSV file.
+  - **Dependencies:** #37
+  - **Subtasks:**
+    - [ ] In `Cargo.toml`, add the `csv` and `rangetree` (or a similar interval tree) crates.
+    - [ ] In `src/enrichment/tsv_lookup.rs`, implement the `TsvAsnLookup` struct.
+    - [ ] The `TsvAsnLookup::new()` constructor will parse a TSV file (`CIDR\tAS_Number\tAS_Name`) and build an interval tree from the CIDR ranges.
+    - [ ] The `lookup()` method will perform a fast query against the interval tree.
+    - [ ] Update `src/main.rs` to initialize the `TsvAsnLookup` provider.
+
+- **#39 - Create New Tests for TSV Provider**
+  - **Context:** Add comprehensive tests for the new TSV-based enrichment provider.
+  - **Dependencies:** #38
+  - **Subtasks:**
+    - [ ] Create a new test data file `tests/data/ip-to-asn-test.tsv`.
+    - [ ] Create a new integration test file `tests/tsv_enrichment.rs` to validate the parsing and lookup logic against the test TSV file.
+    - [ ] Ensure all tests pass, including running `cargo test --all-features`.
+
+- **#40 - Update Documentation**
+  - **Context:** Update all relevant documentation to reflect the removal of MaxMind and the new TSV-based implementation.
+  - **Dependencies:** #38
+  - **Subtasks:**
+    - [ ] Review and update `docs/specs.md` to remove any references to the MaxMind database and describe the new TSV file format and configuration.
+    - [ ] Update the main `README.md` if it contains any setup instructions related to MaxMind.
