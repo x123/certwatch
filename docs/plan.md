@@ -642,7 +642,7 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [ ] Change the key for `resolved_after_nxdomain` alerts to include both the domain and the source tag.
     - [ ] Update the corresponding unit test to assert that "first resolution" alerts for different source tags are not treated as duplicates.
 
-- [x] **#72 - Ensure Atomic State Updates in DNS Health Recovery**
+- [x] **#71 - Ensure Atomic State Updates in DNS Health Recovery**
   - **Context:** The DNS health recovery logic has a potential race condition. This task will make the state transition atomic.
   - **Dependencies:** #24
   - **Subtasks:**
@@ -650,7 +650,7 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [ ] Ensure the mutex lock is held for the entire duration of the state change (from `Unhealthy` to `Healthy`) and the clearing of outcomes.
     - [ ] Add a comment explaining why the lock is held to ensure atomicity.
 
-- **#73 - Handle File Deletion Events in Pattern Watcher**
+- [ ] **#72 - Handle File Deletion Events in Pattern Watcher**
   - **Context:** The file watcher for pattern hot-reloading does not handle file deletions. This task will add support for `Remove` events.
   - **Dependencies:** #5
   - **Subtasks:**
@@ -658,16 +658,50 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [ ] Add a unit test to verify that deleting a pattern file correctly triggers a reload and removes the associated patterns.
 
 ---
+### Epic 25.5: Decouple Ingress from Processing to Fix Bottleneck
+**User Story:** As a security operator, I want the application to process every domain from the CertStream source without dropping messages, so that I have maximum visibility and do not miss potential threats due to internal performance bottlenecks.
+**Technical Goal:** Refactor the application to use a fan-out worker pool architecture. This will decouple the high-speed network client from the slower, resource-intensive domain processing logic, eliminating the current performance bottleneck and allowing the system to process the full volume of the CertStream firehose.
+
+- [ ] **#73 - Introduce Central Domain Queue**
+  - **Action:** In `main.rs`, create a new `mpsc` channel specifically for queuing individual `String` domains.
+  - **Details:** This channel will act as the central work buffer between the network client and the processing workers. It should be configured with a large capacity (e.g., 100,000) to handle traffic bursts.
+
+- [ ] **#74 - Refactor `CertStreamClient` for Fan-Out**
+  - **Action:** Modify the `CertStreamClient` in `src/network.rs` to push individual domains into the new central queue.
+  - **Details:**
+    - [ ] Update `CertStreamClient::new` to accept a `Sender<String>`.
+    - [ ] In `handle_message`, iterate through the parsed `Vec<String>` of domains.
+    - [ ] For each domain, use a non-blocking `try_send` to place it onto the central queue.
+    - [ ] If `try_send` fails (meaning the queue is full), increment a "dropped_domains" metric and log a warning. This prevents the network client from ever blocking on a full channel.
+
+- [ ] **#75 - Implement the Worker Pool**
+  - **Action:** In `main.rs`, replace the existing single processing loop with a pool of worker tasks.
+  - **Details:**
+    - [ ] Spawn a number of asynchronous tasks equal to the `concurrency` setting from `certwatch.toml`.
+    - [ ] Each worker task will be given a clone of the `Receiver` end of the central domain queue.
+
+- [ ] **#76 - Adapt Worker Logic for Single-Domain Processing**
+  - **Action:** The core logic currently in the `main` processing loop will be moved inside each worker task.
+  - **Details:** Each worker will loop, receiving a single domain from the queue and then performing the full sequence of operations on it: pattern matching, DNS resolution, enrichment, and alert generation.
+
+- [ ] **#77 - Add Configuration and Metrics for the New Queue**
+  - **Action:** Add a new configuration option and a metric to monitor the new architecture.
+  - **Details:**
+    - [ ] Add `queue_capacity` to `certwatch.toml` under a new `[performance]` or similar section.
+    - [ ] Create a new `Gauge` metric named `domain_queue_fill_ratio` to monitor how full the queue is.
+    - [ ] Create a new `Counter` metric named `dropped_domains` to track domains lost due to a full queue.
+
+---
 ### Epic 26: Codebase Hygiene & Refinement
 **User Story:** As a developer, I want the codebase to be clean, idiomatic, and efficient, so that it is easy to maintain and extend.
 
-- **#74 - Correct Rust Edition in `Cargo.toml`**
+- [ ] **#78 - Correct Rust Edition in `Cargo.toml`**
   - **Context:** The Rust edition in `Cargo.toml` is invalid.
   - **Dependencies:** None
   - **Subtasks:**
     - [ ] In `Cargo.toml`, change the `edition` from `"2024"` to `"2021"`.
 
-- **#75 - Align Configuration and Runtime Requirements for ASN Path**
+- [ ] **#79 - Align Configuration and Runtime Requirements for ASN Path**
   - **Context:** The ASN TSV path is optional in the config but required at runtime. This task will align the two.
   - **Dependencies:** #10
   - **Subtasks:**
@@ -675,35 +709,35 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [ ] Update the `Config::default()` implementation to provide a sensible default (e.g., an empty path).
     - [ ] Update `main.rs` to provide a clear error message if the required file does not exist at the specified path.
 
-- **#76 - Refactor `DnsHealthMonitor` Constructor Signature**
+- [ ] **#80 - Refactor `DnsHealthMonitor` Constructor Signature**
   - **Context:** The `DnsHealthMonitor::new` constructor returns an `Arc<Self>`, which is unconventional.
   - **Dependencies:** #24
   - **Subtasks:**
     - [ ] In `src/dns/health.rs`, change the `new` function to return `Self`.
     - [ ] In `main.rs`, update the call site to wrap the returned monitor in an `Arc`.
 
-- **#77 - Modernize `NXDOMAIN` Retry Loop with `sleep_until`**
+- [ ] **#81 - Modernize `NXDOMAIN` Retry Loop with `sleep_until`**
   - **Context:** The `NXDOMAIN` retry loop can be simplified and made more efficient.
   - **Dependencies:** #6
   - **Subtasks:**
     - [ ] In `src/dns.rs`, refactor the `nxdomain_retry_task`.
     - [ ] Replace the `select!` loop and manual `sleep` calculation with `tokio::time::sleep_until`.
 
-- **#78 - Use Non-Blocking Send in File Watcher Callback**
+- [ ] **#82 - Use Non-Blocking Send in File Watcher Callback**
   - **Context:** The file watcher uses a blocking send in an async context.
   - **Dependencies:** #5
   - **Subtasks:**
     - [ ] In `src/matching.rs`, change the `blocking_send` to a non-blocking `try_send`.
     - [ ] Log a warning if the channel is full, indicating that events may have been dropped.
 
-- **#79 - Use Asynchronous I/O for Stdout Output**
+- [ ] **#83 - Use Asynchronous I/O for Stdout Output**
   - **Context:** The `StdoutOutput` uses blocking I/O in an async task.
   - **Dependencies:** #8
   - **Subtasks:**
     - [ ] In `src/outputs.rs`, refactor `StdoutOutput::send_alert`.
     - [ ] Replace `std::io::stdout` with `tokio::io::stdout` and use `AsyncWriteExt` for non-blocking writes.
 
-- **#80 - Optimize `format_plain_text` by Removing `HashMap`**
+- [ ] **#84 - Optimize `format_plain_text` by Removing `HashMap`**
   - **Context:** The `format_plain_text` function is inefficient due to unnecessary `HashMap` creation.
   - **Dependencies:** #20
   - **Subtasks:**

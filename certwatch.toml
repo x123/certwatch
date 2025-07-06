@@ -20,7 +20,7 @@ allow_invalid_certs = true
 # A list of file paths containing regex patterns.
 # For example: pattern_files = ["/path/to/your/patterns.txt"]
 # pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt"]
-pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt", "ignored/dot-top.txt"]
+pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt", "ignored/dot-top.txt", "ignored/many-tlds.txt"]
 
 [dns]
 # Optional: Specify a custom DNS resolver. If commented out, uses the system default.
