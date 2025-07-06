@@ -42,7 +42,7 @@ This review has identified one critical performance bottleneck, a significant co
 
 *   **File**: [`src/config.rs:128`](src/config.rs:128) and [`src/main.rs:131-133`](src/main.rs:131)
 *   **Issue**: `enrichment.asn_tsv_path` is optional in the config but required at runtime, causing a panic if not present.
-*   **Suggestion**: If enrichment is required, make `asn_tsv_path` non-optional in `EnrichmentConfig`. If it is optional, handle the `None` case in `main.rs` by substituting a "null" enrichment provider.
+*   **Suggestion**: Enrichment is required, so make `asn_tsv_path` non-optional in `EnrichmentConfig`.
 
 #### 3.3.2. DNS Module
 *   **File**: [`src/dns/health.rs:36`](src/dns/health.rs:36)
@@ -60,7 +60,7 @@ This review has identified one critical performance bottleneck, a significant co
 #### 3.3.3. Matching Module
 *   **File**: [`src/matching.rs:258`](src/matching.rs:258)
 *   **Issue**: The file watcher does not handle `Remove` events for pattern files.
-*   **Suggestion**: Update `should_reload_patterns` to also trigger on `Remove` events.
+*   **Suggestion**: Update `should_reload_patterns` to also trigger on `Remove` events (both of entries within a file, or the entire file itself).
 
 *   **File**: [`src/matching.rs:198`](src/matching.rs:198)
 *   **Issue**: The file watcher callback uses a blocking send (`blocking_send`) in an async context.
