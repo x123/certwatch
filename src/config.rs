@@ -6,14 +6,14 @@
 //! with environment variables.
 
 use anyhow::Result;
+use crate::{cli::Cli, dns::DnsRetryConfig};
+use clap::Parser;
 use figment::{
-    providers::{Format, Toml, Env, Serialized},
+    providers::{Env, Format, Serialized, Toml},
     Figment,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-use crate::dns::DnsRetryConfig;
 
 /// The main configuration struct for the application.
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -119,17 +119,25 @@ pub struct DeduplicationConfig {
 }
 
 impl Config {
-    /// Loads the application configuration from the specified file.
+    /// Loads the application configuration.
     ///
-    /// # Arguments
-    /// * `config_path` - The path to the TOML configuration file.
-    pub fn load(config_path: &str) -> Result<Self> {
-        let config: Config = Figment::new()
+    /// This function builds the final configuration by layering different sources
+    /// in the following order of precedence (from lowest to highest):
+    /// 1. Default values.
+    /// 2. Configuration file (`certwatch.toml` or specified by `--config`).
+    /// 3. Environment variables (prefixed with `CERTWATCH_`).
+    /// 4. Command-line arguments.
+    pub fn load() -> Result<Self> {
+        let cli = Cli::parse();
+        let config_path = cli.config.clone().unwrap_or_else(|| "certwatch.toml".into());
+
+        let figment = Figment::new()
             .merge(Serialized::defaults(Config::default()))
             .merge(Toml::file(config_path))
-            // Allow overriding with environment variables, e.g., CERTWATCH_LOG_METRICS=true
             .merge(Env::prefixed("CERTWATCH_"))
-            .extract()?;
+            .merge(cli);
+
+        let config: Config = figment.extract()?;
         Ok(config)
     }
 }

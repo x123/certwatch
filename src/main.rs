@@ -22,14 +22,13 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load configuration first, so we can use it for logging
-    // In a real app, this path would come from a CLI argument.
-    let config = Config::load("certwatch.toml").unwrap_or_else(|err| {
-        // Manually initialize logger for this error message
+    // Load configuration by layering sources: defaults, file, environment, and CLI args.
+    let config = Config::load().unwrap_or_else(|err| {
+        // Manually initialize logger for this specific error
         env_logger::init();
         error!("Failed to load configuration: {}", err);
-        // Fallback to default for basic operation if config file is missing
-        Config::default()
+        // Exit if configuration fails, as it's a critical step.
+        std::process::exit(1);
     });
 
     // Initialize logging
