@@ -277,7 +277,7 @@ impl PatternWatcher {
     /// Determines if a file event should trigger pattern reload
     fn should_reload_patterns(event: &Event, watched_paths: &HashSet<PathBuf>) -> bool {
         match event.kind {
-            EventKind::Modify(_) | EventKind::Create(_) => {
+            EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
                 // Check if any of the changed paths match our pattern files
                 event.paths.iter().any(|path| watched_paths.contains(path))
             }
@@ -466,3 +466,61 @@ mod tests {
         assert!(result.is_err(), "Expected error for nonexistent file");
     }
 }
+    #[tokio::test]
+    async fn test_pattern_file_deletion_triggers_reload() {
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+        use tokio::sync::mpsc;
+        use notify::event::RemoveKind;
+
+        // Create two temporary files with one pattern each
+        let mut file1 = NamedTempFile::new().unwrap();
+        writeln!(file1, "pattern1.com").unwrap();
+        let path1 = file1.path().to_path_buf();
+
+        let mut file2 = NamedTempFile::new().unwrap();
+        writeln!(file2, "pattern2.com").unwrap();
+        let path2 = file2.path().to_path_buf();
+
+        let pattern_files = vec![path1.clone(), path2.clone()];
+        let watched_paths: HashSet<PathBuf> = pattern_files.into_iter().collect();
+
+        // Create a channel to receive reload notifications
+        let (reload_tx, mut reload_rx) = mpsc::channel(1);
+
+        // Create a mock event channel for the watcher
+        let (event_tx, mut event_rx) = mpsc::channel(1);
+
+        let initial_patterns = PatternWatcher::load_all_patterns(&watched_paths.iter().cloned().collect::<Vec<_>>()).await.unwrap();
+        let initial_matcher = RegexMatcher::new(initial_patterns).unwrap();
+        let current_matcher = Arc::new(ArcSwap::from_pointee(initial_matcher));
+
+        assert_eq!(current_matcher.load().patterns_count(), 2);
+
+        // Spawn a task that simulates the file watcher's core logic
+        let watcher_task = tokio::spawn(async move {
+            if let Some(event) = event_rx.recv().await {
+                if PatternWatcher::should_reload_patterns(&event, &watched_paths) {
+                    let patterns = PatternWatcher::load_all_patterns(&watched_paths.iter().cloned().collect::<Vec<_>>()).await.unwrap();
+                    let new_matcher = RegexMatcher::new(patterns).unwrap();
+                    current_matcher.store(Arc::new(new_matcher));
+                    reload_tx.send(()).await.unwrap();
+                }
+            }
+            current_matcher
+        });
+
+        // Drop the tempfile guard to delete the file on disk
+        drop(file1);
+
+        // Simulate a remove event
+        let remove_event = Event::new(EventKind::Remove(RemoveKind::File)).add_path(path1);
+        event_tx.send(remove_event).await.unwrap();
+
+        // Wait for the reload to complete
+        tokio::time::timeout(tokio::time::Duration::from_secs(2), reload_rx.recv()).await
+            .expect("Watcher did not reload after file deletion");
+
+        let final_matcher = watcher_task.await.unwrap();
+        assert_eq!(final_matcher.load().patterns_count(), 1, "Pattern count should be 1 after one file was deleted");
+    }
