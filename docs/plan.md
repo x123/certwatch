@@ -295,3 +295,41 @@ This epic refactors the output system to support multiple, configurable formats 
   - **Subtasks:**
     - [x] In `src/outputs.rs`, add unit tests specifically for the `format_plain_text` function, covering various alert types.
     - [x] Update the existing `StdoutOutput` tests to verify that both `Json` and `PlainText` formats work correctly based on the configuration.
+
+---
+### Epic 11: Stateful DNS Health Monitoring
+
+**User Story:** As an operator, I want the system to be resilient to intermittent DNS failures, logging them as warnings. However, I want to be clearly alerted with an error if DNS resolution appears to be systemically failing, suggesting a problem with the resolver itself.
+
+---
+
+- **#24 - Implement DNS Health Monitor**
+  - **Context:** Create a dedicated health monitoring component that wraps the DNS resolver. It will track the failure rate over a configurable time window and manage the resolver's state (`Healthy`, `Unhealthy`) to provide a clear signal of systemic DNS problems.
+  - **Dependencies:** #6 (DNS Resolver Service)
+  - **Subtasks:**
+    - [ ] In a new module `src/dns/health.rs`, define a `DnsHealthMonitor` struct.
+    - [ ] The monitor will maintain internal state: a deque of recent resolution outcomes (success/failure timestamps) and the current `HealthState` enum (`Healthy`, `Unhealthy`).
+    - [ ] Implement a `check_health()` method that is called on every resolution attempt. This method will record the outcome and recalculate the failure rate over the configured time window.
+    - [ ] If the failure rate exceeds the configured threshold, transition the state to `Unhealthy` and log a single, clear `ERROR` message.
+    - [ ] While `Unhealthy`, subsequent individual DNS failures should be logged at a `DEBUG` level to prevent log spam.
+    - [ ] Implement a background recovery check task. While `Unhealthy`, this task will periodically attempt to resolve a known-good domain (e.g., `google.com`).
+    - [ ] If the recovery check succeeds, transition the state back to `Healthy` and log an `INFO` message.
+
+- **#25 - Integrate Health Monitor into Application**
+  - **Context:** Wire the new `DnsHealthMonitor` into the main application pipeline.
+  - **Dependencies:** #24
+  - **Subtasks:**
+    - [ ] In `src/config.rs`, add a `DnsHealthConfig` struct with fields for `failure_threshold` (e.g., 0.95), `window_seconds` (e.g., 120), and `recovery_check_domain` (e.g., "google.com").
+    - [ ] In `src/dns.rs`, modify `DnsResolutionManager` to take an `Arc<DnsHealthMonitor>` as a dependency.
+    - [ ] In `resolve_with_retry`, call the health monitor's `check_health()` method after each resolution attempt.
+    - [ ] In `main.rs`, instantiate the `DnsHealthMonitor` and inject it into the `DnsResolutionManager`.
+    - [ ] Modify the main processing loop in `main.rs` to change the log level for individual DNS failures from `ERROR` to `WARN`. The health monitor will be responsible for escalating to `ERROR`.
+
+- **#26 - Add Tests for Health Monitor**
+  - **Context:** Add comprehensive tests to validate the health monitor's state transitions and behavior.
+  - **Dependencies:** #24
+  - **Subtasks:**
+    - [ ] In `src/dns/health.rs`, write unit tests to verify the state transition logic.
+    - [ ] Test that the state moves to `Unhealthy` when the failure threshold is breached.
+    - [ ] Test that the state moves back to `Healthy` after a successful recovery check.
+    - [ ] Test that log spam is suppressed while in the `Unhealthy` state.
