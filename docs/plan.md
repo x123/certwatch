@@ -780,3 +780,59 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] Add `try_exists` check before loading files to prevent errors on deleted files.
     - [x] Filter out `notify::EventKind::Access` events to break the reload-triggering-reload feedback loop.
     - [x] Update integration tests to validate the final, robust implementation.
+
+
+---
+### Epic 30: Architectural Refactoring
+**User Story:** As a developer, I want the application's startup and component wiring logic to be clean, testable, and maintainable, so that I can easily add new features or modify existing ones without breaking the application.
+**Technical Goal:** Refactor the monolithic `main` function into a structured `App` and `AppBuilder` pattern. This will decouple component construction from the application's entry point, improving modularity and testability.
+
+- [ ] **#91 - Implement AppBuilder Pattern**
+  - **Context:** Create a new `AppBuilder` struct responsible for the step-by-step construction of the application's services and components.
+  - **Dependencies:** #11
+  - **Subtasks:**
+    - [ ] Create a new `src/app.rs` module.
+    - [ ] Define an `App` struct to hold the application's state (services, task handles, shutdown channel).
+    - [ ] Define an `AppBuilder` struct with methods to configure and add each service (e.g., `with_dns_resolver`, `with_pattern_matcher`).
+    - [ ] The `AppBuilder::build()` method will consume the builder and return a fully configured `App` instance.
+
+- [ ] **#92 - Refactor `main` to use AppBuilder**
+  - **Context:** Simplify the `main` function to delegate all construction and wiring logic to the `AppBuilder`.
+  - **Dependencies:** #91
+  - **Subtasks:**
+    - [ ] Move all service instantiation logic from `main.rs` into the appropriate methods of `AppBuilder`.
+    - [ ] The `main` function will be reduced to: loading config, creating the builder, calling `build()`, and then `app.run()`.
+
+- [ ] **#93 - Implement `App::run`**
+  - **Context:** Create the main execution logic within the `App` struct.
+  - **Dependencies:** #91
+  - **Subtasks:**
+    - [ ] Create an `async fn run(&mut self)` method on the `App` struct.
+    - [ ] This method will be responsible for spawning all the application's tasks (CertStream client, worker pool, output manager, etc.).
+    - [ ] It will also contain the logic for waiting for the shutdown signal and gracefully terminating all spawned tasks.
+
+---
+### Epic 31: Code Quality and Cleanup
+**User Story:** As a developer, I want the codebase to be clean, consistent, and well-documented, so that it is easy to understand, maintain, and contribute to.
+**Technical Goal:** Address various pieces of technical debt, inconsistent patterns, and documentation gaps identified during the pre-release code review.
+
+- [ ] **#94 - Improve Service Encapsulation**
+  - **Context:** Services should be responsible for their own configuration and input validation, rather than having this logic in `main.rs`.
+  - **Dependencies:** #10
+  - **Subtasks:**
+    - [ ] Modify service constructors (e.g., `DnsResolutionManager::new`) to accept their specific config structs (e.g., `DnsConfig`) instead of a long list of primitive values.
+    - [ ] Move the `asn_tsv_path` existence check from `main.rs` into the `TsvAsnLookup::new()` constructor.
+    - [ ] Move the `build_alert` helper function to be an associated function `Alert::new()`.
+
+- [ ] **#95 - Refactor Duplicated Logic**
+  - **Context:** Repetitive code blocks should be extracted into shared helper functions to reduce duplication and improve maintainability.
+  - **Dependencies:** #24
+  - **Subtasks:**
+    - [ ] The heartbeat spawning logic is duplicated for the `QueueMonitor` and `OutputManager`. Extract this into a `utils::spawn_heartbeat_task` helper function.
+
+- [ ] **#96 - Enhance Documentation and Code Clarity**
+  - **Context:** Improve inline documentation to clarify complex or non-obvious parts of the code.
+  - **Dependencies:** All epics
+  - **Subtasks:**
+    - [ ] Add `// WHY:` comments to all `tokio::select!` blocks that use the `biased;` keyword, explaining the reasoning for prioritizing one branch over others.
+    - [ ] Review and improve the documentation for the `core` traits to more clearly define the contract for each method, especially error conditions and expected return values.
