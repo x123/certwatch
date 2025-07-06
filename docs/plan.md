@@ -691,12 +691,12 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] The `output_task` and `nxdomain_feedback_task` now terminate naturally when their upstream channels close, preventing "channel closed" errors.
     - [x] This resolves a critical deadlock that prevented the application from exiting cleanly with Ctrl-C.
 
-- [ ] **#77 - Add Configuration and Metrics for the New Queue**
+- [x] **#77 - Add Configuration and Metrics for the New Queue**
   - **Action:** Add a new configuration option and a metric to monitor the new architecture.
   - **Details:**
-    - [ ] Add `queue_capacity` to `certwatch.toml` under a new `[performance]` or similar section.
-    - [ ] Create a new `Gauge` metric named `domain_queue_fill_ratio` to monitor how full the queue is.
-    - [ ] Create a new `Counter` metric named `dropped_domains` to track domains lost due to a full queue.
+    - [x] Add `queue_capacity` to `certwatch.toml` under a new `[performance]` or similar section.
+    - [x] Create a new `Gauge` metric named `domain_queue_fill_ratio` to monitor how full the queue is.
+    - [x] Create a new `Counter` metric named `dropped_domains` to track domains lost due to a full queue.
 
 ---
 ### Epic 26: Codebase Hygiene & Refinement

@@ -31,6 +31,10 @@ pub struct Cli {
     #[arg(long, value_name = "COUNT")]
     pub concurrency: Option<usize>,
 
+    /// The capacity of the central domain queue.
+    #[arg(long, value_name = "COUNT")]
+    pub queue_capacity: Option<usize>,
+
     /// Timeout for DNS resolution in milliseconds.
     #[arg(long, value_name = "MS")]
     pub dns_timeout_ms: Option<u64>,
@@ -73,6 +77,13 @@ impl Provider for Cli {
 
         if let Some(concurrency) = self.concurrency {
             dict.insert("concurrency".into(), Value::from(concurrency as u64));
+        }
+
+        if let Some(capacity) = self.queue_capacity {
+            dict.insert(
+                "performance.queue_capacity".into(),
+                Value::from(capacity as u64),
+            );
         }
 
         if let Some(timeout) = self.dns_timeout_ms {

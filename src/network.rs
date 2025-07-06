@@ -224,7 +224,7 @@ impl CertStreamClient {
                                 // If the queue is full, we drop the domain and record it.
                                 if let Err(e) = self.output_tx.try_send(domain) {
                                     if let tokio::sync::mpsc::error::TrySendError::Full(_) = e {
-                                        metrics::counter!("agg.dropped_domains_total").increment(1);
+                                        metrics::counter!("dropped_domains").increment(1);
                                         log::warn!("Domain queue is full. Dropping domain.");
                                     } else {
                                         // The receiver has been dropped, which is a critical error.

@@ -182,6 +182,40 @@ async fn main() -> Result<()> {
     let (alerts_tx, mut alerts_rx) = mpsc::channel::<Alert>(1000);
 
     // =========================================================================
+    // 3.5 Start Domain Queue Monitoring Task
+    // =========================================================================
+    let queue_monitor_task = {
+        let domains_tx = domains_tx.clone();
+        let mut shutdown_rx = shutdown_rx.clone();
+        let capacity = config.performance.queue_capacity as f64;
+
+        tokio::spawn(async move {
+            let hb_shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                run_heartbeat("QueueMonitor", hb_shutdown_rx).await;
+            });
+
+            info!("Domain queue monitor started.");
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = shutdown_rx.changed() => {
+                        info!("Queue monitor received shutdown signal.");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let used = capacity - domains_tx.capacity() as f64;
+                        let fill_ratio = if capacity > 0.0 { used / capacity } else { 0.0 };
+                        metrics::gauge!("domain_queue_fill_ratio").set(fill_ratio);
+                    }
+                }
+            }
+            info!("Domain queue monitor finished.");
+        })
+    };
+
+    // =========================================================================
     // 4. Start the CertStream Client
     // =========================================================================
     let certstream_client = CertStreamClient::new(
@@ -407,6 +441,10 @@ async fn main() -> Result<()> {
 
     if let Err(e) = nxdomain_feedback_task.await {
         error!("NXDOMAIN feedback task panicked: {:?}", e);
+    }
+
+    if let Err(e) = queue_monitor_task.await {
+        error!("Queue monitor task panicked: {:?}", e);
     }
 
     if let Err(e) = output_task.await {

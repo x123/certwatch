@@ -11,6 +11,9 @@ log_level = "debug"
 log_metrics = true
 log_aggregation_seconds = 10
 
+[performance]
+queue_capacity = 100000
+
 [network]
 certstream_url = "wss://127.0.0.1:8181/domains-only"
 sample_rate = 1.0
