@@ -49,3 +49,34 @@
 - **Propose a Clear Commit:** After successful test execution, the agent **must** propose a well-structured commit message that adheres to the project's established conventions.
 - **Await User Approval:** The agent **must not** proceed to the next task until the user has explicitly confirmed that they have tested the application's functionality and approved the changes. This serves as a formal handoff and validation gate.
 
+# Rust Best Practices & Design Patterns
+
+This document outlines the key design principles and patterns we will follow in this project, inspired by the "Rust Design Patterns" book.
+
+## 1. API and Type Design
+
+-   **Use Borrowed Types for Arguments:** Functions should prefer accepting borrowed types over owned types to increase flexibility and avoid unnecessary allocations (e.g., `&str` over `&String`, `&[T]` over `&Vec<T>`).
+
+-   **Return Consumed Arguments on Error:** If a fallible function takes ownership of an argument, the `Err` variant of its `Result` should return the argument to the caller, allowing for recovery and retry logic without cloning.
+
+-   **Builder Pattern for Complex Construction:** For structs with multiple optional fields or complex initialization logic, provide a `builder()` method that returns a dedicated builder struct. This is preferred over a multitude of `new_with_*` constructors.
+
+-   **Newtype Pattern for Type Safety:** Use the newtype pattern (e.g., `struct UserId(u64);`) to leverage the type system for creating distinct, domain-specific types from primitives. This prevents logic errors, such as swapping a `UserId` with a generic `u64`.
+
+-   **RAII for Resource Management:** Use the RAII (Resource Acquisition Is Initialization) pattern with "guard" objects to manage resources that require explicit cleanup, such as locks, file handles, or network connections. The resource should be released in the guard's `Drop` implementation.
+
+## 2. Code Structure & Safety
+
+-   **Contain `unsafe` Code:** All `unsafe` code must be encapsulated within the smallest possible module. This module must expose a minimal, safe API that upholds all necessary invariants. Every `unsafe` block must be justified with a `// SAFETY:` comment explaining why the code is safe.
+
+-   **Prefer Small, Focused Crates:** Decompose large projects into smaller, more focused crates that each do one thing well. This improves modularity, reusability, and compile times.
+
+-   **Decompose Structs for Better Borrowing:** If a large struct is causing borrow checker issues, consider decomposing it into smaller, cohesive structs. This often leads to a cleaner design and allows for more granular borrowing.
+
+## 3. Anti-Patterns to Avoid
+
+-   **Avoid Cloning to Satisfy the Borrow Checker:** Do not use `.clone()` as a first resort to fix borrow checker errors. This often indicates a deeper ownership issue and can lead to performance problems or subtle bugs. Refactor the code to manage lifetimes correctly first.
+
+-   **Do Not Use `Deref` for Inheritance:** The `Deref` trait should be used for smart pointer types, not to simulate inheritance. Misusing `Deref` for polymorphism is an anti-pattern that can lead to confusing and un-idiomatic code.
+
+-   **Do Not Use `#![deny(warnings)]` in Libraries:** This can cause downstream projects to fail to build when a new version of the Rust compiler is released. Instead, use a CI pipeline with `RUSTFLAGS="-D warnings"` to enforce a no-warning policy during development.
