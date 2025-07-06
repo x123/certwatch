@@ -333,3 +333,59 @@ This epic refactors the output system to support multiple, configurable formats 
     - [x] Test that the state moves to `Unhealthy` when the failure threshold is breached.
     - [x] Test that the state moves back to `Healthy` after a successful recovery check.
     - [x] Test that log spam is suppressed while in the `Unhealthy` state.
+
+
+---
+### Epic 12: Real-time Metrics TUI
+**User Story:** As an operator, I want to see a real-time, terminal-based dashboard of key application metrics when I run the application with a specific flag, so that I can monitor its health and performance live.
+
+---
+
+- **#27 - Setup & Configuration**
+  - **Context:** Add the necessary dependencies for metrics and the TUI, and expose a command-line flag to enable the feature.
+  - **Dependencies:** #10 (Configuration Management)
+  - **Subtasks:**
+    - [ ] In `Cargo.toml`, add the following crates: `metrics`, `ratatui`, `crossterm`, and `metrics-util`.
+    - [ ] In `src/config.rs`, add a `--live-metrics` command-line argument using `figment`.
+
+- **#28 - Implement the TUI Metrics Recorder**
+  - **Context:** Create a custom recorder that implements the `metrics::Recorder` trait. This recorder will be responsible for capturing metric events from the application and storing them in a thread-safe state that the TUI can access for rendering.
+  - **Dependencies:** #27
+  - **Subtasks:**
+    - [ ] Create a new module `src/metrics/recorder.rs`.
+    - [ ] Define a `TuiRecorder` struct that holds metric state in a thread-safe container (e.g., `Arc<DashMap<String, MetricValue>>`).
+    - [ ] Implement the `metrics::Recorder` trait for `TuiRecorder`. The methods (`increment_counter`, `update_gauge`, etc.) will update the values in the shared map.
+    - [ ] The recorder will need to handle various metric types (counters, gauges, histograms) and store them appropriately.
+
+- **#29 - Implement the Ratatui Frontend**
+  - **Context:** Build the `ratatui` user interface that will run in its own thread, periodically reading data from the `TuiRecorder` and rendering it to the terminal.
+  - **Dependencies:** #28
+  - **Subtasks:**
+    - [ ] Create a new module `src/metrics/ui.rs`.
+    - [ ] Implement a `Tui` struct responsible for managing the terminal state (setup, drawing, and shutdown).
+    - [ ] Create a `run_ui` function that takes a reference to the recorder's state. This function will contain the main render loop.
+    - [ ] Inside the loop, fetch a snapshot of the metrics from the recorder's state.
+    - [ ] Design and implement `ratatui` widgets to display the key metrics listed in `docs/specs.md` §4 (e.g., using tables, sparklines, and gauges).
+    - [ ] Ensure graceful shutdown and terminal restoration on exit (e.g., Ctrl+C).
+
+- **#30 - Instrument Application Code**
+  - **Context:** Sprinkle `metrics::*` macros throughout the application codebase at key locations to generate the metric events that the recorder will capture.
+  - **Dependencies:** All previous epics.
+  - **Subtasks:**
+    - [ ] In `src/network.rs`, add `metrics::counter!("domains_processed").increment(1);` for each domain received.
+    - [ ] In `src/matching.rs`, add `metrics::counter!("pattern_matches", "tag" => tag.clone()).increment(1);` for each match.
+    - [ ] In `src/dns.rs`, add counters for DNS resolution outcomes (`success`, `failure`, `timeout`).
+    - [ ] In `src/dns.rs`, add `metrics::gauge!("nxdomain_retry_queue_size").set(size);` to track the retry queue.
+    - [ ] In `src/outputs.rs`, add counters for webhook delivery outcomes.
+    - [ ] In `src/deduplication.rs`, add `metrics::gauge!("deduplication_cache_size").set(size);` to track the cache size.
+
+- **#31 - Integrate Metrics System in `main.rs`**
+  - **Context:** Wire everything together. Based on the `--live-metrics` flag, install the custom recorder and spawn the UI thread.
+  - **Dependencies:** #29, #30
+  - **Subtasks:**
+    - [ ] In `main.rs`, check the value of the `live_metrics` config flag at startup.
+    - [ ] If `true`:
+      - [ ] Instantiate the `TuiRecorder`.
+      - [ ] Install it as the global metrics recorder using `metrics::set_boxed_recorder`.
+      - [ ] Spawn a new thread dedicated to running the `run_ui` function.
+    - [ ] If `false`, do nothing. The `metrics` macros will compile to no-ops, ensuring zero performance overhead.
