@@ -480,9 +480,9 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] Create a new integration test file `tests/tsv_enrichment.rs` to validate the parsing and lookup logic against the test TSV file.
     - [x] Ensure all tests pass, including running `cargo test --all-features`.
 
-- **#40 - Update Documentation**
+- [x] **#40 - Update Documentation**
   - **Context:** Update all relevant documentation to reflect the removal of MaxMind and the new TSV-based implementation.
   - **Dependencies:** #38
   - **Subtasks:**
-    - [ ] Review and update `docs/specs.md` to remove any references to the MaxMind database and describe the new TSV file format and configuration.
-    - [ ] Update the main `README.md` if it contains any setup instructions related to MaxMind.
+    - [x] Review and update `docs/specs.md` to remove any references to the MaxMind database and describe the new TSV file format and configuration.
+    - [x] Update the main `README.md` if it contains any setup instructions related to MaxMind.

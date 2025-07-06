@@ -43,7 +43,7 @@
 
 ### 2.6. IP Enrichment
 
-  - **ASN Lookup**: Perform an ASN lookup for **every** IP address resolved from the `A` and `AAAA` records using a local, memory-mapped database.
+  - **ASN Lookup**: Perform an ASN lookup for **every** IP address resolved from the `A` and `AAAA` records using a local TSV file. The implementation uses a high-performance in-memory interval map for lookups.
 
 ### 2.7. Output Formats
 
