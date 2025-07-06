@@ -746,3 +746,22 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] In `main.rs`, when creating the `DnsResolutionManager`, pass a clone of the shutdown signal receiver to its constructor.
     - [x] Update the `DnsResolutionManager::new` function signature to accept the receiver.
     - [x] In the main worker loop, pass the shutdown signal to `resolve_with_retry`.
+
+---
+### Epic 29: Resolve Metrics Crate Name Collision
+**User Story:** As a developer, I want to resolve the name collision between our internal `metrics` module and the external `metrics` crate, so that I can add new metrics-related features without compilation errors or ambiguity.
+
+- [ ] **#89 - Rename Internal Metrics Module**
+  - **Context:** The compiler cannot differentiate between `crate::metrics` and the external `metrics` crate. Renaming our internal module is the cleanest and most idiomatic solution.
+  - **Dependencies:** #28
+  - **Subtasks:**
+    - [ ] Rename the `src/metrics` directory to `src/internal_metrics`.
+    - [ ] In `src/lib.rs` or `src/main.rs`, update the module declaration from `mod metrics;` to `mod internal_metrics;`.
+    - [ ] Perform a project-wide search and replace to update all usage paths from `crate::metrics` to `crate::internal_metrics`.
+
+- [ ] **#90 - Verify the Refactoring**
+  - **Context:** After the renaming, it's crucial to ensure the application still compiles and all tests pass.
+  - **Dependencies:** #89
+  - **Subtasks:**
+    - [ ] Run `cargo check` to confirm the project compiles without errors.
+    - [ ] Run the full test suite (`cargo test --all-features`) to ensure no regressions were introduced.
