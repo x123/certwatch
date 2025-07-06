@@ -640,24 +640,24 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
   - **Context:** The deduplication logic for "first resolution" alerts is currently incorrect, causing all such alerts to be treated as duplicates. This task will fix the key generation to ensure correctness.
   - **Dependencies:** #9
   - **Subtasks:**
-    - [ ] In `src/deduplication.rs`, modify the `generate_key` function.
-    - [ ] Change the key for `resolved_after_nxdomain` alerts to include both the domain and the source tag.
-    - [ ] Update the corresponding unit test to assert that "first resolution" alerts for different source tags are not treated as duplicates.
+    - [x] In `src/deduplication.rs`, modify the `generate_key` function.
+    - [x] Change the key for `resolved_after_nxdomain` alerts to include both the domain and the source tag.
+    - [x] Update the corresponding unit test to assert that "first resolution" alerts for different source tags are not treated as duplicates.
 
 - [x] **#71 - Ensure Atomic State Updates in DNS Health Recovery**
   - **Context:** The DNS health recovery logic has a potential race condition. This task will make the state transition atomic.
   - **Dependencies:** #24
   - **Subtasks:**
-    - [ ] In `src/dns/health.rs`, refactor the `recovery_check_task`.
-    - [ ] Ensure the mutex lock is held for the entire duration of the state change (from `Unhealthy` to `Healthy`) and the clearing of outcomes.
-    - [ ] Add a comment explaining why the lock is held to ensure atomicity.
+    - [x] In `src/dns/health.rs`, refactor the `recovery_check_task`.
+    - [x] Ensure the mutex lock is held for the entire duration of the state change (from `Unhealthy` to `Healthy`) and the clearing of outcomes.
+    - [x] Add a comment explaining why the lock is held to ensure atomicity.
 
-- [ ] **#72 - Handle File Deletion Events in Pattern Watcher**
+- [x] **#72 - Handle File Deletion Events in Pattern Watcher**
   - **Context:** The file watcher for pattern hot-reloading does not handle file deletions. This task will add support for `Remove` events.
   - **Dependencies:** #5
   - **Subtasks:**
-    - [ ] In `src/matching.rs`, update the `should_reload_patterns` function to also trigger a reload on `notify::EventKind::Remove`.
-    - [ ] Add a unit test to verify that deleting a pattern file correctly triggers a reload and removes the associated patterns.
+    - [x] In `src/matching.rs`, update the `should_reload_patterns` function to also trigger a reload on `notify::EventKind::Remove`.
+    - [x] Add a unit test to verify that deleting a pattern file correctly triggers a reload and removes the associated patterns.
 
 ---
 ### Epic 25.5: Decouple Ingress from Processing to Fix Bottleneck
@@ -765,3 +765,17 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
   - **Subtasks:**
     - [x] Run `cargo check` to confirm the project compiles without errors.
     - [x] Run the full test suite (`cargo test --all-features`) to ensure no regressions were introduced.
+
+
+---
+### Epic 26: Robust Pattern Hot-Reloading
+**User Story:** As an operator, I want the pattern hot-reloading to be completely reliable, correctly detecting all file changes, including renames and deletions, so that I can manage my detection rules with confidence.
+
+- [ ] **#73 - Implement Debounced Reloading**
+  - **Context:** The current file watcher is fragile and misses many filesystem events (e.g., `mv`), leading to stale rules. This task will replace the complex event-filtering logic with a simple, robust, time-based debouncing mechanism.
+  - **Dependencies:** #5
+  - **Subtasks:**
+    - [ ] In `src/matching.rs`, remove the `should_reload_patterns` function.
+    - [ ] Modify the `run_file_watcher` task to use a debouncing strategy. When any relevant file event is received, the watcher will wait for a short, fixed period (e.g., 250ms) to ensure the filesystem is stable.
+    - [ ] After the debounce period, the watcher will unconditionally reload all patterns from the configured file paths.
+    - [ ] Update the unit tests to verify the new debounced reload logic.
