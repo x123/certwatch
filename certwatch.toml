@@ -21,6 +21,14 @@ standard_initial_backoff_ms = 500
 nxdomain_retries = 5
 nxdomain_initial_backoff_ms = 10000
 
+[dns.health]
+# The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
+failure_threshold = 0.95
+# The time window in seconds to consider for the failure rate calculation.
+window_seconds = 120
+# A known-good domain to resolve to check for recovery.
+recovery_check_domain = "google.com"
+
 [enrichment]
 # The ASN provider to use. Can be "Maxmind" or "Tsv".
 asn_provider = "Tsv"

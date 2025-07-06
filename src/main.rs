@@ -8,14 +8,14 @@ use certwatch::{
     config::{AsnProvider, Config},
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
-    dns::{DnsResolutionManager, TrustDnsResolver},
+    dns::{DnsHealthMonitor, DnsResolutionManager, TrustDnsResolver},
     enrichment::{tsv_lookup::TsvAsnLookup, MaxmindEnrichmentProvider},
     matching::PatternWatcher,
     network::CertStreamClient,
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };
 use chrono::Utc;
-use log::{error, info};
+use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
@@ -107,9 +107,12 @@ async fn main() -> Result<()> {
     // =========================================================================
     // 5. Start the DNS Resolution Manager
     // =========================================================================
+    let dns_health_monitor =
+        DnsHealthMonitor::new(config.dns.health.clone(), dns_resolver.clone());
     let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
         dns_resolver.clone(),
         config.dns.retry_config.clone(),
+        dns_health_monitor,
     );
     let dns_manager = Arc::new(dns_manager);
 
@@ -149,7 +152,7 @@ async fn main() -> Result<()> {
                                             error!("Failed to send NXDOMAIN alert to channel: {}", e);
                                         }
                                     } else {
-                                        error!("DNS resolution failed for {}: {}", domain, e);
+                                        warn!("DNS resolution failed for {}: {}", domain, e);
                                     }
                                 }
                             }

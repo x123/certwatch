@@ -3,9 +3,12 @@
 //! This module implements DNS resolution with separate retry strategies
 //! for standard failures and NXDOMAIN responses.
 
+pub mod health;
+
 use crate::core::{DnsInfo, DnsResolver};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+pub use health::DnsHealthMonitor;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -135,6 +138,7 @@ pub struct DnsResolutionManager {
     resolver: Arc<dyn DnsResolver>,
     config: DnsRetryConfig,
     nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>, // (domain, source_tag, retry_time)
+    health_monitor: Arc<DnsHealthMonitor>,
 }
 
 impl DnsResolutionManager {
@@ -144,6 +148,7 @@ impl DnsResolutionManager {
     pub fn new(
         resolver: Arc<dyn DnsResolver>,
         config: DnsRetryConfig,
+        health_monitor: Arc<DnsHealthMonitor>,
     ) -> (Self, mpsc::UnboundedReceiver<ResolvedNxDomain>) {
         let (nxdomain_retry_tx, nxdomain_retry_rx) = mpsc::unbounded_channel();
         let (resolved_nxdomain_tx, resolved_nxdomain_rx) = mpsc::unbounded_channel();
@@ -162,6 +167,7 @@ impl DnsResolutionManager {
             resolver,
             config,
             nxdomain_retry_tx,
+            health_monitor,
         };
 
         (manager, resolved_nxdomain_rx)
@@ -173,10 +179,14 @@ impl DnsResolutionManager {
         
         for attempt in 0..=self.config.standard_retries {
             match self.resolver.resolve(domain).await {
-                Ok(dns_info) => return Ok(dns_info),
+                Ok(dns_info) => {
+                    self.health_monitor.record_outcome(true);
+                    return Ok(dns_info);
+                }
                 Err(e) => {
+                    self.health_monitor.record_outcome(false);
                     last_error = Some(format!("{}", e));
-                    
+
                     // Check if this is an NXDOMAIN error
                     if is_nxdomain_error(&e) {
                         // Schedule for NXDOMAIN retry queue
@@ -386,7 +396,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config);
+        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
+        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
 
         // Configure resolver to fail twice, then succeed
         fake_resolver.set_error_response("flaky.com", "Timeout");
@@ -404,7 +415,8 @@ mod tests {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsRetryConfig::default();
 
-        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config);
+        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
+        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
 
         // Configure resolver to return NXDOMAIN
         fake_resolver.set_error_response("nonexistent.com", "NXDOMAIN");
@@ -422,7 +434,8 @@ mod tests {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsRetryConfig::default();
 
-        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config);
+        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
+        let (manager, _) = DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
 
         let mut dns_info = DnsInfo::default();
         dns_info.a_records.push("1.2.3.4".parse().unwrap());
@@ -443,7 +456,9 @@ mod tests {
             ..Default::default()
         };
 
-        let (manager, mut resolved_rx) = DnsResolutionManager::new(fake_resolver.clone(), config);
+        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
+        let (manager, mut resolved_rx) =
+            DnsResolutionManager::new(fake_resolver.clone(), config, health_monitor);
 
         // Configure resolver to return NXDOMAIN initially
         fake_resolver.set_error_response("newly-active.com", "NXDOMAIN");

@@ -60,6 +60,19 @@ pub struct DnsConfig {
     /// DNS retry and backoff settings.
     #[serde(flatten)]
     pub retry_config: DnsRetryConfig,
+    /// Configuration for the DNS health monitor.
+    pub health: DnsHealthConfig,
+}
+
+/// Configuration for the DNS health monitor.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct DnsHealthConfig {
+    /// The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
+    pub failure_threshold: f64,
+    /// The time window in seconds to consider for the failure rate calculation.
+    pub window_seconds: u64,
+    /// A known-good domain to resolve to check for recovery.
+    pub recovery_check_domain: String,
 }
 
 /// Configuration for IP address enrichment.
@@ -143,6 +156,11 @@ impl Default for Config {
             dns: DnsConfig {
                 resolver_pool_size: 10,
                 retry_config: DnsRetryConfig::default(),
+                health: DnsHealthConfig {
+                    failure_threshold: 0.95,
+                    window_seconds: 120,
+                    recovery_check_domain: "google.com".to_string(),
+                },
             },
             enrichment: EnrichmentConfig {
                 asn_provider: AsnProvider::Maxmind,
