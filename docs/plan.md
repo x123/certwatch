@@ -412,3 +412,35 @@ This epic refactors the output system to support multiple, configurable formats 
     - [ ] In `main.rs`, check the value of the `live_metrics` config flag at startup.
     - [ ] If `true`, instantiate the `TuiRecorder`, install it as the global recorder, and spawn a new thread to run the UI.
     - [ ] Ensure this can work alongside the `--log-metrics` flag, though typically only one would be used at a time.
+
+---
+### **Epic 14: Dependency Maintenance**
+
+**User Story:** As a developer, I want to keep the project's dependencies up-to-date to benefit from the latest security patches, performance improvements, and features.
+
+---
+
+- **#34 - Update Low-Risk Dependencies**
+ - **Context:** Update minor-version dependencies that have a low risk of introducing breaking changes.
+ - **Dependencies:** All previous epics.
+ - **Subtasks:**
+   - [x] Update `env_logger` from `0.10` to `0.11.8`.
+   - [x] Update `rand` from `0.8` to `0.9.1` and refactor usage of `thread_rng` and `gen`.
+   - [x] Update `ipnetwork` from `0.20` to `0.21.1`, enabling the `serde` feature.
+   - [x] Update `maxminddb` from `0.24` to `0.26.0` and refactor error handling.
+
+- **#35 - Update Network Client Dependencies**
+ - **Context:** Update the networking clients, which are more likely to have breaking changes.
+ - **Dependencies:** #34
+ - **Subtasks:**
+   - [ ] Update `reqwest` from `0.11.27` to `0.12.22`.
+   - [ ] Update `tokio-tungstenite` from `0.20.1` to `0.27`.
+   - [ ] Run all tests, including live tests, to ensure no regressions.
+
+- **#36 - Update High-Risk `notify` Dependency**
+ - **Context:** Update the `notify` crate, which has a major version bump and is likely to have significant breaking changes.
+ - **Dependencies:** #35
+ - **Subtasks:**
+   - [ ] Update `notify` from `6.1.1` to `8.1.0`.
+   - [ ] Refactor the `PatternWatcher` to be compatible with the new version.
+   - [ ] Run all tests, including live tests, to ensure no regressions.

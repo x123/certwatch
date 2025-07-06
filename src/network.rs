@@ -234,10 +234,10 @@ impl CertStreamClient {
             return domains;
         }
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         domains
             .into_iter()
-            .filter(|_| rng.r#gen::<f64>() < self.sample_rate)
+            .filter(|_| rng.random::<f64>() < self.sample_rate)
             .collect()
     }
 }

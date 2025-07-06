@@ -7,7 +7,7 @@ pub mod tsv_lookup;
 use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use maxminddb::{geoip2, MaxMindDBError, Reader};
+use maxminddb::{geoip2, Reader};
 use std::net::IpAddr;
 use std::path::Path;
 
@@ -45,24 +45,22 @@ impl EnrichmentProvider for MaxmindEnrichmentProvider {
         let geoip_result = self.geoip_reader.lookup::<geoip2::Country>(ip);
 
         let asn_data = match asn_result {
-            Ok(asn) => Some(asn),
+            Ok(Some(asn)) => Some(asn),
+            Ok(None) => None, // Address not found in DB
             Err(e) => {
-                if !matches!(e, MaxMindDBError::AddressNotFoundError(_)) {
-                    log::warn!("ASN lookup failed for {}: {}", ip, e);
-                }
+                log::warn!("ASN lookup failed for {}: {}", ip, e);
                 None
             }
         };
 
         let country_code = match geoip_result {
-            Ok(country) => country
+            Ok(Some(country)) => country
                 .country
                 .and_then(|c| c.iso_code)
                 .map(|s| s.to_string()),
+            Ok(None) => None, // Address not found in DB
             Err(e) => {
-                if !matches!(e, MaxMindDBError::AddressNotFoundError(_)) {
-                    log::warn!("GeoIP lookup failed for {}: {}", ip, e);
-                }
+                log::warn!("GeoIP lookup failed for {}: {}", ip, e);
                 None
             }
         };
