@@ -1,6 +1,6 @@
 # CertWatch Configuration File
 
-log_level = "debug"
+log_level = "info"
 
 [network]
 certstream_url = "wss://127.0.0.1:8181/domains-only"
@@ -10,7 +10,7 @@ allow_invalid_certs = true
 [matching]
 # A list of file paths containing regex patterns.
 # For example: pattern_files = ["/path/to/your/patterns.txt"]
-pattern_files = ["tests/data/test-regex.txt"]
+pattern_files = ["ignored/phishing.txt"]
 
 [dns]
 resolver_pool_size = 10
@@ -22,8 +22,15 @@ nxdomain_retries = 5
 nxdomain_initial_backoff_ms = 10000
 
 [enrichment]
-# Path to the MaxMind GeoLite2-ASN database file.
+# The ASN provider to use. Can be "Maxmind" or "Tsv".
+asn_provider = "Tsv"
+
+# Path to the MaxMind GeoLite2-ASN database file (only used if provider is "Maxmind").
 asn_db_path = "tests/data/GeoLite2-ASN-Test.mmdb"
+
+# Path to the TSV ASN database file (only used if provider is "Tsv").
+asn_tsv_path = "ignored/ip2asn-combined.tsv"
+
 # Path to the MaxMind GeoLite2-Country database file.
 geoip_db_path = "tests/data/GeoLite2-Country-Test.mmdb"
 

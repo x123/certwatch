@@ -5,11 +5,11 @@
 
 use anyhow::Result;
 use certwatch::{
-    config::Config,
+    config::{AsnProvider, Config},
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
     dns::{DnsResolutionManager, TrustDnsResolver},
-    enrichment::MaxmindEnrichmentProvider,
+    enrichment::{tsv_lookup::TsvAsnLookup, MaxmindEnrichmentProvider},
     matching::PatternWatcher,
     network::CertStreamClient,
     outputs::{OutputManager, SlackOutput, StdoutOutput},
@@ -45,10 +45,24 @@ async fn main() -> Result<()> {
     // =========================================================================
     let pattern_matcher = Arc::new(PatternWatcher::new(config.matching.pattern_files.clone()).await?);
     let dns_resolver = Arc::new(TrustDnsResolver::new()?);
-    let enrichment_provider = Arc::new(MaxmindEnrichmentProvider::new(
-        &config.enrichment.asn_db_path,
-        &config.enrichment.geoip_db_path,
-    )?);
+    let enrichment_provider: Arc<dyn EnrichmentProvider> =
+        match config.enrichment.asn_provider {
+            AsnProvider::Maxmind => {
+                let asn_db_path = config.enrichment.asn_db_path.clone().ok_or_else(|| {
+                    anyhow::anyhow!("asn_db_path is required for Maxmind provider")
+                })?;
+                Arc::new(MaxmindEnrichmentProvider::new(
+                    &asn_db_path,
+                    &config.enrichment.geoip_db_path,
+                )?)
+            }
+            AsnProvider::Tsv => {
+                let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
+                    anyhow::anyhow!("asn_tsv_path is required for Tsv provider")
+                })?;
+                Arc::new(TsvAsnLookup::new(&tsv_path)?)
+            }
+        };
     let deduplicator = Arc::new(Deduplicator::new(
         Duration::from_secs(config.deduplication.cache_ttl_seconds),
         config.deduplication.cache_size as u64,

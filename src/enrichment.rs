@@ -1,7 +1,8 @@
-//! IP address enrichment services
-//!
-//! This module provides services for enriching IP addresses with ASN and GeoIP
-//! data using MaxMind databases.
+pub mod tsv_lookup;
+// IP address enrichment services
+//
+// This module provides services for enriching IP addresses with ASN and GeoIP
+// data using MaxMind databases.
 
 use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider, GeoIpInfo};
 use anyhow::{anyhow, Result};

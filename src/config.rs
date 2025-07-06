@@ -64,9 +64,20 @@ pub struct DnsConfig {
 
 /// Configuration for IP address enrichment.
 #[derive(Debug, Deserialize, Clone)]
+pub enum AsnProvider {
+    Maxmind,
+    Tsv,
+}
+
+/// Configuration for IP address enrichment.
+#[derive(Debug, Deserialize, Clone)]
 pub struct EnrichmentConfig {
-    /// Path to the MaxMind GeoLite2-ASN database file.
-    pub asn_db_path: PathBuf,
+    /// The ASN provider to use.
+    pub asn_provider: AsnProvider,
+    /// Path to the MaxMind GeoLite2-ASN database file (if using Maxmind).
+    pub asn_db_path: Option<PathBuf>,
+    /// Path to the TSV ASN database file (if using Tsv).
+    pub asn_tsv_path: Option<PathBuf>,
     /// Path to the MaxMind GeoLite2-Country database file.
     pub geoip_db_path: PathBuf,
 }
@@ -127,7 +138,9 @@ impl Default for Config {
                 retry_config: DnsRetryConfig::default(),
             },
             enrichment: EnrichmentConfig {
-                asn_db_path: "data/GeoLite2-ASN.mmdb".into(),
+                asn_provider: AsnProvider::Maxmind,
+                asn_db_path: Some("data/GeoLite2-ASN.mmdb".into()),
+                asn_tsv_path: None,
                 geoip_db_path: "data/GeoLite2-Country.mmdb".into(),
             },
             output: OutputConfig {
