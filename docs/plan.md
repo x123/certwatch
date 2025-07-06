@@ -588,11 +588,11 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **User Story:** As a developer, I want to refactor the DNS implementation to align with the idiomatic patterns of `hickory-resolver` so that the code is more maintainable and leverages the full capabilities of the new library.
 
 **Tasks:**
-  - [ ] **#60: Refactor DNS Implementation:**
+  - [x] **#60: Refactor DNS Implementation:**
     - In `src/dns.rs`, rewrite the resolver creation and lookup logic to fully adopt the `hickory-resolver`'s builder patterns and configuration options.
-  - [ ] **#61: Review and Update Configuration:**
+  - [x] **#61: Review and Update Configuration:**
     - In `src/config.rs`, review the `DnsConfig` struct and update it to better align with the configuration options available in `hickory-resolver`.
-  - [ ] **#62: Enhance Error Handling:**
+  - [x] **#62: Enhance Error Handling:**
     - Adapt the error handling logic to use the `hickory_resolver::ResolveError` type, ensuring all relevant error variants are handled correctly.
-  - [ ] **#63: Update Tests:**
+  - [x] **#63: Update Tests:**
     - Update unit and integration tests to reflect the refactored implementation.

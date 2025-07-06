@@ -10,7 +10,7 @@ use crate::config::DnsConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 pub use health::DnsHealthMonitor;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -55,42 +55,36 @@ pub struct HickoryDnsResolver {
 impl HickoryDnsResolver {
     /// Creates a new DNS resolver from the application's DNS configuration.
     pub fn from_config(config: &DnsConfig) -> Result<(Self, Vec<SocketAddr>)> {
-        let (resolver_config, nameservers) = if let Some(resolver_addr_str) = &config.resolver {
-            // If a specific resolver is provided, use it exclusively.
-            let mut custom_config = ResolverConfig::new();
-            let socket_addr: SocketAddr = resolver_addr_str.parse()?;
-            custom_config.add_name_server(NameServerConfig::new(socket_addr, Protocol::Udp));
-            (custom_config, vec![socket_addr])
-        } else {
-            // Otherwise, try to get the system's nameservers, but nothing else.
-            let (system_config, _) = system_conf::read_system_conf()?;
-            let mut clean_config = ResolverConfig::new();
-            let mut nameservers = Vec::new();
-
-            if system_config.name_servers().is_empty() {
-                log::warn!("No system DNS servers found, falling back to Cloudflare DNS.");
-                clean_config = ResolverConfig::cloudflare();
-                // We know what Cloudflare's IPs are
-                nameservers.push("1.1.1.1:53".parse()?);
-                nameservers.push("1.0.0.1:53".parse()?);
+        let resolver_config = if let Some(resolver_addr_str) = &config.resolver {
+                // If a specific resolver is provided, use it exclusively.
+                let mut custom_config = ResolverConfig::new();
+                let socket_addr: SocketAddr = resolver_addr_str.parse()?;
+                custom_config
+                    .add_name_server(NameServerConfig::new(socket_addr, Protocol::Udp));
+                custom_config
             } else {
-                for ns in system_config.name_servers() {
-                    // Only add UDP servers to avoid duplicates in logging
-                    if ns.protocol == Protocol::Udp {
-                        clean_config.add_name_server(ns.clone());
-                        nameservers.push(ns.socket_addr);
-                    }
+                // Otherwise, load from system config
+                let (system_config, _) = system_conf::read_system_conf()?;
+                if system_config.name_servers().is_empty() {
+                    log::warn!("No system DNS servers found, falling back to Cloudflare DNS.");
+                    ResolverConfig::cloudflare()
+                } else {
+                    system_config
                 }
-                // If no UDP servers were found, add all to be safe
-                if nameservers.is_empty() {
-                    for ns in system_config.name_servers() {
-                        clean_config.add_name_server(ns.clone());
-                        nameservers.push(ns.socket_addr);
-                    }
-                }
-            }
-            (clean_config, nameservers)
-        };
+            };
+
+        let mut resolver_config_with_no_search = ResolverConfig::new();
+        for ns in resolver_config.name_servers() {
+            resolver_config_with_no_search.add_name_server(ns.clone());
+        }
+
+        let mut nameservers: Vec<_> = resolver_config_with_no_search
+            .name_servers()
+            .iter()
+            .map(|ns| ns.socket_addr)
+            .collect();
+        nameservers.sort();
+        nameservers.dedup();
 
         let mut resolver_opts = ResolverOpts::default();
         // Set ndots to 1 to prevent the resolver from appending local search domains.
@@ -103,11 +97,12 @@ impl HickoryDnsResolver {
         }
 
         let resolver = hickory_resolver::Resolver::builder_with_config(
-            resolver_config,
+            resolver_config_with_no_search,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
         )
         .with_options(resolver_opts)
         .build();
+
         Ok((Self { resolver }, nameservers))
     }
 }
@@ -115,50 +110,69 @@ impl HickoryDnsResolver {
 #[async_trait]
 impl DnsResolver for HickoryDnsResolver {
     async fn resolve(&self, domain: &str) -> Result<DnsInfo> {
+        use hickory_resolver::proto::rr::RecordType;
+
+        // Perform concurrent lookups for A, AAAA, and NS records
+        let (a_result, aaaa_result, ns_result) = tokio::join!(
+            self.resolver.lookup(domain, RecordType::A),
+            self.resolver.lookup(domain, RecordType::AAAA),
+            self.resolver.lookup(domain, RecordType::NS)
+        );
+
         let mut dns_info = DnsInfo::default();
         let mut first_error = None;
 
-        // Resolve A records (IPv4)
-        if let Err(e) = self.resolver.ipv4_lookup(domain).await.map(|lookup| {
-            dns_info.a_records = lookup.iter().map(|ip| IpAddr::V4(ip.0)).collect();
-        }) {
-            log::warn!("Failed to resolve A records for {}: {}", domain, e);
-            if first_error.is_none() {
-                first_error = Some(e.into());
+        // Process A records
+        match a_result {
+            Ok(lookup) => {
+                dns_info.a_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
+            }
+            Err(e) => {
+                log::debug!("A record lookup failed for {}: {}", domain, e);
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
 
-        // Resolve AAAA records (IPv6)
-        if let Err(e) = self.resolver.ipv6_lookup(domain).await.map(|lookup| {
-            dns_info.aaaa_records = lookup.iter().map(|ip| IpAddr::V6(ip.0)).collect();
-        }) {
-            log::warn!("Failed to resolve AAAA records for {}: {}", domain, e);
-            if first_error.is_none() {
-                first_error = Some(e.into());
+        // Process AAAA records
+        match aaaa_result {
+            Ok(lookup) => {
+                dns_info.aaaa_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
+            }
+            Err(e) => {
+                log::debug!("AAAA record lookup failed for {}: {}", domain, e);
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
 
-        // Resolve NS records
-        if let Err(e) = self.resolver.ns_lookup(domain).await.map(|lookup| {
-            dns_info.ns_records = lookup.iter().map(|ns| ns.to_string()).collect();
-        }) {
-            log::warn!("Failed to resolve NS records for {}: {}", domain, e);
-            if first_error.is_none() {
-                first_error = Some(e.into());
+        // Process NS records
+        match ns_result {
+            Ok(lookup) => {
+                dns_info.ns_records = lookup.into_iter().map(|r| r.to_string()).collect();
+            }
+            Err(e) => {
+                log::debug!("NS record lookup failed for {}: {}", domain, e);
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
 
-        // If we have a specific error, and it's an NXDOMAIN, return it immediately.
-        if let Some(err) = &first_error {
-            if is_nxdomain_error(err) {
-                return Err(first_error.unwrap());
-            }
-        }
-
-        // If we got no records at all, return the first specific error we encountered.
+        // Only return an error if all lookups failed.
         if dns_info.is_empty() {
-            return Err(first_error
-                .unwrap_or_else(|| anyhow!("No DNS records found for {}", domain)));
+            if let Some(err) = first_error {
+                let anyhow_err = anyhow::Error::from(err);
+                if is_nxdomain_error(&anyhow_err) {
+                    return Err(anyhow_err);
+                }
+                return Err(anyhow!("All DNS lookups failed for {}: {}", domain, anyhow_err));
+            } else {
+                // This case should be rare, but it's possible if all lookups succeed but return no records.
+                return Err(anyhow!("No A, AAAA, or NS records found for {}", domain));
+            }
         }
 
         Ok(dns_info)
@@ -170,18 +184,18 @@ pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, d
 
 /// Checks if an `anyhow::Error` is an NXDOMAIN error.
 fn is_nxdomain_error(err: &anyhow::Error) -> bool {
-    if let Some(proto_err) = err.downcast_ref::<hickory_resolver::ResolveError>() {
-        if let hickory_resolver::ResolveErrorKind::Proto(err) = proto_err.kind() {
-            if let hickory_resolver::proto::ProtoErrorKind::NoRecordsFound {
-                response_code,
-                ..
-            } = err.kind()
-            {
-                return *response_code == hickory_resolver::proto::op::ResponseCode::NXDomain;
-            }
+    if let Some(resolve_err) = err.downcast_ref::<hickory_resolver::ResolveError>() {
+        if let hickory_resolver::ResolveErrorKind::Proto(proto_err) = resolve_err.kind() {
+            matches!(
+                proto_err.kind(),
+                hickory_resolver::proto::ProtoErrorKind::NoRecordsFound { .. }
+            )
+        } else {
+            false
         }
+    } else {
+        false
     }
-    false
 }
 
 /// Manages DNS resolution with dual-curve retry logic
@@ -338,13 +352,13 @@ impl DnsResolutionManager {
                                     }
                                 }
                                 Err(e) => {
-                                    if e.to_string().contains("NXDOMAIN") && attempt < config.nxdomain_retries {
+                                    if is_nxdomain_error(&e) && attempt < config.nxdomain_retries {
                                         let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
                                         let next_retry = now + Duration::from_millis(backoff_ms);
                                         retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
                                         metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                                     } else {
-                                        log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts", domain, attempt + 1);
+                                        log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, e);
                                     }
                                 }
                             }
@@ -361,12 +375,13 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
-    use hickory_resolver::{ResolveError, ResolveErrorKind};
-    use hickory_resolver::proto::op::ResponseCode;
+    use hickory_resolver::{proto::op::ResponseCode, ResolveError, ResolveErrorKind};
+    use std::collections::VecDeque;
 
     /// Fake DNS resolver for testing
     pub struct FakeDnsResolver {
-        responses: Arc<Mutex<HashMap<String, Result<DnsInfo, String>>>>,
+        // A queue of responses for a given domain. The front of the queue is the next response.
+        responses: Arc<Mutex<HashMap<String, VecDeque<Result<DnsInfo, String>>>>>,
         call_count: Arc<Mutex<HashMap<String, u32>>>,
     }
 
@@ -378,16 +393,22 @@ mod tests {
             }
         }
 
-        /// Configure the resolver to return a successful response for a domain
-        pub fn set_success_response(&self, domain: &str, dns_info: DnsInfo) {
+        /// Add a successful response to the queue for a domain
+        pub fn add_success_response(&self, domain: &str, dns_info: DnsInfo) {
             let mut responses = self.responses.lock().unwrap();
-            responses.insert(domain.to_string(), Ok(dns_info));
+            responses
+                .entry(domain.to_string())
+                .or_default()
+                .push_back(Ok(dns_info));
         }
 
-        /// Configure the resolver to return an error for a domain
-        pub fn set_error_response(&self, domain: &str, error: &str) {
+        /// Add an error response to the queue for a domain
+        pub fn add_error_response(&self, domain: &str, error: &str) {
             let mut responses = self.responses.lock().unwrap();
-            responses.insert(domain.to_string(), Err(error.to_string()));
+            responses
+                .entry(domain.to_string())
+                .or_default()
+                .push_back(Err(error.to_string()));
         }
 
         /// Get the number of times a domain was queried
@@ -406,29 +427,35 @@ mod tests {
                 *call_count.entry(domain.to_string()).or_insert(0) += 1;
             }
 
-            // Return configured response
-            let responses = self.responses.lock().unwrap();
-            match responses.get(domain) {
-                Some(Ok(dns_info)) => Ok(dns_info.clone()),
-                Some(Err(error)) => {
-                    if error == "NXDOMAIN" {
-                        let kind = hickory_resolver::proto::ProtoErrorKind::NoRecordsFound {
-                            response_code: ResponseCode::NXDomain,
-                            soa: None,
-                            negative_ttl: None,
-                            query: Box::new(Default::default()),
-                            authorities: None,
-                            ns: None,
-                            trusted: false,
-                        };
-                        let kind = ResolveErrorKind::Proto(kind.into());
-                        Err(ResolveError::from(kind).into())
-                    } else {
-                        Err(anyhow!("{}", error))
-                    }
+            // Return the next configured response
+            let mut responses = self.responses.lock().unwrap();
+            if let Some(queue) = responses.get_mut(domain) {
+                if let Some(response) = queue.pop_front() {
+                    return match response {
+                        Ok(dns_info) => Ok(dns_info),
+                        Err(error) => {
+                            if error == "NXDOMAIN" {
+                                let kind =
+                                    hickory_resolver::proto::ProtoErrorKind::NoRecordsFound {
+                                        response_code: ResponseCode::NXDomain,
+                                        soa: None,
+                                        negative_ttl: None,
+                                        query: Box::new(Default::default()),
+                                        authorities: None,
+                                        ns: None,
+                                        trusted: false,
+                                    };
+                                let proto_error = hickory_resolver::proto::ProtoError::from(kind);
+                                let resolve_error = ResolveError::from(ResolveErrorKind::Proto(proto_error));
+                                Err(resolve_error.into())
+                            } else {
+                                Err(anyhow!("{}", error))
+                            }
+                        }
+                    };
                 }
-                None => Err(anyhow!("No response configured for {}", domain)),
             }
+            Err(anyhow!("No more responses configured for {}", domain))
         }
     }
 
@@ -437,9 +464,9 @@ mod tests {
         let resolver = FakeDnsResolver::new();
         let mut dns_info = DnsInfo::default();
         dns_info.a_records.push("1.2.3.4".parse().unwrap());
-        
-        resolver.set_success_response("example.com", dns_info.clone());
-        
+
+        resolver.add_success_response("example.com", dns_info.clone());
+
         let result = resolver.resolve("example.com").await.unwrap();
         assert_eq!(result.a_records, dns_info.a_records);
         assert_eq!(resolver.get_call_count("example.com"), 1);
@@ -448,8 +475,8 @@ mod tests {
     #[tokio::test]
     async fn test_fake_dns_resolver_error() {
         let resolver = FakeDnsResolver::new();
-        resolver.set_error_response("nonexistent.com", "NXDOMAIN");
-        
+        resolver.add_error_response("nonexistent.com", "NXDOMAIN");
+
         let result = resolver.resolve("nonexistent.com").await;
         assert!(result.is_err());
         assert!(is_nxdomain_error(&result.unwrap_err()));
@@ -474,13 +501,18 @@ mod tests {
             DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
 
         // Configure resolver to fail twice, then succeed
-        fake_resolver.set_error_response("flaky.com", "Timeout");
+        fake_resolver.add_error_response("flaky.com", "Timeout");
+        fake_resolver.add_error_response("flaky.com", "Timeout");
+        let mut success_info = DnsInfo::default();
+        success_info.a_records.push("1.1.1.1".parse().unwrap());
+        fake_resolver.add_success_response("flaky.com", success_info.clone());
 
         // Start the resolution attempt
         let result = manager.resolve_with_retry("flaky.com", "test").await;
 
-        // Should fail after retries
-        assert!(result.is_err());
+        // Should succeed after 2 retries
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().a_records, success_info.a_records);
         assert_eq!(fake_resolver.get_call_count("flaky.com"), 3); // Initial + 2 retries
     }
 
@@ -494,7 +526,7 @@ mod tests {
             DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
 
         // Configure resolver to return NXDOMAIN
-        fake_resolver.set_error_response("nonexistent.com", "NXDOMAIN");
+        fake_resolver.add_error_response("nonexistent.com", "NXDOMAIN");
 
         let result = manager.resolve_with_retry("nonexistent.com", "test").await;
 
@@ -515,7 +547,7 @@ mod tests {
 
         let mut dns_info = DnsInfo::default();
         dns_info.a_records.push("1.2.3.4".parse().unwrap());
-        fake_resolver.set_success_response("example.com", dns_info.clone());
+        fake_resolver.add_success_response("example.com", dns_info.clone());
 
         let result = manager.resolve_with_retry("example.com", "test").await.unwrap();
 
@@ -544,7 +576,7 @@ mod tests {
         );
 
         // Configure resolver to return NXDOMAIN initially
-        fake_resolver.set_error_response("newly-active.com", "NXDOMAIN");
+        fake_resolver.add_error_response("newly-active.com", "NXDOMAIN");
 
         // This first call should fail immediately and queue the domain for retry
         let result = manager.resolve_with_retry("newly-active.com", "test-tag").await;
@@ -555,7 +587,7 @@ mod tests {
         // Now, configure the resolver to return a success response
         let mut success_dns_info = DnsInfo::default();
         success_dns_info.a_records.push("5.5.5.5".parse().unwrap());
-        fake_resolver.set_success_response("newly-active.com", success_dns_info.clone());
+        fake_resolver.add_success_response("newly-active.com", success_dns_info.clone());
 
         // Wait for the retry task to process the domain and send it to the resolved channel
         let resolved_result = tokio::time::timeout(Duration::from_secs(1), resolved_rx.recv()).await;

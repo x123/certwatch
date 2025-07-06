@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(monitor.current_state(), HealthState::Unhealthy);
 
         // Configure recovery domain to succeed
-        resolver.set_success_response("google.com", Default::default());
+        resolver.add_success_response("google.com", Default::default());
 
         // Manually trigger recovery check logic
         let mut state = monitor.state.lock().unwrap();
