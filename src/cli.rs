@@ -12,7 +12,7 @@ use figment::{
 use std::path::PathBuf;
 
 /// A high-performance, real-time Certificate Transparency Log monitor.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// Path to the TOML configuration file.
@@ -38,6 +38,10 @@ pub struct Cli {
     /// Periodically log key metrics to the console.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub log_metrics: bool,
+
+    /// Output alerts in JSON format to stdout, overriding the config file setting.
+    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    pub json: bool,
 }
 
 impl Provider for Cli {

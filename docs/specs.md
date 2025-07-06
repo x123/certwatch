@@ -83,6 +83,7 @@
   - `--dns-timeout-ms MILLISECONDS`: DNS resolution timeout.
   - `--dns-resolver IP`: DNS resolver IP address.
   - `--log-metrics`: Periodically log key metrics to the console.
+  - `-j, --json`: Output alerts in JSON format to stdout, overriding the config file setting.
 
 ### 3.2. Config File Options
 

@@ -556,9 +556,9 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **User Story:** As a user, I want to switch the standard output to JSON format using a CLI flag, so I can easily pipe the tool's output to other programs like `jq`.
 
 **Tasks:**
-  - [ ] **#54: Add JSON Output CLI Flag:**
+  - [x] **#54: Add JSON Output CLI Flag:**
     - In `src/cli.rs`, add a new boolean flag: `-j, --json`.
-  - [ ] **#55: Implement CLI Override for Output Format:**
+  - [x] **#55: Implement CLI Override for Output Format:**
     - In `main.rs`, when initializing `StdoutOutput`, check if the `--json` flag was passed. If true, override the format from the config file and use `OutputFormat::Json`.
-  - [ ] **#56: Update Output Documentation:**
+  - [x] **#56: Update Output Documentation:**
     - Update `docs/specs.md` and `README.md` to describe the new `-j / --json` flag for switching `stdout` to JSON format.

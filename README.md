@@ -100,6 +100,7 @@ You can override settings from `certwatch.toml` using command-line arguments.
 | `--dns-timeout-ms <MS>` | Timeout for a single DNS query in milliseconds. | `dns.timeout_ms` |
 | `--sample-rate <RATE>` | Sampling rate for the certstream (0.0 to 1.0). | `network.sample_rate` |
 | `--log-metrics` | Periodically log key metrics to the console. | `log_metrics` |
+| `-j, --json` | Output alerts in JSON format to stdout. | `output.format` |
 
 **Example:**
 

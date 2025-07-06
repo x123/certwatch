@@ -5,7 +5,8 @@
 
 use anyhow::Result;
 use certwatch::{
-    config::Config,
+    cli::Cli,
+    config::{Config, OutputFormat},
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
     dns::{DnsHealthMonitor, DnsResolutionManager, TrustDnsResolver},
@@ -16,14 +17,17 @@ use certwatch::{
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };
 use chrono::Utc;
+use clap::Parser;
 use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     // Load configuration by layering sources: defaults, file, environment, and CLI args.
-    let config = Config::load().unwrap_or_else(|err| {
+    let config = Config::load(&cli).unwrap_or_else(|err| {
         // Manually initialize logger for this specific error
         env_logger::init();
         error!("Failed to load configuration: {}", err);
@@ -74,7 +78,12 @@ async fn main() -> Result<()> {
     } else {
         info!("ASN TSV Path: Not configured");
     }
-    info!("Output Format: {}", config.output.format);
+    let output_format = if cli.json {
+        OutputFormat::Json
+    } else {
+        config.output.format.clone()
+    };
+    info!("Output Format: {}", output_format);
     info!(
         "Slack Output: {}",
         if config.output.slack.is_some() {
@@ -129,8 +138,7 @@ async fn main() -> Result<()> {
     // 2. Setup Output Manager
     // =========================================================================
     let mut outputs: Vec<Box<dyn Output>> = Vec::new();
-    // Always add stdout output, but its behavior is controlled by the format.
-    outputs.push(Box::new(StdoutOutput::new(config.output.format.clone())));
+    outputs.push(Box::new(StdoutOutput::new(output_format.clone())));
     if let Some(slack_config) = &config.output.slack {
         outputs.push(Box::new(SlackOutput::new(
             slack_config.webhook_url.clone(),

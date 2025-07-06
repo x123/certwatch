@@ -7,7 +7,6 @@
 
 use anyhow::Result;
 use crate::{cli::Cli, dns::DnsRetryConfig};
-use clap::Parser;
 use figment::{
     providers::{Env, Format, Serialized, Toml},
     Figment,
@@ -161,15 +160,14 @@ impl Config {
     /// 2. Configuration file (`certwatch.toml` or specified by `--config`).
     /// 3. Environment variables (prefixed with `CERTWATCH_`).
     /// 4. Command-line arguments.
-    pub fn load() -> Result<Self> {
-        let cli = Cli::parse();
+    pub fn load(cli: &Cli) -> Result<Self> {
         let config_path = cli.config.clone().unwrap_or_else(|| "certwatch.toml".into());
 
         let figment = Figment::new()
             .merge(Serialized::defaults(Config::default()))
             .merge(Toml::file(config_path))
             .merge(Env::prefixed("CERTWATCH_"))
-            .merge(cli);
+            .merge(cli.clone());
 
         let config: Config = figment.extract()?;
         Ok(config)
