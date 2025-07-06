@@ -507,3 +507,56 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **Tasks:**
   - [x] **#46: Rename cache metric for clarity:** Change the `deduplication_cache_size` metric to `deduplication_cache_entries` to accurately reflect that it counts the number of items in the cache, not its memory footprint.
   - [x] **#47: Fix gauge number formatting:** Modify the logging recorder to format `f64` gauge values as integers to prevent confusing floating-point representations in the logs.
+
+
+---
+
+### Epic 18: Documentation & Codebase Alignment
+
+**User Story:** As a developer, I want the project's documentation to accurately reflect the current state of the implementation so that I can understand its features and configuration without confusion.
+
+**Tasks:**
+  - [ ] **#48: Align Metrics Documentation:**
+    - In `README.md` and `docs/specs.md`, remove all references to the "Live Metrics TUI" and the `--live-metrics` flag.
+    - Document the existing `--log-metrics` flag and the `LoggingRecorder` as the current method for viewing metrics.
+    - In `src/cli.rs`, rename the `--live-metrics` flag to `--log-metrics` to match its actual function.
+  - [ ] **#49: Remove Obsolete DNS Configuration:**
+    - In `src/config.rs`, remove the `resolver_pool_size` field from the `DnsConfig` struct.
+    - Update `certwatch.toml` to remove the corresponding setting.
+  - [ ] **#50: Clean Up `plan.md`:**
+    - Mark the redundant task `#B - Implement Configurable Sampling` in Epic 4.5 as complete, noting it was superseded by Epic 8.
+    - Review other tasks in Epic 4.5 and mark them as complete or create new tasks if necessary.
+
+---
+
+### Epic 19: Configurable DNS Resolver & Timeout
+
+**User Story:** As an operator, I want to specify which DNS resolver to use and control the query timeout via the config file or command line, so I can adapt the tool to different network environments.
+
+**Tasks:**
+  - [ ] **#51: Implement DNS Query Timeout:**
+    - In `src/config.rs`, add a `dns_timeout_ms: u64` field to `DnsConfig`.
+    - In `src/cli.rs`, ensure the `--dns-timeout-ms` flag correctly maps to this new config field.
+    - In `src/dns.rs`, modify `TrustDnsResolver` to accept the timeout and use it to configure the `ResolverOpts` of the underlying resolver. This timeout will apply to each individual query before the retry logic is triggered.
+    - In `main.rs`, pass the configured timeout when creating the `TrustDnsResolver`.
+  - [ ] **#52: Implement Selectable DNS Resolver:**
+    - In `src/config.rs`, add a `dns_resolver: Option<String>` field to `DnsConfig`.
+    - In `src/cli.rs`, ensure the `--dns-resolver` flag maps to this field.
+    - In `src/dns.rs`, modify `TrustDnsResolver` to accept an optional resolver IP. If provided, it will configure `trust-dns-resolver` to use that specific nameserver.
+    - In `main.rs`, pass the configured resolver when creating the `TrustDnsResolver`.
+  - [ ] **#53: Update DNS Documentation:**
+    - Update `docs/specs.md` and `README.md` to accurately describe the functionality of the `--dns-resolver` and `--dns-timeout-ms` options.
+
+---
+
+### Epic 20: Command-Line JSON Output
+
+**User Story:** As a user, I want to switch the standard output to JSON format using a CLI flag, so I can easily pipe the tool's output to other programs like `jq`.
+
+**Tasks:**
+  - [ ] **#54: Add JSON Output CLI Flag:**
+    - In `src/cli.rs`, add a new boolean flag: `-j, --json`.
+  - [ ] **#55: Implement CLI Override for Output Format:**
+    - In `main.rs`, when initializing `StdoutOutput`, check if the `--json` flag was passed. If true, override the format from the config file and use `OutputFormat::Json`.
+  - [ ] **#56: Update Output Documentation:**
+    - Update `docs/specs.md` and `README.md` to describe the new `-j / --json` flag for switching `stdout` to JSON format.
