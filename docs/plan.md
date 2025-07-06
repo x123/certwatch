@@ -562,3 +562,37 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - In `main.rs`, when initializing `StdoutOutput`, check if the `--json` flag was passed. If true, override the format from the config file and use `OutputFormat::Json`.
   - [x] **#56: Update Output Documentation:**
     - Update `docs/specs.md` and `README.md` to describe the new `-j / --json` flag for switching `stdout` to JSON format.
+
+
+---
+
+### Epic 21: `trust-dns-resolver` Deprecation - Phase 1 (Minimal Migration)
+
+**User Story:** As a developer, I want to replace the deprecated `trust-dns-resolver` with its successor, `hickory-resolver`, with minimal code changes, so that the project no longer depends on unmaintained code.
+
+**Tasks:**
+  - **#57: Update Dependencies:**
+    - In `Cargo.toml`, replace the `trust-dns-resolver` dependency with `hickory-resolver`.
+    - Map the existing feature flags to their new equivalents in `hickory-resolver`.
+  - **#58: Update Codebase:**
+    - Perform a global search-and-replace for `trust_dns_resolver` to `hickory_resolver` in all `use` statements.
+    - Adapt the resolver creation in `src/dns.rs` to use the new builder pattern (`Resolver::builder()`) required by `hickory-resolver`.
+  - **#59: Validate Migration:**
+    - Run the full test suite (`cargo test --all-features`) to ensure no regressions were introduced.
+    - Manually run the application to confirm DNS resolution is still working as expected.
+
+---
+
+### Epic 22: `trust-dns-resolver` Deprecation - Phase 2 (Idiomatic Refactor)
+
+**User Story:** As a developer, I want to refactor the DNS implementation to align with the idiomatic patterns of `hickory-resolver` so that the code is more maintainable and leverages the full capabilities of the new library.
+
+**Tasks:**
+  - **#60: Refactor DNS Implementation:**
+    - In `src/dns.rs`, rewrite the resolver creation and lookup logic to fully adopt the `hickory-resolver`'s builder patterns and configuration options.
+  - **#61: Review and Update Configuration:**
+    - In `src/config.rs`, review the `DnsConfig` struct and update it to better align with the configuration options available in `hickory-resolver`.
+  - **#62: Enhance Error Handling:**
+    - Adapt the error handling logic to use the `hickory_resolver::ResolveError` type, ensuring all relevant error variants are handled correctly.
+  - **#63: Update Tests:**
+    - Update unit and integration tests to reflect the refactored implementation.
