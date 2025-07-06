@@ -6,7 +6,7 @@
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher, event::EventKind};
 use regex::RegexSet;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -256,8 +256,6 @@ impl PatternWatcher {
 
     /// Determines if a file event should trigger pattern reload
     fn should_reload_patterns(event: &Event, watched_paths: &HashSet<PathBuf>) -> bool {
-        use notify::EventKind;
-
         match event.kind {
             EventKind::Modify(_) | EventKind::Create(_) => {
                 // Check if any of the changed paths match our pattern files

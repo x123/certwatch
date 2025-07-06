@@ -437,10 +437,10 @@ This epic refactors the output system to support multiple, configurable formats 
     - [x] Update `tokio-tungstenite` from `0.20.1` to `0.27`.
     - [x] Run all tests, including live tests, to ensure no regressions.
 
-- **#36 - Update High-Risk `notify` Dependency**
- - **Context:** Update the `notify` crate, which has a major version bump and is likely to have significant breaking changes.
- - **Dependencies:** #35
- - **Subtasks:**
-   - [ ] Update `notify` from `6.1.1` to `8.1.0`.
-   - [ ] Refactor the `PatternWatcher` to be compatible with the new version.
-   - [ ] Run all tests, including live tests, to ensure no regressions.
+- [x] **#36 - Update High-Risk `notify` Dependency**
+  - **Context:** Update the `notify` crate, which has a major version bump and is likely to have significant breaking changes.
+  - **Dependencies:** #35
+  - **Subtasks:**
+    - [x] Update `notify` from `6.1.1` to `8.1.0`.
+    - [x] Refactor the `PatternWatcher` to be compatible with the new version.
+    - [x] Run all tests, including live tests, to ensure no regressions.
