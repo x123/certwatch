@@ -5,6 +5,7 @@
 
 use chrono::Utc;
 use log::error;
+pub mod utils;
 use std::sync::Arc;
 
 pub mod cli;

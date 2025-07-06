@@ -12,7 +12,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_stream;
 
 // Mock implementations for services
@@ -56,9 +56,10 @@ async fn test_bounded_concurrency() -> Result<()> {
 
     let pattern_matcher = Arc::new(MockPatternMatcher);
     let dns_resolver: Arc<dyn DnsResolver> = Arc::new(MockDnsResolver);
-    let health_monitor = DnsHealthMonitor::new(Default::default(), dns_resolver.clone());
+    let (_tx, rx) = watch::channel(());
+    let health_monitor = DnsHealthMonitor::new(Default::default(), dns_resolver.clone(), rx.clone());
     let (dns_manager, _) =
-        DnsResolutionManager::new(dns_resolver, Default::default(), health_monitor);
+        DnsResolutionManager::new(dns_resolver, Default::default(), health_monitor, rx);
     let dns_manager = Arc::new(dns_manager);
 
     let enrichment_provider: Arc<dyn EnrichmentProvider> = Arc::new(MockEnrichmentProvider);

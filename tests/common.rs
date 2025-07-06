@@ -7,7 +7,7 @@ use certwatch::network::CertStreamClient;
 use std::future::Future;
 use chrono::Local;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 pub const TEST_CERTSTREAM_URL: &str = "wss://127.0.0.1:8181/domains-only";
@@ -43,8 +43,9 @@ where
     println!("CertStreamClient initialized.");
 
     // Spawn the client to run in the background
+    let (_shutdown_tx, shutdown_rx) = watch::channel(());
     tokio::spawn(async move {
-        if let Err(e) = client.run().await {
+        if let Err(e) = client.run(shutdown_rx).await {
             eprintln!("CertStreamClient run error: {}", e);
         }
     });

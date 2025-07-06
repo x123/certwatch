@@ -3,10 +3,12 @@
 //! This module handles connecting to the certstream websocket, parsing
 //! messages, and managing reconnection logic.
 
+use crate::utils::heartbeat::run_heartbeat;
 use anyhow::Result;
 use async_trait::async_trait;
 use rand::Rng;
 use serde::Deserialize;
+use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message;
 
 /// Parses a raw certstream JSON message and extracts domain names
@@ -106,20 +108,35 @@ impl CertStreamClient {
     /// 
     /// This method implements the main client loop with exponential backoff
     /// reconnection logic. It will continue running until explicitly stopped.
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(&self, mut shutdown_rx: watch::Receiver<()>) -> Result<()> {
         let mut backoff_ms = 1000; // Start with 1 second
         const MAX_BACKOFF_MS: u64 = 60000; // Max 60 seconds
 
-        loop {
-            log::info!("Attempting to connect to {}", self.url);
+        // Spawn the heartbeat task
+        let hb_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            run_heartbeat("CertStreamClient", hb_shutdown_rx).await;
+        });
 
-            match self.connect_and_run().await {
-                Ok(()) => {
-                    log::info!("Connection closed normally");
-                    backoff_ms = 1000; // Reset backoff on successful connection
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = shutdown_rx.changed() => {
+                    log::info!("CertStream client received shutdown signal.");
+                    return Ok(());
                 }
-                Err(e) => {
-                    log::error!("Connection failed: {}", e);
+
+                conn_result = self.connect_and_run() => {
+                     match conn_result {
+                        Ok(()) => {
+                            log::info!("Connection closed normally");
+                            backoff_ms = 1000; // Reset backoff on successful connection
+                        }
+                        Err(e) => {
+                            log::error!("Connection failed: {}", e);
+                        }
+                    }
                 }
             }
 

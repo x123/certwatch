@@ -8,6 +8,7 @@ pub mod health;
 use crate::core::DnsInfo;
 pub use crate::core::DnsResolver;
 use crate::config::DnsConfig;
+use crate::utils::heartbeat::run_heartbeat;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 pub use health::DnsHealthMonitor;
@@ -215,6 +216,7 @@ impl DnsResolutionManager {
         resolver: Arc<dyn DnsResolver>,
         config: DnsRetryConfig,
         health_monitor: Arc<DnsHealthMonitor>,
+        shutdown_rx: tokio::sync::watch::Receiver<()>,
     ) -> (Self, mpsc::UnboundedReceiver<ResolvedNxDomain>) {
         let (nxdomain_retry_tx, nxdomain_retry_rx) = mpsc::unbounded_channel();
         let (resolved_nxdomain_tx, resolved_nxdomain_rx) = mpsc::unbounded_channel();
@@ -222,12 +224,19 @@ impl DnsResolutionManager {
         // Spawn the NXDOMAIN retry task
         let resolver_clone = Arc::clone(&resolver);
         let config_clone = config.clone();
+        let nx_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(Self::nxdomain_retry_task(
             resolver_clone,
             config_clone,
             nxdomain_retry_rx,
             resolved_nxdomain_tx,
+            nx_shutdown_rx,
         ));
+
+        // Start the heartbeat task
+        tokio::spawn(async move {
+            run_heartbeat("DnsResolutionManager", shutdown_rx).await;
+        });
 
         let manager = Self {
             resolver,
@@ -298,6 +307,7 @@ impl DnsResolutionManager {
         config: DnsRetryConfig,
         mut rx: mpsc::UnboundedReceiver<(String, String, Instant)>,
         resolved_tx: mpsc::UnboundedSender<ResolvedNxDomain>,
+        mut shutdown_rx: tokio::sync::watch::Receiver<()>,
     ) {
         // Use a min-heap to keep the next retry item at the top.
         // We store (Reverse(next_retry_time), domain, source_tag, attempt)
@@ -325,8 +335,12 @@ impl DnsResolutionManager {
             };
 
             tokio::select! {
-                // biased; always prefer receiving a new item over sleeping
                 biased;
+
+                _ = shutdown_rx.changed() => {
+                    log::info!("NXDOMAIN retry task received shutdown signal.");
+                    break;
+                }
 
                 // Handle new NXDOMAIN domains
                 Some((domain, source_tag, retry_time)) = rx.recv() => {
@@ -377,6 +391,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use hickory_resolver::{proto::op::ResponseCode, ResolveError, ResolveErrorKind};
+    use tokio::sync::watch;
     use std::collections::VecDeque;
 
     /// Fake DNS resolver for testing
@@ -497,9 +512,15 @@ mod tests {
             ..Default::default()
         };
 
-        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, _) =
-            DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
+        let (_tx, rx) = watch::channel(());
+        let health_monitor =
+            DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), rx.clone());
+        let (manager, _) = DnsResolutionManager::new(
+            fake_resolver.clone(),
+            config.retry_config,
+            health_monitor,
+            rx,
+        );
 
         // Configure resolver to fail twice, then succeed
         fake_resolver.add_error_response("flaky.com", "Timeout");
@@ -522,9 +543,15 @@ mod tests {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsConfig::default();
 
-        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, _) =
-            DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
+        let (_tx, rx) = watch::channel(());
+        let health_monitor =
+            DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), rx.clone());
+        let (manager, _) = DnsResolutionManager::new(
+            fake_resolver.clone(),
+            config.retry_config,
+            health_monitor,
+            rx,
+        );
 
         // Configure resolver to return NXDOMAIN
         fake_resolver.add_error_response("nonexistent.com", "NXDOMAIN");
@@ -542,9 +569,15 @@ mod tests {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsConfig::default();
 
-        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
-        let (manager, _) =
-            DnsResolutionManager::new(fake_resolver.clone(), config.retry_config, health_monitor);
+        let (_tx, rx) = watch::channel(());
+        let health_monitor =
+            DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), rx.clone());
+        let (manager, _) = DnsResolutionManager::new(
+            fake_resolver.clone(),
+            config.retry_config,
+            health_monitor,
+            rx,
+        );
 
         let mut dns_info = DnsInfo::default();
         dns_info.a_records.push("1.2.3.4".parse().unwrap());
@@ -569,11 +602,14 @@ mod tests {
             ..Default::default()
         };
 
-        let health_monitor = DnsHealthMonitor::new(Default::default(), fake_resolver.clone());
+        let (_tx, rx) = watch::channel(());
+        let health_monitor =
+            DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), rx.clone());
         let (manager, mut resolved_rx) = DnsResolutionManager::new(
             fake_resolver.clone(),
             config.retry_config,
             health_monitor,
+            rx,
         );
 
         // Configure resolver to return NXDOMAIN initially

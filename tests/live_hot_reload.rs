@@ -45,8 +45,9 @@ async fn live_hot_reload() -> Result<()> {
     let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx, 1.0, true);
 
     // 5. Spawn the client to run in the background
+    let (_client_shutdown_tx, client_shutdown_rx) = watch::channel(());
     tokio::spawn(async move {
-        if let Err(e) = client.run().await {
+        if let Err(e) = client.run(client_shutdown_rx).await {
             eprintln!("CertStreamClient run error: {}", e);
         }
     });

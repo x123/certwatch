@@ -1,10 +1,11 @@
 //! A metrics recorder that periodically logs all captured metrics.
 
 use metrics::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, Unit, SharedString};
+use crate::utils::heartbeat::run_heartbeat;
 use metrics_util::registry::{AtomicStorage, Registry};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use std::sync::atomic::Ordering;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -20,7 +21,7 @@ impl LoggingRecorder {
     /// * `aggregation_interval` - The interval at which to log the metrics.
     pub fn new(
         aggregation_interval: Duration,
-        mut shutdown_rx: watch::Receiver<()>,
+        shutdown_rx: watch::Receiver<()>,
     ) -> (Self, JoinHandle<()>) {
         let registry = Arc::new(Registry::new(AtomicStorage));
         let recorder = Self {
@@ -28,6 +29,7 @@ impl LoggingRecorder {
         };
 
         // Spawn a background task to log metrics periodically
+        let mut logging_shutdown_rx = shutdown_rx.clone();
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(aggregation_interval);
             loop {
@@ -63,12 +65,17 @@ impl LoggingRecorder {
                         }
                         // Note: Histograms are not logged in this simple implementation
                     }
-                    _ = shutdown_rx.changed() => {
+                    _ = logging_shutdown_rx.changed() => {
                         log::info!("Metrics logging task received shutdown signal.");
                         break;
                     }
                 }
             }
+        });
+
+        // Spawn the heartbeat task
+        tokio::spawn(async move {
+            run_heartbeat("LoggingRecorder", shutdown_rx).await;
         });
 
         (recorder, handle)

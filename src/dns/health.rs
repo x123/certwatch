@@ -6,9 +6,11 @@
 
 use crate::config::DnsHealthConfig;
 use crate::core::DnsResolver;
+use crate::utils::heartbeat::run_heartbeat;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 
 /// Represents the health state of the DNS resolver.
 #[derive(Debug, PartialEq, Clone)]
@@ -38,7 +40,11 @@ pub struct DnsHealthMonitor {
 
 impl DnsHealthMonitor {
     /// Creates a new DNS health monitor and starts its background recovery task.
-    pub fn new(config: DnsHealthConfig, resolver: Arc<dyn DnsResolver>) -> Arc<Self> {
+    pub fn new(
+        config: DnsHealthConfig,
+        resolver: Arc<dyn DnsResolver>,
+        shutdown_rx: watch::Receiver<()>,
+    ) -> Arc<Self> {
         let monitor = Arc::new(Self {
             config,
             monitor_state: Mutex::new(MonitorState {
@@ -50,8 +56,20 @@ impl DnsHealthMonitor {
 
         // Start the background recovery task
         let monitor_clone = Arc::clone(&monitor);
+        let mut recovery_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            monitor_clone.recovery_check_task().await;
+            tokio::select! {
+                _ = monitor_clone.recovery_check_task() => {},
+                _ = recovery_shutdown_rx.changed() => {
+                    log::info!("DNS health monitor received shutdown signal.");
+                }
+            }
+        });
+
+        // Start the heartbeat task
+        let heartbeat_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            run_heartbeat("DnsHealthMonitor", heartbeat_shutdown_rx).await;
         });
 
         monitor

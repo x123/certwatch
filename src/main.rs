@@ -17,10 +17,14 @@ use certwatch::{
     network::CertStreamClient,
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };
+use certwatch::utils::heartbeat::run_heartbeat;
 use clap::Parser;
 use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::{mpsc, Mutex, watch}, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, Mutex, watch},
+    task::JoinHandle,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -187,17 +191,10 @@ async fn main() -> Result<()> {
         config.network.allow_invalid_certs,
     );
     let certstream_task = {
-        let mut shutdown_rx = shutdown_rx.clone();
+        let shutdown_rx_clone = shutdown_rx.clone();
         tokio::spawn(async move {
-            tokio::select! {
-                res = certstream_client.run() => {
-                    if let Err(e) = res {
-                        error!("CertStream client failed: {}", e);
-                    }
-                }
-                _ = shutdown_rx.changed() => {
-                    info!("CertStream client received shutdown signal.");
-                }
+            if let Err(e) = certstream_client.run(shutdown_rx_clone).await {
+                error!("CertStream client failed: {}", e);
             }
         })
     };
@@ -205,12 +202,16 @@ async fn main() -> Result<()> {
     // =========================================================================
     // 5. Start the DNS Resolution Manager
     // =========================================================================
-    let dns_health_monitor =
-        DnsHealthMonitor::new(config.dns.health.clone(), dns_resolver.clone());
+    let dns_health_monitor = DnsHealthMonitor::new(
+        config.dns.health.clone(),
+        dns_resolver.clone(),
+        shutdown_rx.clone(),
+    );
     let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
         dns_resolver.clone(),
         config.dns.retry_config.clone(),
         dns_health_monitor.clone(),
+        shutdown_rx.clone(),
     );
     let dns_manager = Arc::new(dns_manager);
 
@@ -227,57 +228,84 @@ async fn main() -> Result<()> {
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
         let alerts_tx = alerts_tx.clone();
+        let mut shutdown_rx = shutdown_rx.clone();
 
         let handle = tokio::spawn(async move {
             info!("Worker {} started", i);
             loop {
-                // Lock the mutex to receive a domain from the shared receiver
-                let domain = match domains_rx.lock().await.recv().await {
+                // First, wait for a domain or a shutdown signal. The `async` block
+                // here contains the lifetime of the MutexGuard, fixing the borrow
+                // checker error.
+                let domain_to_process = tokio::select! {
+                    biased;
+                    _ = shutdown_rx.changed() => {
+                        info!("Worker {} received shutdown signal, exiting.", i);
+                        break;
+                    }
+                    domain_option = async { domains_rx.lock().await.recv().await } => {
+                        domain_option
+                    }
+                };
+
+                let domain = match domain_to_process {
                     Some(domain) => domain,
                     None => {
-                        // Channel is empty and closed, so the worker can exit.
                         info!("Domain channel closed, worker {} shutting down.", i);
                         break;
                     }
                 };
 
-                // The core processing logic for a single domain
-                if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                    info!("Worker {} matched domain: {} (source: {})", i, domain, source_tag);
-                    match dns_manager.resolve_with_retry(&domain, &source_tag).await {
-                        Ok(dns_info) => {
-                            let alert = build_alert(
-                                domain,
-                                source_tag.to_string(),
-                                false,
-                                dns_info,
-                                enrichment_provider.clone(),
-                            )
-                            .await;
-                            if let Err(e) = alerts_tx.send(alert).await {
-                                error!("Worker {} failed to send alert to channel: {}", i, e);
-                            }
-                        }
-                        Err(e) => {
-                            if e.to_string().contains("NXDOMAIN") {
+                // Now, process the domain, but allow the processing to be
+                // interrupted by a shutdown signal.
+                let process_fut = async {
+                    if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
+                        info!("Worker {} matched domain: {} (source: {})", i, domain, source_tag);
+                        match dns_manager.resolve_with_retry(&domain, &source_tag).await {
+                            Ok(dns_info) => {
                                 let alert = build_alert(
                                     domain,
                                     source_tag.to_string(),
                                     false,
-                                    DnsInfo::default(),
+                                    dns_info,
                                     enrichment_provider.clone(),
                                 )
                                 .await;
                                 if let Err(e) = alerts_tx.send(alert).await {
-                                    error!(
-                                        "Worker {} failed to send NXDOMAIN alert to channel: {}",
-                                        i, e
-                                    );
+                                    error!("Worker {} failed to send alert to channel: {}", i, e);
                                 }
-                            } else {
-                                warn!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
+                            }
+                            Err(e) => {
+                                if e.to_string().contains("NXDOMAIN") {
+                                    let alert = build_alert(
+                                        domain,
+                                        source_tag.to_string(),
+                                        false,
+                                        DnsInfo::default(),
+                                        enrichment_provider.clone(),
+                                    )
+                                    .await;
+                                    if let Err(e) = alerts_tx.send(alert).await {
+                                        error!(
+                                            "Worker {} failed to send NXDOMAIN alert to channel: {}",
+                                            i, e
+                                        );
+                                    }
+                                } else {
+                                    warn!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
+                                }
                             }
                         }
+                    }
+                };
+
+                tokio::select! {
+                    biased;
+                    _ = shutdown_rx.changed() => {
+                        info!("Worker {} received shutdown signal during processing, aborting domain.", i);
+                        // The loop will terminate on the next iteration.
+                    }
+                    _ = process_fut => {
+                        // Processing completed normally.
                     }
                 }
             }
@@ -321,12 +349,32 @@ async fn main() -> Result<()> {
     // 8. Alert Deduplication and Output Task
     // =========================================================================
     let output_task = {
+        let mut shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            while let Some(alert) = alerts_rx.recv().await {
-                if !deduplicator.is_duplicate(&alert).await {
-                    metrics::counter!("agg.alerts_sent").increment(1);
-                    if let Err(e) = output_manager.send_alert(&alert).await {
-                        error!("Failed to send alert via output manager: {}", e);
+            // Spawn a heartbeat for the output manager
+            let hb_shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(
+                async move { run_heartbeat("OutputManager", hb_shutdown_rx).await },
+            );
+
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = shutdown_rx.changed() => {
+                        info!("Output task received shutdown signal.");
+                        break;
+                    }
+                    Some(alert) = alerts_rx.recv() => {
+                        if !deduplicator.is_duplicate(&alert).await {
+                            metrics::counter!("agg.alerts_sent").increment(1);
+                            if let Err(e) = output_manager.send_alert(&alert).await {
+                                error!("Failed to send alert via output manager: {}", e);
+                            }
+                        }
+                    }
+                    else => {
+                        // Channel is empty and closed
+                        break;
                     }
                 }
             }
@@ -372,13 +420,6 @@ async fn main() -> Result<()> {
     }
 
     info!("All tasks shut down. Exiting.");
-
-    // Explicitly drop all components holding an Arc to the DNS resolver.
-    // This ensures the resolver's background threads are shut down correctly.
-    drop(dns_manager);
-    drop(dns_health_monitor);
-    drop(dns_resolver);
-    info!("DNS resolver shut down.");
 
     Ok(())
 }

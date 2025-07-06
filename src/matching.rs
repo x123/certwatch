@@ -12,8 +12,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::sync::{mpsc, watch};
 use crate::core::PatternMatcher;
+use crate::utils::heartbeat::run_heartbeat;
+use tokio::sync::{mpsc, watch};
 
 /// High-performance regex matcher using RegexSet for efficient multi-pattern matching
 pub struct RegexMatcher {
@@ -153,6 +154,10 @@ impl PatternWatcher {
 
         // Start file watching in background
         if let Some(shutdown_rx) = shutdown_rx {
+            let hb_shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                run_heartbeat("PatternWatcher", hb_shutdown_rx).await;
+            });
             watcher
                 .start_file_watcher(pattern_files, reload_notifier, shutdown_rx.clone())
                 .await?;
