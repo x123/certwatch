@@ -1,7 +1,10 @@
 # CertWatch Configuration File
 
 log_level = "info"
+
+[metrics]
 log_metrics = true
+log_aggregation_seconds = 10
 
 [network]
 certstream_url = "wss://127.0.0.1:8181/domains-only"

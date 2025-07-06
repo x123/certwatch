@@ -15,8 +15,8 @@ impl LoggingRecorder {
     /// Creates a new `LoggingRecorder` and starts a background task to log metrics.
     ///
     /// # Arguments
-    /// * `interval` - The interval at which to log the metrics.
-    pub fn new(interval: Duration) -> Self {
+    /// * `aggregation_interval` - The interval at which to log the metrics.
+    pub fn new(aggregation_interval: Duration) -> Self {
         let registry = Arc::new(Registry::new(AtomicStorage));
         let recorder = Self {
             registry: registry.clone(),
@@ -24,7 +24,7 @@ impl LoggingRecorder {
 
         // Spawn a background task to log metrics periodically
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
+            let mut ticker = tokio::time::interval(aggregation_interval);
             loop {
                 ticker.tick().await;
                 log::debug!("--- Metrics Snapshot ---");
@@ -36,9 +36,9 @@ impl LoggingRecorder {
                         if value > 0 {
                             let key_name = key.name();
                             let message = if key_name == "agg.domains_sent_to_output" {
-                                format!("Sent {} domains to output channel in the last {}s", value, interval.as_secs())
+                                format!("Sent {} domains to output channel in the last {}s", value, aggregation_interval.as_secs())
                             } else if key_name == "agg.alerts_sent" {
-                                format!("Sent {} alerts in the last {}s", value, interval.as_secs())
+                                format!("Sent {} alerts in the last {}s", value, aggregation_interval.as_secs())
                             } else {
                                 format!("[Agg. Counter] {}: {}", key, value)
                             };
@@ -86,5 +86,47 @@ impl Recorder for LoggingRecorder {
 
     fn register_histogram(&self, key: &Key, _metadata: &Metadata<'_>) -> Histogram {
         self.registry.get_or_create_histogram(key, |h| h.clone()).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use metrics::{Key, Recorder};
+
+    #[tokio::test]
+    async fn test_aggregation_resets_counter() {
+        // 1. Create a recorder with a short interval.
+        let interval = Duration::from_millis(50);
+        let recorder = LoggingRecorder::new(interval);
+        let registry = recorder.registry.clone();
+
+        // 2. Register a counter.
+        let counter_key = Key::from_name("agg.test_counter");
+        let counter_handle = recorder.register_counter(
+            &counter_key,
+            &metrics::Metadata::new("test", metrics::Level::INFO, Some("test")),
+        );
+
+        // 3. Increment the counter and check its value.
+        counter_handle.increment(5);
+        let initial_value = registry
+            .get_counter_handles()
+            .get(&counter_key)
+            .unwrap()
+            .load(Ordering::Relaxed);
+        assert_eq!(initial_value, 5, "Counter should have the initial incremented value");
+
+        // 4. Wait for the aggregation task to run.
+        tokio::time::sleep(interval + Duration::from_millis(20)).await;
+
+        // 5. Check if the counter was reset.
+        let value_after_reset = registry
+            .get_counter_handles()
+            .get(&counter_key)
+            .unwrap()
+            .load(Ordering::Relaxed);
+        assert_eq!(value_after_reset, 0, "Aggregated counter should be reset to 0 after the interval");
     }
 }

@@ -18,11 +18,10 @@ use std::path::PathBuf;
 /// The main configuration struct for the application.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    /// Log metrics to the console periodically.
-    #[serde(default)]
-    pub log_metrics: bool,
     /// The logging level for the application.
     pub log_level: String,
+    /// Configuration for metrics.
+    pub metrics: MetricsConfig,
     /// Configuration for the CertStream network client.
     pub network: NetworkConfig,
     /// Configuration for pattern matching.
@@ -98,6 +97,25 @@ impl Default for DnsHealthConfig {
             failure_threshold: 0.95,
             window_seconds: 120,
             recovery_check_domain: "google.com".to_string(),
+        }
+    }
+}
+
+/// Configuration for metrics.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct MetricsConfig {
+    /// Log metrics to the console periodically.
+    #[serde(default)]
+    pub log_metrics: bool,
+    /// The interval in seconds for logging aggregated metrics.
+    pub log_aggregation_seconds: u64,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            log_metrics: false,
+            log_aggregation_seconds: 10,
         }
     }
 }
@@ -178,8 +196,8 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            log_metrics: false,
             log_level: "info".to_string(),
+            metrics: MetricsConfig::default(),
             network: NetworkConfig {
                 certstream_url: "wss://certstream.calidog.io".to_string(),
                 sample_rate: 1.0,

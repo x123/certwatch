@@ -44,7 +44,11 @@ async fn main() -> Result<()> {
     // Log the loaded configuration settings for visibility
     info!("-------------------- Configuration --------------------");
     info!("Log Level: {}", config.log_level);
-    info!("Log Metrics: {}", config.log_metrics);
+    info!("Log Metrics: {}", config.metrics.log_metrics);
+    info!(
+        "Log Aggregation Interval: {}s",
+        config.metrics.log_aggregation_seconds
+    );
     info!("CertStream URL: {}", config.network.certstream_url);
     info!("Sample Rate: {}", config.network.sample_rate);
     let (dns_resolver, nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
@@ -105,11 +109,15 @@ async fn main() -> Result<()> {
     // =========================================================================
     // Initialize Metrics Recorder if enabled
     // =========================================================================
-    if config.log_metrics {
-        info!("Logging recorder enabled. Metrics will be printed every 10 seconds.");
-        let recorder = LoggingRecorder::new(Duration::from_secs(10));
-        metrics::set_global_recorder(recorder)
-            .expect("Failed to install logging recorder");
+    if config.metrics.log_metrics {
+        info!(
+            "Logging recorder enabled. Metrics will be printed every {} seconds.",
+            config.metrics.log_aggregation_seconds
+        );
+        let recorder = LoggingRecorder::new(Duration::from_secs(
+            config.metrics.log_aggregation_seconds,
+        ));
+        metrics::set_global_recorder(recorder).expect("Failed to install logging recorder");
     }
 
     // =========================================================================

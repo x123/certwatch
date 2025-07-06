@@ -36,8 +36,12 @@ pub struct Cli {
     pub dns_resolver: Option<String>,
 
     /// Periodically log key metrics to the console.
-    #[arg(long, action = clap::ArgAction::SetTrue)]
-    pub log_metrics: bool,
+    #[arg(long)]
+    pub log_metrics: Option<bool>,
+
+    /// The interval in seconds for logging aggregated metrics.
+    #[arg(long, value_name = "SECONDS")]
+    pub log_aggregation_seconds: Option<u64>,
 
     /// Output alerts in JSON format to stdout, overriding the config file setting.
     #[arg(short, long, action = clap::ArgAction::SetTrue)]
@@ -71,8 +75,15 @@ impl Provider for Cli {
             dict.insert("dns.resolver".into(), Value::from(resolver.clone()));
         }
 
-        if self.log_metrics {
-            dict.insert("log_metrics".into(), Value::from(true));
+        if let Some(log_metrics) = self.log_metrics {
+            dict.insert("metrics.log_metrics".into(), Value::from(log_metrics));
+        }
+
+        if let Some(seconds) = self.log_aggregation_seconds {
+            dict.insert(
+                "metrics.log_aggregation_seconds".into(),
+                Value::from(seconds),
+            );
         }
 
         let mut map = Map::new();

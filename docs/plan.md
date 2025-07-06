@@ -612,7 +612,7 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - After logging the summary (e.g., `log::debug!("Sent 322 domains to output channel in the last 5s")`), it will reset the counter for that metric.
   - [x] **#66: Update Network Module Logging:**
     - In `src/network.rs`, replace the direct `log::debug!` call with a metrics counter (e.g., `metrics::counter!("agg.domains_sent_to_output").increment(domains.len() as u64)`).
-  - [ ] **#67: Add Configuration:**
+  - [x] **#67: Add Configuration:**
     - In `src/config.rs`, add a configuration section for the logging recorder to control the aggregation window (e.g., `log_aggregation_seconds: 5`).
-  - [ ] **#68: Update Tests:**
+  - [x] **#68: Update Tests:**
     - Add a unit test to verify that the aggregation logic works as expected. This may require a `FakeRecorder` or similar test harness to inspect the aggregated values over time.
