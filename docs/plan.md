@@ -836,3 +836,45 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
   - **Subtasks:**
     - [ ] Add `// WHY:` comments to all `tokio::select!` blocks that use the `biased;` keyword, explaining the reasoning for prioritizing one branch over others.
     - [ ] Review and improve the documentation for the `core` traits to more clearly define the contract for each method, especially error conditions and expected return values.
+
+
+---
+### Epic 32: Unify Configuration and CLI Parsing
+**User Story:** As a power user or system administrator, I want to configure every application setting using command-line arguments, so that I can run the application in automated or ephemeral environments (like Docker or CI/CD) without needing to manage a separate configuration file.
+**Technical Goal:** Refactor the configuration and CLI parsing logic to use a single source of truth. The `Config` struct will be decorated with `clap::Parser` attributes, eliminating the separate `Cli` struct and the manual mapping between them.
+
+- [ ] **#97 - Refactor `Config` to be the `clap` Parser**
+  - **Context:** The core of the refactor. The `Config` struct and its sub-structs will be decorated with `clap` attributes, making them the single source of truth for all configuration, including CLI flags.
+  - **Dependencies:** #10
+  - **Subtasks:**
+    - [ ] In `Cargo.toml`, ensure `clap` with the `derive` feature is a dependency of the `certwatch` library.
+    - [ ] In `src/config.rs`, add `#[derive(Parser)]` to `Config` and `#[derive(Args)]` to all sub-structs.
+    - [ ] Add `#[command(flatten)]` to all fields that are sub-structs.
+    - [ ] Add `#[arg(long = "...")]` to every individual configuration field, defining its command-line flag.
+    - [ ] Ensure all fields that can be layered are `Option<T>` to work correctly with `figment`'s merging.
+    - [ ] Add a dedicated, `#[serde(skip)]`-ed field to `Config` for the `--config` file path argument.
+
+- [ ] **#98 - Update `main` to Use the New Unified Config Strategy**
+  - **Context:** The application's entry point must be updated to use the new parsing and layering logic.
+  - **Dependencies:** #97
+  - **Subtasks:**
+    - [ ] In `main.rs`, replace the old `Cli::parse()` and `Config::load()` logic.
+    - [ ] First, call `Config::parse()` to get a partial `Config` object containing only the values provided on the command line.
+    - [ ] Then, use `figment` to layer the configuration sources correctly: `Defaults -> TOML File -> Environment -> CLI Arguments`.
+    - [ ] Ensure the final, merged `Config` is extracted successfully.
+
+- [ ] **#99 - Remove Redundant CLI Code**
+  - **Context:** With the `Config` struct now handling CLI parsing, the old `Cli` struct and its `figment::Provider` implementation are obsolete.
+  - **Dependencies:** #98
+  - **Subtasks:**
+    - [ ] Delete the `src/cli.rs` file.
+    - [ ] Remove the `mod cli;` declaration from `src/lib.rs`.
+    - [ ] Remove any `use certwatch::cli::Cli;` statements.
+
+- [ ] **#100 - Validate the Refactoring**
+  - **Context:** After such a significant refactoring, it's critical to verify that all functionality remains intact and the new CLI works as expected.
+  - **Dependencies:** #99
+  - **Subtasks:**
+    - [ ] Run `cargo test --all-features` to ensure no regressions.
+    - [ ] Run `certwatch --help` and verify that the generated help message is comprehensive and correctly documents all available flags.
+    - [ ] Manually test the override behavior by running the application with a config file and overriding a few key settings via CLI flags, confirming the CLI values take precedence.
