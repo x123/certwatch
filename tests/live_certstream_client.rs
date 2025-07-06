@@ -20,7 +20,7 @@ use common::run_live_test;
 async fn test_live_connection_to_certstream() -> Result<()> {
     let test_duration = Duration::from_secs(10);
 
-    let test_logic = |mut rx: mpsc::Receiver<Vec<String>>| async move {
+    let test_logic = |mut rx: mpsc::Receiver<String>| async move {
         log::info!("Waiting for the server to send a message...");
 
         // We'll just wait for any message to confirm the connection is established.
@@ -32,8 +32,8 @@ async fn test_live_connection_to_certstream() -> Result<()> {
             test_duration.as_secs()
         );
 
-        if let Some(domains) = received_message {
-            log::info!("Successfully received a message with {} domains from the live certstream server. Test passed.", domains.len());
+        if let Some(domain) = received_message {
+            log::info!("Successfully received a domain from the live certstream server: '{}'. Test passed.", domain);
         }
     };
 

@@ -64,12 +64,10 @@ async fn live_hot_reload() -> Result<()> {
     // 8. Process messages and look for a match
     let test_duration = Duration::from_secs(15);
     let processing_future = async {
-        while let Some(domains) = rx.recv().await {
-            for domain in domains {
-                if watcher.match_domain(&domain).await.is_some() {
-                    // Match found, break the loop
-                    return;
-                }
+        while let Some(domain) = rx.recv().await {
+            if watcher.match_domain(&domain).await.is_some() {
+                // Match found, break the loop
+                return;
             }
         }
     };

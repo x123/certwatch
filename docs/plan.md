@@ -674,13 +674,13 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] For each domain, use a non-blocking `try_send` to place it onto the central queue.
     - [x] If `try_send` fails (meaning the queue is full), increment a "dropped_domains" metric and log a warning. This prevents the network client from ever blocking on a full channel.
 
-- [ ] **#75 - Implement the Worker Pool**
+- [x] **#75 - Implement the Worker Pool**
   - **Action:** In `main.rs`, replace the existing single processing loop with a pool of worker tasks.
   - **Details:**
-    - [ ] Spawn a number of asynchronous tasks equal to the `concurrency` setting from `certwatch.toml`.
-    - [ ] Each worker task will be given a clone of the `Receiver` end of the central domain queue.
+    - [x] Spawn a number of asynchronous tasks equal to the `concurrency` setting from `certwatch.toml`.
+    - [x] Each worker task will be given a clone of the `Receiver` end of the central domain queue.
 
-- [ ] **#76 - Adapt Worker Logic for Single-Domain Processing**
+- [x] **#76 - Adapt Worker Logic for Single-Domain Processing**
   - **Action:** The core logic currently in the `main` processing loop will be moved inside each worker task.
   - **Details:** Each worker will loop, receiving a single domain from the queue and then performing the full sequence of operations on it: pattern matching, DNS resolution, enrichment, and alert generation.
 

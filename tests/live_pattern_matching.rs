@@ -39,17 +39,15 @@ async fn live_pattern_matching() -> Result<()> {
 
     // 2. Define the test logic using the harness
     let test_duration = Duration::from_secs(5);
-    let test_logic = |mut rx: mpsc::Receiver<Vec<String>>| async move {
-        while let Some(domains) = rx.recv().await {
-            for domain in domains {
-                if let Some(source_tag) = matcher.match_domain(&domain).await {
-                    println!(
-                        "[MATCH] {} {}: '{}'",
-                        Local::now().to_rfc3339(),
-                        source_tag,
-                        domain
-                    );
-                }
+    let test_logic = |mut rx: mpsc::Receiver<String>| async move {
+        while let Some(domain) = rx.recv().await {
+            if let Some(source_tag) = matcher.match_domain(&domain).await {
+                println!(
+                    "[MATCH] {} {}: '{}'",
+                    Local::now().to_rfc3339(),
+                    source_tag,
+                    domain
+                );
             }
         }
     };

@@ -20,7 +20,7 @@ use certwatch::{
 use clap::Parser;
 use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, watch};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -164,9 +164,9 @@ async fn main() -> Result<()> {
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    let (domains_tx, mut domains_rx) =
-        mpsc::channel::<String>(config.performance.queue_capacity);
+    let (domains_tx, domains_rx) = mpsc::channel::<String>(config.performance.queue_capacity);
     let (alerts_tx, mut alerts_rx) = mpsc::channel::<Alert>(1000);
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
 
     // =========================================================================
     // 4. Start the CertStream Client
@@ -177,11 +177,21 @@ async fn main() -> Result<()> {
         config.network.sample_rate,
         config.network.allow_invalid_certs,
     );
-    tokio::spawn(async move {
-        if let Err(e) = certstream_client.run().await {
-            error!("CertStream client failed: {}", e);
-        }
-    });
+    let certstream_task = {
+        let mut shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                res = certstream_client.run() => {
+                    if let Err(e) = res {
+                        error!("CertStream client failed: {}", e);
+                    }
+                }
+                _ = shutdown_rx.changed() => {
+                    info!("CertStream client received shutdown signal.");
+                }
+            }
+        })
+    };
 
     // =========================================================================
     // 5. Start the DNS Resolution Manager
@@ -196,67 +206,75 @@ async fn main() -> Result<()> {
     let dns_manager = Arc::new(dns_manager);
 
     // =========================================================================
-    // 6. Main Processing Loop (The "Coordinator")
+    // 6. Main Processing Loop (Worker Pool)
     // =========================================================================
-    let main_processing_task = {
+    let domains_rx = Arc::new(Mutex::new(domains_rx));
+    let mut worker_handles = Vec::new();
+    info!("Spawning {} worker tasks...", config.concurrency);
+
+    for i in 0..config.concurrency {
+        let domains_rx = domains_rx.clone();
         let pattern_matcher = pattern_matcher.clone();
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
         let alerts_tx = alerts_tx.clone();
-        let concurrency_limit = config.concurrency;
-        info!("Domain processing concurrency limit set to: {}", concurrency_limit);
 
-        tokio::spawn(async move {
-            while let Some(domain) = domains_rx.recv().await {
-                let pattern_matcher = pattern_matcher.clone();
-                let dns_manager = dns_manager.clone();
-                let enrichment_provider = enrichment_provider.clone();
-                let alerts_tx = alerts_tx.clone();
+        let handle = tokio::spawn(async move {
+            info!("Worker {} started", i);
+            loop {
+                // Lock the mutex to receive a domain from the shared receiver
+                let domain = match domains_rx.lock().await.recv().await {
+                    Some(domain) => domain,
+                    None => {
+                        // Channel is empty and closed, so the worker can exit.
+                        info!("Domain channel closed, worker {} shutting down.", i);
+                        break;
+                    }
+                };
 
-                tokio::spawn(async move {
-                    if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                        info!("Matched domain: {} (source: {})", domain, source_tag);
-                        match dns_manager.resolve_with_retry(&domain, &source_tag).await {
-                            Ok(dns_info) => {
+                // The core processing logic for a single domain
+                if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
+                    info!("Worker {} matched domain: {} (source: {})", i, domain, source_tag);
+                    match dns_manager.resolve_with_retry(&domain, &source_tag).await {
+                        Ok(dns_info) => {
+                            let alert = build_alert(
+                                domain,
+                                source_tag.to_string(),
+                                false,
+                                dns_info,
+                                enrichment_provider.clone(),
+                            )
+                            .await;
+                            if let Err(e) = alerts_tx.send(alert).await {
+                                error!("Worker {} failed to send alert to channel: {}", i, e);
+                            }
+                        }
+                        Err(e) => {
+                            if e.to_string().contains("NXDOMAIN") {
                                 let alert = build_alert(
                                     domain,
                                     source_tag.to_string(),
                                     false,
-                                    dns_info,
-                                    enrichment_provider,
+                                    DnsInfo::default(),
+                                    enrichment_provider.clone(),
                                 )
                                 .await;
                                 if let Err(e) = alerts_tx.send(alert).await {
-                                    error!("Failed to send alert to channel: {}", e);
+                                    error!(
+                                        "Worker {} failed to send NXDOMAIN alert to channel: {}",
+                                        i, e
+                                    );
                                 }
-                            }
-                            Err(e) => {
-                                if e.to_string().contains("NXDOMAIN") {
-                                    // Create an initial alert for the NXDOMAIN finding
-                                    let alert = build_alert(
-                                        domain,
-                                        source_tag.to_string(),
-                                        false,
-                                        DnsInfo::default(),
-                                        enrichment_provider,
-                                    )
-                                    .await;
-                                    if let Err(e) = alerts_tx.send(alert).await {
-                                        error!(
-                                            "Failed to send NXDOMAIN alert to channel: {}",
-                                            e
-                                        );
-                                    }
-                                } else {
-                                    warn!("DNS resolution failed for {}: {}", domain, e);
-                                }
+                            } else {
+                                warn!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
                             }
                         }
                     }
-                });
+                }
             }
-        })
-    };
+        });
+        worker_handles.push(handle);
+    }
 
     // =========================================================================
     // 7. NXDOMAIN Resolution Feedback Loop
@@ -264,16 +282,24 @@ async fn main() -> Result<()> {
     let nxdomain_feedback_task = {
         let alerts_tx = alerts_tx.clone();
         let enrichment_provider = enrichment_provider.clone();
+        let mut shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            while let Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv().await {
-                info!(
-                    "Domain previously NXDOMAIN now resolves: {} ({})",
-                    domain, source_tag
-                );
-                let alert =
-                    build_alert(domain, source_tag, true, dns_info, enrichment_provider.clone()).await;
-                if let Err(e) = alerts_tx.send(alert).await {
-                    error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
+            loop {
+                tokio::select! {
+                    Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv() => {
+                        info!(
+                            "Domain previously NXDOMAIN now resolves: {} ({})",
+                            domain, source_tag
+                        );
+                        let alert = build_alert(domain, source_tag, true, dns_info, enrichment_provider.clone()).await;
+                        if let Err(e) = alerts_tx.send(alert).await {
+                            error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
+                        }
+                    },
+                    _ = shutdown_rx.changed() => {
+                        info!("NXDOMAIN feedback loop received shutdown signal.");
+                        break;
+                    }
                 }
             }
         })
@@ -282,27 +308,60 @@ async fn main() -> Result<()> {
     // =========================================================================
     // 8. Alert Deduplication and Output Task
     // =========================================================================
-    let output_task = tokio::spawn(async move {
-        while let Some(alert) = alerts_rx.recv().await {
-            if !deduplicator.is_duplicate(&alert).await {
-                metrics::counter!("agg.alerts_sent").increment(1);
-                if let Err(e) = output_manager.send_alert(&alert).await {
-                    error!("Failed to send alert via output manager: {}", e);
+    let output_task = {
+        let mut shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(alert) = alerts_rx.recv() => {
+                        if !deduplicator.is_duplicate(&alert).await {
+                            metrics::counter!("agg.alerts_sent").increment(1);
+                            if let Err(e) = output_manager.send_alert(&alert).await {
+                                error!("Failed to send alert via output manager: {}", e);
+                            }
+                        }
+                    },
+                    _ = shutdown_rx.changed() => {
+                        info!("Output task received shutdown signal.");
+                        break;
+                    }
                 }
             }
-        }
-    });
+        })
+    };
 
     info!("CertWatch initialized successfully. Monitoring for domains...");
 
     // Wait for shutdown signal
+    // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
-    info!("Shutting down CertWatch...");
+    info!("Shutdown signal received. Shutting down gracefully...");
 
-    // Gracefully shutdown tasks
-    main_processing_task.abort();
-    nxdomain_feedback_task.abort();
-    output_task.abort();
+    // Send shutdown signal to all tasks
+    shutdown_tx.send(()).expect("Failed to send shutdown signal");
+
+    // Wait for all tasks to complete
+    if let Err(e) = certstream_task.await {
+        error!("CertStream task panicked: {:?}", e);
+    }
+
+    // Wait for all worker tasks to complete. They will exit gracefully when the
+    // domain channel is closed by the CertStream client shutting down.
+    for handle in worker_handles {
+        if let Err(e) = handle.await {
+            error!("Worker task panicked: {:?}", e);
+        }
+    }
+
+    if let Err(e) = nxdomain_feedback_task.await {
+        error!("NXDOMAIN feedback task panicked: {:?}", e);
+    }
+
+    if let Err(e) = output_task.await {
+        error!("Output task panicked: {:?}", e);
+    }
+
+    info!("All tasks shut down. Exiting.");
 
     Ok(())
 }
