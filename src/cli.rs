@@ -36,8 +36,8 @@ pub struct Cli {
     pub dns_resolver: Option<String>,
 
     /// Enable the real-time metrics display.
-    #[arg(long)]
-    pub live_metrics: Option<bool>,
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub live_metrics: bool,
 }
 
 impl Provider for Cli {
@@ -69,10 +69,7 @@ impl Provider for Cli {
         
         // TODO: The `dns_resolver` argument is not yet supported in the config struct.
 
-        // The `live_metrics` flag is special. If it's present, it's true.
-        // We use `Option<bool>` and check `is_some()` to differentiate
-        // between "not present" and an explicit `--live-metrics=false`.
-        if self.live_metrics.is_some() {
+        if self.live_metrics {
             dict.insert("log_metrics".into(), Value::from(true));
         }
 
