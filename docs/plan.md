@@ -642,7 +642,7 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [ ] Change the key for `resolved_after_nxdomain` alerts to include both the domain and the source tag.
     - [ ] Update the corresponding unit test to assert that "first resolution" alerts for different source tags are not treated as duplicates.
 
-- **#72 - Ensure Atomic State Updates in DNS Health Recovery**
+- [x] **#72 - Ensure Atomic State Updates in DNS Health Recovery**
   - **Context:** The DNS health recovery logic has a potential race condition. This task will make the state transition atomic.
   - **Dependencies:** #24
   - **Subtasks:**

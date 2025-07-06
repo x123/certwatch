@@ -23,11 +23,16 @@ struct Outcome {
     is_success: bool,
 }
 
+/// Holds the mutable state of the health monitor, protected by a single Mutex.
+struct MonitorState {
+    health: HealthState,
+    outcomes: VecDeque<Outcome>,
+}
+
 /// Monitors the health of the DNS resolution system.
 pub struct DnsHealthMonitor {
     config: DnsHealthConfig,
-    state: Mutex<HealthState>,
-    outcomes: Mutex<VecDeque<Outcome>>,
+    monitor_state: Mutex<MonitorState>,
     resolver: Arc<dyn DnsResolver>,
 }
 
@@ -36,8 +41,10 @@ impl DnsHealthMonitor {
     pub fn new(config: DnsHealthConfig, resolver: Arc<dyn DnsResolver>) -> Arc<Self> {
         let monitor = Arc::new(Self {
             config,
-            state: Mutex::new(HealthState::Healthy),
-            outcomes: Mutex::new(VecDeque::new()),
+            monitor_state: Mutex::new(MonitorState {
+                health: HealthState::Healthy,
+                outcomes: VecDeque::new(),
+            }),
             resolver,
         });
 
@@ -52,49 +59,46 @@ impl DnsHealthMonitor {
 
     /// Records a resolution outcome and updates the health state.
     pub fn record_outcome(&self, is_success: bool) {
-        let mut outcomes = self.outcomes.lock().unwrap();
+        let mut state = self.monitor_state.lock().unwrap();
         let now = Instant::now();
 
         // Add the new outcome
-        outcomes.push_back(Outcome {
+        state.outcomes.push_back(Outcome {
             timestamp: now,
             is_success,
         });
 
         // Prune old outcomes that are outside the time window
         let window_start = now - Duration::from_secs(self.config.window_seconds);
-        while let Some(outcome) = outcomes.front() {
+        while let Some(outcome) = state.outcomes.front() {
             if outcome.timestamp < window_start {
-                outcomes.pop_front();
+                state.outcomes.pop_front();
             } else {
                 break;
             }
         }
 
         // Recalculate health state
-        self.update_health_state(&outcomes);
+        self.update_health_state(&mut state);
     }
 
     /// Gets the current health state.
     pub fn current_state(&self) -> HealthState {
-        self.state.lock().unwrap().clone()
+        self.monitor_state.lock().unwrap().health.clone()
     }
 
     /// Updates the health state based on the current outcomes.
-    fn update_health_state(&self, outcomes: &VecDeque<Outcome>) {
-        if outcomes.is_empty() {
+    fn update_health_state(&self, state: &mut MonitorState) {
+        if state.outcomes.is_empty() {
             return; // Not enough data, remain in the current state
         }
 
-        let total = outcomes.len();
-        let failures = outcomes.iter().filter(|o| !o.is_success).count();
+        let total = state.outcomes.len();
+        let failures = state.outcomes.iter().filter(|o| !o.is_success).count();
         let failure_rate = failures as f64 / total as f64;
 
-        let mut state = self.state.lock().unwrap();
-        let current_state = &*state;
-
-        if failure_rate >= self.config.failure_threshold && *current_state == HealthState::Healthy {
-            *state = HealthState::Unhealthy;
+        if failure_rate >= self.config.failure_threshold && state.health == HealthState::Healthy {
+            state.health = HealthState::Unhealthy;
             log::error!(
                 "DNS resolver is now UNHEALTHY. Failure rate is {:.2}% over the last {} seconds ({} failures / {} total attempts).",
                 failure_rate * 100.0,
@@ -102,36 +106,49 @@ impl DnsHealthMonitor {
                 failures,
                 total
             );
-        } else if failure_rate < self.config.failure_threshold && *current_state == HealthState::Unhealthy {
+        } else if failure_rate < self.config.failure_threshold && state.health == HealthState::Unhealthy {
             // Recovery is handled by the dedicated recovery task to ensure stability
         }
     }
 
-    /// Background task to check for recovery when the system is unhealthy.
-    async fn recovery_check_task(&self) {
-        loop {
-            // Only run the check if the state is Unhealthy
-            if self.current_state() == HealthState::Unhealthy {
-                log::info!("DNS resolver is unhealthy, attempting recovery check...");
-                match self.resolver.resolve(&self.config.recovery_check_domain).await {
-                    Ok(_) => {
-                        let mut state = self.state.lock().unwrap();
-                        if *state == HealthState::Unhealthy {
-                            *state = HealthState::Healthy;
-                            // Clear old failure outcomes to reset the failure rate calculation
-                            self.outcomes.lock().unwrap().clear();
-                            log::info!("DNS resolver has RECOVERED and is now HEALTHY.");
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "DNS recovery check failed for {}: {}. Remaining in unhealthy state.",
-                            self.config.recovery_check_domain,
-                            e
-                        );
-                    }
+    /// Performs a single recovery check.
+    /// If the check is successful, it atomically updates the state to Healthy and
+    /// clears the outcome history.
+    async fn perform_single_recovery_check(&self) {
+        if self.current_state() != HealthState::Unhealthy {
+            return;
+        }
+
+        log::info!("DNS resolver is unhealthy, attempting recovery check...");
+        match self.resolver.resolve(&self.config.recovery_check_domain).await {
+            Ok(_) => {
+                // SAFETY: The lock is held for the entire state transition to ensure
+                // that the health status is updated and the outcomes are cleared
+                // in a single atomic operation. This prevents a race condition where
+                // a new failure could be recorded after the state is set to Healthy
+                // but before the outcomes are cleared.
+                let mut state = self.monitor_state.lock().unwrap();
+                if state.health == HealthState::Unhealthy {
+                    state.health = HealthState::Healthy;
+                    // Clear old failure outcomes to reset the failure rate calculation
+                    state.outcomes.clear();
+                    log::info!("DNS resolver has RECOVERED and is now HEALTHY.");
                 }
             }
+            Err(e) => {
+                log::warn!(
+                    "DNS recovery check failed for {}: {}. Remaining in unhealthy state.",
+                    self.config.recovery_check_domain,
+                    e
+                );
+            }
+        }
+    }
+
+    /// Background task to periodically check for recovery when the system is unhealthy.
+    async fn recovery_check_task(&self) {
+        loop {
+            self.perform_single_recovery_check().await;
             // Wait for the next check interval
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
@@ -150,19 +167,21 @@ mod tests {
         resolver: Arc<FakeDnsResolver>,
         threshold: f64,
         window_seconds: u64,
-    ) -> Arc<DnsHealthMonitor> {
+    ) -> DnsHealthMonitor {
         let config = DnsHealthConfig {
             failure_threshold: threshold,
             window_seconds,
             recovery_check_domain: "google.com".to_string(),
         };
         // Don't start the recovery task for these unit tests
-        Arc::new(DnsHealthMonitor {
+        DnsHealthMonitor {
             config,
-            state: Mutex::new(HealthState::Healthy),
-            outcomes: Mutex::new(VecDeque::new()),
+            monitor_state: Mutex::new(MonitorState {
+                health: HealthState::Healthy,
+                outcomes: VecDeque::new(),
+            }),
             resolver,
-        })
+        }
     }
 
     #[test]
@@ -204,23 +223,24 @@ mod tests {
     #[tokio::test]
     async fn test_recovery_to_healthy_state() {
         let resolver = Arc::new(FakeDnsResolver::new());
-        let monitor = create_test_monitor(resolver.clone(), 0.5, 10);
+        let monitor = Arc::new(create_test_monitor(resolver.clone(), 0.5, 10));
 
         // Make state unhealthy
         monitor.record_outcome(false);
         monitor.record_outcome(false);
         assert_eq!(monitor.current_state(), HealthState::Unhealthy);
+        assert_eq!(monitor.monitor_state.lock().unwrap().outcomes.len(), 2);
 
         // Configure recovery domain to succeed
         resolver.add_success_response("google.com", Default::default());
 
-        // Manually trigger recovery check logic
-        let mut state = monitor.state.lock().unwrap();
-        *state = HealthState::Healthy;
-        monitor.outcomes.lock().unwrap().clear();
-        
-        assert_eq!(*state, HealthState::Healthy);
-        assert!(monitor.outcomes.lock().unwrap().is_empty());
+        // Manually trigger a single recovery check, simulating the background task's action
+        monitor.perform_single_recovery_check().await;
+
+        // State should be healthy and outcomes cleared
+        let state = monitor.monitor_state.lock().unwrap();
+        assert_eq!(state.health, HealthState::Healthy);
+        assert!(state.outcomes.is_empty());
     }
 
     #[tokio::test]
@@ -230,14 +250,15 @@ mod tests {
 
         // Record an outcome
         monitor.record_outcome(false);
-        assert_eq!(monitor.outcomes.lock().unwrap().len(), 1);
+        assert_eq!(monitor.monitor_state.lock().unwrap().outcomes.len(), 1);
 
         // Wait for longer than the window
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         // Record another outcome, which should trigger pruning
         monitor.record_outcome(true);
-        assert_eq!(monitor.outcomes.lock().unwrap().len(), 1);
-        assert!(monitor.outcomes.lock().unwrap().front().unwrap().is_success);
+        let state = monitor.monitor_state.lock().unwrap();
+        assert_eq!(state.outcomes.len(), 1);
+        assert!(state.outcomes.front().unwrap().is_success);
     }
 }
