@@ -462,23 +462,23 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] Delete the `tests/enrichment_integration.rs` file.
     - [x] Delete the `tests/data/GeoLite2-ASN-Test.mmdb` and `tests/data/GeoLite2-Country-Test.mmdb` files.
 
-- **#38 - Implement Performance-Optimized TSV Provider**
+- [x] **#38 - Implement Performance-Optimized TSV Provider**
   - **Context:** Create a new `TsvAsnLookup` that uses an interval tree for fast IP-to-ASN lookups from a TSV file.
   - **Dependencies:** #37
   - **Subtasks:**
-    - [ ] In `Cargo.toml`, add the `csv` and `rangetree` (or a similar interval tree) crates.
-    - [ ] In `src/enrichment/tsv_lookup.rs`, implement the `TsvAsnLookup` struct.
-    - [ ] The `TsvAsnLookup::new()` constructor will parse a TSV file (`CIDR\tAS_Number\tAS_Name`) and build an interval tree from the CIDR ranges.
-    - [ ] The `lookup()` method will perform a fast query against the interval tree.
-    - [ ] Update `src/main.rs` to initialize the `TsvAsnLookup` provider.
+    - [x] In `Cargo.toml`, add the `csv` and `rangetree` (or a similar interval tree) crates.
+    - [x] In `src/enrichment/tsv_lookup.rs`, implement the `TsvAsnLookup` struct.
+    - [x] The `TsvAsnLookup::new()` constructor will parse a TSV file (`CIDR\tAS_Number\tAS_Name`) and build an interval tree from the CIDR ranges.
+    - [x] The `lookup()` method will perform a fast query against the interval tree.
+    - [x] Update `src/main.rs` to initialize the `TsvAsnLookup` provider.
 
-- **#39 - Create New Tests for TSV Provider**
+- [x] **#39 - Create New Tests for TSV Provider**
   - **Context:** Add comprehensive tests for the new TSV-based enrichment provider.
   - **Dependencies:** #38
   - **Subtasks:**
-    - [ ] Create a new test data file `tests/data/ip-to-asn-test.tsv`.
-    - [ ] Create a new integration test file `tests/tsv_enrichment.rs` to validate the parsing and lookup logic against the test TSV file.
-    - [ ] Ensure all tests pass, including running `cargo test --all-features`.
+    - [x] Create a new test data file `tests/data/ip-to-asn-test.tsv`.
+    - [x] Create a new integration test file `tests/tsv_enrichment.rs` to validate the parsing and lookup logic against the test TSV file.
+    - [x] Ensure all tests pass, including running `cargo test --all-features`.
 
 - **#40 - Update Documentation**
   - **Context:** Update all relevant documentation to reflect the removal of MaxMind and the new TSV-based implementation.

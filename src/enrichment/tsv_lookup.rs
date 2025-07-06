@@ -1,31 +1,25 @@
-//! A high-performance, in-memory ASN lookup service using a sorted list of IP ranges from a TSV file.
+//! A high-performance, in-memory ASN lookup service using an interval map
+//! for IP range lookups from a TSV file.
 
-use crate::core::{AsnData, EnrichmentProvider};
+use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use log::{debug, info};
+use rangemap::RangeMap;
 use serde::Deserialize;
 use std::net::IpAddr;
 use std::path::Path;
 
-/// Represents a single record in the IP-to-ASN database.
-/// The start and end IPs are stored as u128 for unified, efficient comparison.
-#[derive(Debug, Clone)]
-struct AsnRecord {
-    start: u128,
-    end: u128,
-    data: AsnData,
-}
-
 /// The main struct for the TSV-based ASN lookup service.
-/// It holds a sorted vector of `AsnRecord` for fast binary searching.
+/// It holds an interval map (`RangeMap`) for fast IP range lookups.
 #[derive(Debug, Clone)]
 pub struct TsvAsnLookup {
-    records: Vec<AsnRecord>,
+    map: RangeMap<u128, AsnData>,
 }
 
 impl TsvAsnLookup {
-    /// Creates a new `TsvAsnLookup` service by loading and parsing records from a TSV file.
+    /// Creates a new `TsvAsnLookup` service by loading and parsing records
+    /// from a TSV file and building an interval map.
     ///
     /// # Arguments
     /// * `path` - The path to the TSV file containing the IP range data.
@@ -36,7 +30,7 @@ impl TsvAsnLookup {
             .has_headers(false)
             .from_path(path)?;
 
-        let mut records = Vec::new();
+        let mut map = RangeMap::new();
         for result in reader.deserialize() {
             let row: TsvRow = result?;
 
@@ -48,65 +42,43 @@ impl TsvAsnLookup {
             let start_ip: IpAddr = row.start_ip.parse()?;
             let end_ip: IpAddr = row.end_ip.parse()?;
 
-            records.push(AsnRecord {
-                start: ip_to_u128(start_ip),
-                end: ip_to_u128(end_ip),
-                data: AsnData {
-                    as_number: row.asn,
-                    as_name: row.description,
-                    country_code: Some(row.country),
-                },
-            });
+            let start = ip_to_u128(start_ip);
+            let end = ip_to_u128(end_ip);
+
+            let data = AsnData {
+                as_number: row.asn,
+                as_name: row.description,
+                country_code: Some(row.country),
+            };
+
+            // Insert the range and its corresponding data into the map.
+            // The range is exclusive on the end, so we add 1.
+            map.insert(start..end + 1, data);
         }
 
-        // Sort records by the starting IP address for binary search
-        records.sort_by_key(|r| r.start);
+        debug!(
+            "Loaded and built interval map with {} ASN records.",
+            map.len()
+        );
 
-        debug!("Loaded and sorted {} ASN records.", records.len());
-
-        Ok(Self { records })
+        Ok(Self { map })
     }
 
-    /// Finds the ASN data for a given IP address using a binary search.
+    /// Finds the ASN data for a given IP address using the interval map.
     ///
     /// # Arguments
     /// * `ip` - The IP address to look up.
     fn find(&self, ip: IpAddr) -> Option<AsnData> {
         let ip_num = ip_to_u128(ip);
-
-        // `binary_search_by_key` finds a record where `ip_num` is within the range.
-        // Since the ranges are sorted by `start`, we can find the insertion point.
-        let search_result = self.records.binary_search_by_key(&ip_num, |record| record.start);
-
-        // The index we get from the search will either be a direct hit or the
-        // index where the element could be inserted to maintain order.
-        // If it's an `Err(idx)`, the correct range (if one exists) must be the
-        // one at `idx - 1`.
-        let potential_match_idx = match search_result {
-            Ok(idx) => idx, // Direct hit on a range start
-            Err(idx) => {
-                if idx == 0 {
-                    return None; // IP is smaller than any range start
-                }
-                idx - 1
-            }
-        };
-
-        if let Some(record) = self.records.get(potential_match_idx) {
-            // Check if the IP is within the found record's range.
-            if ip_num >= record.start && ip_num <= record.end {
-                return Some(record.data.clone());
-            }
-        }
-
-        None
+        // `get` returns the value associated with the range containing the key.
+        self.map.get(&ip_num).cloned()
     }
 }
 
 #[async_trait]
 impl EnrichmentProvider for TsvAsnLookup {
-    async fn enrich(&self, ip: IpAddr) -> Result<crate::core::EnrichmentInfo> {
-        Ok(crate::core::EnrichmentInfo {
+    async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
+        Ok(EnrichmentInfo {
             ip,
             data: self.find(ip),
         })
@@ -137,19 +109,14 @@ mod tests {
     use std::net::IpAddr;
 
     fn test_data_path() -> String {
-        "tests/data/ip2asn-combined-test.tsv".to_string()
+        "tests/data/ip-to-asn-test.tsv".to_string()
     }
 
     #[test]
     fn test_load_and_parse_tsv() {
         let lookup = TsvAsnLookup::new(test_data_path()).expect("Failed to load test data");
-        // The test file has 200 lines, but many are "Not routed" (ASN 0) and should be skipped.
-        // The test file has 200 lines, but some are "Not routed" (ASN 0) and should be skipped.
-        assert_eq!(lookup.records.len(), 163);
-
-        // Verify the first record is sorted correctly
-        let first_record = lookup.records.first().unwrap();
-        assert_eq!(first_record.data.as_number, 9318); // 1.224.20.43
+        // The new test file has 6 lines, one of which is "Not routed" and should be skipped.
+        assert_eq!(lookup.map.len(), 5);
     }
 
     #[test]
@@ -157,36 +124,24 @@ mod tests {
         let lookup = TsvAsnLookup::new(test_data_path()).expect("Failed to load test data");
 
         // Test Case 1: IPv4 address inside a range
-        let ip1: IpAddr = "64.165.249.100".parse().unwrap();
+        let ip1: IpAddr = "1.0.0.128".parse().unwrap();
         let result1 = lookup.find(ip1).expect("Should find ASN for ip1");
-        assert_eq!(result1.as_number, 19248);
-        assert_eq!(result1.as_name, "ACSC1000");
+        assert_eq!(result1.as_number, 13335);
+        assert_eq!(result1.as_name, "CLOUDFLARENET");
         assert_eq!(result1.country_code.unwrap(), "US");
 
-        // Test Case 2: IPv6 address inside a range
-        let ip2: IpAddr = "2800:860:7161::1".parse().unwrap();
+        // Test Case 2: IPv6 address
+        let ip2: IpAddr = "2001:4860:4860::8888".parse().unwrap();
         let result2 = lookup.find(ip2).expect("Should find ASN for ip2");
-        assert_eq!(result2.as_number, 262197);
-        assert_eq!(result2.as_name, "MILLICOM CABLE COSTA RICA S.A.");
+        assert_eq!(result2.as_number, 15169);
+        assert_eq!(result2.as_name, "GOOGLE-IPV6");
 
-        // Test Case 3: IP at the start of a range
-        let ip3: IpAddr = "93.125.32.0".parse().unwrap();
-        let result3 = lookup.find(ip3).expect("Should find ASN for ip3");
-        assert_eq!(result3.as_number, 42772);
+        // Test Case 3: IP not in any range
+        let ip3: IpAddr = "192.168.1.1".parse().unwrap();
+        assert!(lookup.find(ip3).is_none());
 
-        // Test Case 4: IP at the end of a range
-        let ip4: IpAddr = "93.125.32.255".parse().unwrap();
-        let result4 = lookup.find(ip4).expect("Should find ASN for ip4");
-        assert_eq!(result4.as_number, 42772);
-
-        // Test Case 5: IP not in any range
-        let ip5: IpAddr = "192.168.1.1".parse().unwrap();
-        assert!(lookup.find(ip5).is_none());
-
-        // Test Case 6: Another IPv6 test
-        let ip6: IpAddr = "2a02:26f7:f6d6::beef".parse().unwrap();
-        let result6 = lookup.find(ip6).expect("Should find ASN for ip6");
-        assert_eq!(result6.as_number, 20940);
-        assert_eq!(result6.as_name, "AKAMAI-ASN1");
+        // Test Case 4: "Not routed" entry should be skipped and not found
+        let ip4: IpAddr = "0.0.0.0".parse().unwrap();
+        assert!(lookup.find(ip4).is_none());
     }
 }

@@ -63,7 +63,7 @@ impl Default for EnrichmentInfo {
 }
 
 /// ASN and GeoIP data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AsnData {
     /// Autonomous System Number
     pub as_number: u32,

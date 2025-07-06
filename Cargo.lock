@@ -307,6 +307,7 @@ dependencies = [
  "native-tls",
  "notify",
  "rand 0.9.1",
+ "rangemap",
  "regex",
  "reqwest",
  "serde",
@@ -1786,6 +1787,12 @@ checksum = "f703f4665700daf5512dcca5f43afa6af89f09db47fb56be587f80636bda2d41"
 dependencies = [
  "rand_core 0.9.3",
 ]
+
+[[package]]
+name = "rangemap"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f60fcc7d6849342eff22c4350c8b9a989ee8ceabc4b481253e8946b9fe83d684"
 
 [[package]]
 name = "raw-cpuid"
