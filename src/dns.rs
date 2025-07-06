@@ -15,9 +15,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Instant};
-use trust_dns_resolver::{
-    config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
-    system_conf, TokioAsyncResolver,
+use hickory_resolver::{
+    config::{NameServerConfig, ResolverConfig, ResolverOpts},
+    proto::xfer::Protocol,
+    system_conf, TokioResolver,
 };
 
 /// Configuration for DNS retry policies
@@ -47,11 +48,11 @@ impl Default for DnsRetryConfig {
 }
 
 /// DNS resolver implementation using trust-dns-resolver
-pub struct TrustDnsResolver {
-    resolver: TokioAsyncResolver,
+pub struct HickoryDnsResolver {
+    resolver: TokioResolver,
 }
 
-impl TrustDnsResolver {
+impl HickoryDnsResolver {
     /// Creates a new DNS resolver from the application's DNS configuration.
     pub fn from_config(config: &DnsConfig) -> Result<(Self, Vec<SocketAddr>)> {
         let (resolver_config, nameservers) = if let Some(resolver_addr_str) = &config.resolver {
@@ -101,13 +102,18 @@ impl TrustDnsResolver {
             resolver_opts.timeout = Duration::from_millis(timeout_ms);
         }
 
-        let resolver = TokioAsyncResolver::tokio(resolver_config, resolver_opts);
+        let resolver = hickory_resolver::Resolver::builder_with_config(
+            resolver_config,
+            hickory_resolver::name_server::TokioConnectionProvider::default(),
+        )
+        .with_options(resolver_opts)
+        .build();
         Ok((Self { resolver }, nameservers))
     }
 }
 
 #[async_trait]
-impl DnsResolver for TrustDnsResolver {
+impl DnsResolver for HickoryDnsResolver {
     async fn resolve(&self, domain: &str) -> Result<DnsInfo> {
         let mut dns_info = DnsInfo::default();
         let mut first_error = None;
@@ -164,11 +170,15 @@ pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, d
 
 /// Checks if an `anyhow::Error` is an NXDOMAIN error.
 fn is_nxdomain_error(err: &anyhow::Error) -> bool {
-    if let Some(proto_err) = err.downcast_ref::<trust_dns_resolver::error::ResolveError>() {
-        if let trust_dns_resolver::error::ResolveErrorKind::NoRecordsFound { response_code, .. } =
-            proto_err.kind()
-        {
-            return *response_code == trust_dns_resolver::proto::op::ResponseCode::NXDomain;
+    if let Some(proto_err) = err.downcast_ref::<hickory_resolver::ResolveError>() {
+        if let hickory_resolver::ResolveErrorKind::Proto(err) = proto_err.kind() {
+            if let hickory_resolver::proto::ProtoErrorKind::NoRecordsFound {
+                response_code,
+                ..
+            } = err.kind()
+            {
+                return *response_code == hickory_resolver::proto::op::ResponseCode::NXDomain;
+            }
         }
     }
     false
@@ -351,8 +361,8 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
-    use trust_dns_resolver::error::{ResolveError, ResolveErrorKind};
-    use trust_dns_resolver::proto::op::ResponseCode;
+    use hickory_resolver::{ResolveError, ResolveErrorKind};
+    use hickory_resolver::proto::op::ResponseCode;
 
     /// Fake DNS resolver for testing
     pub struct FakeDnsResolver {
@@ -402,13 +412,16 @@ mod tests {
                 Some(Ok(dns_info)) => Ok(dns_info.clone()),
                 Some(Err(error)) => {
                     if error == "NXDOMAIN" {
-                        let kind = ResolveErrorKind::NoRecordsFound {
-                            query: Default::default(),
+                        let kind = hickory_resolver::proto::ProtoErrorKind::NoRecordsFound {
                             response_code: ResponseCode::NXDomain,
-                            trusted: false,
-                            negative_ttl: None,
                             soa: None,
+                            negative_ttl: None,
+                            query: Box::new(Default::default()),
+                            authorities: None,
+                            ns: None,
+                            trusted: false,
                         };
+                        let kind = ResolveErrorKind::Proto(kind.into());
                         Err(ResolveError::from(kind).into())
                     } else {
                         Err(anyhow!("{}", error))

@@ -17,7 +17,7 @@ ipnetwork = { version = "0.21.1", features = ["serde"] }
 
 # Dependencies for later tasks
 regex = "1.10"
-trust-dns-resolver = { version = "0.23", features = ["resolv-conf"] }
+hickory-resolver = { version = "0.25", features = ["system-config", "tokio"] }
 reqwest = { version = "0.12.22", features = ["json"] }
 moka = { version = "0.12", features = ["future"] }
 figment = { version = "0.10", features = ["toml", "env"] }

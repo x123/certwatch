@@ -9,7 +9,7 @@ use certwatch::{
     config::{Config, OutputFormat},
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
-    dns::{DnsHealthMonitor, DnsResolutionManager, TrustDnsResolver},
+    dns::{DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     enrichment::tsv_lookup::TsvAsnLookup,
     matching::PatternWatcher,
     metrics::logging_recorder::LoggingRecorder,
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     info!("Log Metrics: {}", config.log_metrics);
     info!("CertStream URL: {}", config.network.certstream_url);
     info!("Sample Rate: {}", config.network.sample_rate);
-    let (dns_resolver, nameservers) = TrustDnsResolver::from_config(&config.dns)?;
+    let (dns_resolver, nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
     if let Some(resolver) = &config.dns.resolver {
         info!("DNS Resolver: {}", resolver);
     } else {
