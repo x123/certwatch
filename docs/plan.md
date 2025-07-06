@@ -601,7 +601,7 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 
 ### Epic 23: Time-Windowed Log Aggregation
 
-**User Story:** As an operator, I want noisy, high-frequency log messages to be consolidated into periodic summaries, so that I can easily read the logs without being overwhelmed by repetitive information.
+**User Story:** As an operator, I want to noisy, high-frequency log messages to be consolidated into periodic summaries, so that I can easily read the logs without being overwhelmed by repetitive information.
 
 **Tasks:**
   - [x] **#64: Enhance Metrics Recorder for Aggregation:**
@@ -616,3 +616,96 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - In `src/config.rs`, add a configuration section for the logging recorder to control the aggregation window (e.g., `log_aggregation_seconds: 5`).
   - [x] **#68: Update Tests:**
     - Add a unit test to verify that the aggregation logic works as expected. This may require a `FakeRecorder` or similar test harness to inspect the aggregated values over time.
+
+---
+### Epic 24: Performance & Stability Hardening
+**User Story:** As an operator, I want the application to be stable and performant under heavy load, so that it can reliably process high-volume data streams without crashing or slowing down.
+
+- **#69 - Implement Bounded Concurrency for Domain Processing**
+  - **Context:** The current "one task per domain" approach in the main processing loop is a critical performance bottleneck. This task will replace it with a bounded concurrency model to control the number of in-flight tasks and reduce overhead.
+  - **Dependencies:** #11
+  - **Subtasks:**
+    - [ ] In `main.rs`, refactor the main domain processing loop.
+    - [ ] Replace the `tokio::spawn` call for each domain with a `futures::stream::StreamExt::for_each_concurrent` block.
+    - [ ] Make the concurrency limit configurable, defaulting to a sensible value (e.g., `num_cpus::get() * 2`).
+    - [ ] Add a unit test to verify that the new loop processes domains correctly.
+
+---
+### Epic 25: Correctness & Reliability Fixes
+**User Story:** As a developer, I want the application to be correct and reliable, so that it behaves as specified and is resilient to edge cases and unexpected inputs.
+
+- **#70 - Correct Deduplication Key for "First Resolution" Alerts**
+  - **Context:** The deduplication logic for "first resolution" alerts is currently incorrect, causing all such alerts to be treated as duplicates. This task will fix the key generation to ensure correctness.
+  - **Dependencies:** #9
+  - **Subtasks:**
+    - [ ] In `src/deduplication.rs`, modify the `generate_key` function.
+    - [ ] Change the key for `resolved_after_nxdomain` alerts to include both the domain and the source tag.
+    - [ ] Update the corresponding unit test to assert that "first resolution" alerts for different source tags are not treated as duplicates.
+
+- **#72 - Ensure Atomic State Updates in DNS Health Recovery**
+  - **Context:** The DNS health recovery logic has a potential race condition. This task will make the state transition atomic.
+  - **Dependencies:** #24
+  - **Subtasks:**
+    - [ ] In `src/dns/health.rs`, refactor the `recovery_check_task`.
+    - [ ] Ensure the mutex lock is held for the entire duration of the state change (from `Unhealthy` to `Healthy`) and the clearing of outcomes.
+    - [ ] Add a comment explaining why the lock is held to ensure atomicity.
+
+- **#73 - Handle File Deletion Events in Pattern Watcher**
+  - **Context:** The file watcher for pattern hot-reloading does not handle file deletions. This task will add support for `Remove` events.
+  - **Dependencies:** #5
+  - **Subtasks:**
+    - [ ] In `src/matching.rs`, update the `should_reload_patterns` function to also trigger a reload on `notify::EventKind::Remove`.
+    - [ ] Add a unit test to verify that deleting a pattern file correctly triggers a reload and removes the associated patterns.
+
+---
+### Epic 26: Codebase Hygiene & Refinement
+**User Story:** As a developer, I want the codebase to be clean, idiomatic, and efficient, so that it is easy to maintain and extend.
+
+- **#74 - Correct Rust Edition in `Cargo.toml`**
+  - **Context:** The Rust edition in `Cargo.toml` is invalid.
+  - **Dependencies:** None
+  - **Subtasks:**
+    - [ ] In `Cargo.toml`, change the `edition` from `"2024"` to `"2021"`.
+
+- **#75 - Align Configuration and Runtime Requirements for ASN Path**
+  - **Context:** The ASN TSV path is optional in the config but required at runtime. This task will align the two.
+  - **Dependencies:** #10
+  - **Subtasks:**
+    - [ ] In `src/config.rs`, make the `asn_tsv_path` field in `EnrichmentConfig` non-optional.
+    - [ ] Update the `Config::default()` implementation to provide a sensible default (e.g., an empty path).
+    - [ ] Update `main.rs` to provide a clear error message if the required file does not exist at the specified path.
+
+- **#76 - Refactor `DnsHealthMonitor` Constructor Signature**
+  - **Context:** The `DnsHealthMonitor::new` constructor returns an `Arc<Self>`, which is unconventional.
+  - **Dependencies:** #24
+  - **Subtasks:**
+    - [ ] In `src/dns/health.rs`, change the `new` function to return `Self`.
+    - [ ] In `main.rs`, update the call site to wrap the returned monitor in an `Arc`.
+
+- **#77 - Modernize `NXDOMAIN` Retry Loop with `sleep_until`**
+  - **Context:** The `NXDOMAIN` retry loop can be simplified and made more efficient.
+  - **Dependencies:** #6
+  - **Subtasks:**
+    - [ ] In `src/dns.rs`, refactor the `nxdomain_retry_task`.
+    - [ ] Replace the `select!` loop and manual `sleep` calculation with `tokio::time::sleep_until`.
+
+- **#78 - Use Non-Blocking Send in File Watcher Callback**
+  - **Context:** The file watcher uses a blocking send in an async context.
+  - **Dependencies:** #5
+  - **Subtasks:**
+    - [ ] In `src/matching.rs`, change the `blocking_send` to a non-blocking `try_send`.
+    - [ ] Log a warning if the channel is full, indicating that events may have been dropped.
+
+- **#79 - Use Asynchronous I/O for Stdout Output**
+  - **Context:** The `StdoutOutput` uses blocking I/O in an async task.
+  - **Dependencies:** #8
+  - **Subtasks:**
+    - [ ] In `src/outputs.rs`, refactor `StdoutOutput::send_alert`.
+    - [ ] Replace `std::io::stdout` with `tokio::io::stdout` and use `AsyncWriteExt` for non-blocking writes.
+
+- **#80 - Optimize `format_plain_text` by Removing `HashMap`**
+  - **Context:** The `format_plain_text` function is inefficient due to unnecessary `HashMap` creation.
+  - **Dependencies:** #20
+  - **Subtasks:**
+    - [ ] In `src/outputs.rs`, refactor `format_plain_text`.
+    - [ ] Remove the creation of the intermediate `HashMap` and instead find the required enrichment data by iterating over the `enrichment` `Vec`.

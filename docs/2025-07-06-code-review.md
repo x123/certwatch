@@ -1,73 +1,76 @@
-# Code Review: 2025-07-06
+# Code Review: `certwatch` - 2025-07-06
 
-## 1. Overview
+## 1. Executive Summary
 
-This review assesses the current state of the `certwatch` codebase against the objectives defined in `docs/specs.md` and the implementation history in `docs/plan.md`. The goal is to identify technical debt, feature gaps, and areas for improvement before starting the next development cycle.
+The `certwatch` codebase is a well-architected, high-performance application that faithfully implements the sophisticated requirements outlined in the project's specification documents. The use of modern, asynchronous Rust, a clear pipeline architecture, and high-quality libraries forms a strong foundation. The service-oriented design, based on `async_trait` traits, is a particular highlight, promoting testability and maintainability.
 
-## 2. High-Level Assessment
+This review has identified one critical performance bottleneck, a significant correctness bug in the deduplication logic, and several areas where the code can be made more robust, efficient, and idiomatic. Addressing these findings will significantly improve the application's stability under load and align it more closely with its performance goals.
 
-The project is in a strong state. The architecture is decoupled and testable, successfully leveraging traits for dependency injection. The core features outlined in the initial epics are largely complete and functional. The recent addition of the `TsvAsnLookup` provider was well-executed and followed the established architectural patterns.
+## 2. High-Level Architectural Findings
 
-However, the review identifies several feature gaps from the specification and remaining technical debt from previous refactoring cycles that should be addressed.
+*   **Strengths**:
+    *   **Pipeline Architecture**: The use of `tokio` tasks and `mpsc` channels to create a multi-stage processing pipeline is clean and effective.
+    *   **Service-Oriented Design**: The use of `async_trait` to define service contracts (`DnsResolver`, `PatternMatcher`, etc.) is excellent and promotes loose coupling.
+    *   **Configuration Management**: The configuration system using `figment` and `clap` is robust and flexible.
+    *   **Advanced Features**: The implementation of complex features like `NXDOMAIN` dual-curve retries and hot-reloading of patterns is sophisticated and well-executed.
 
-## 3. Analysis Against `specs.md`
+*   **Areas for Improvement**:
+    *   **Concurrency Strategy**: The main processing loop's "one task per domain" approach is a critical performance bottleneck that needs to be replaced with a bounded concurrency model.
+    *   **Error Handling and State Management**: Several modules have minor issues with race conditions, inconsistent state management, and vague error contracts that should be tightened.
 
-### 3.1. Feature Gaps & Incomplete Implementations
+## 3. Detailed Findings & Suggestions
 
-*   **[HIGH] Configurable Sampling (Spec §2.1):** The `CertStreamClient` does not yet implement the required sampling feature. The `sample_rate` field is present in the configuration but is not used. This is a critical feature for managing performance on high-volume streams. This was planned in **Epic 4.5, Task #B** but is not complete.
+### 3.1. Critical Issues
 
-*   **[MEDIUM] Self-Signed Certificate Handling (Spec Implicit):** The TLS connection logic in `network.rs` was hardcoded to allow invalid certificates during a debugging session. This is a security risk and should be an explicit, user-configurable option. This was planned in **Epic 4.5, Task #D** but is not complete.
+#### 3.1.1. Performance: Unbounded Task Spawning in `main`
+*   **File**: [`src/main.rs:201-237`](src/main.rs:201)
+*   **Problem**: The main processing loop spawns a new `tokio` task for every single domain. At the target rate of 5,000-20,000 domains/sec, this will cause extreme overhead from task creation and scheduling, leading to high CPU usage and instability.
+*   **Suggestion**: Refactor the loop to use a bounded concurrency pattern. Replace the `tokio::spawn` per domain with `futures::stream::StreamExt::for_each_concurrent`, limiting the number of in-flight processing tasks to a configurable value (e.g., `num_cpus::get() * 2`).
 
-*   **[LOW] Live Metrics Display (Spec §4):** The `--live-metrics` flag is defined as a command-line option but there is no implementation to display real-time metrics. This is a non-critical feature but is required by the specification.
+#### 3.1.2. Bug: Incorrect Deduplication Key for "First Resolution" Alerts
+*   **File**: [`src/deduplication.rs:48-53`](src/deduplication.rs:48)
+*   **Problem**: The deduplication key for "first resolution" alerts is a constant string combined with the domain. This means all such alerts for the same domain will be treated as duplicates, breaking a critical feature.
+*   **Suggestion**: The key must be unique per domain and source tag. Change the key generation to include the `source_tag`: `format!("{}:{}:FIRST_RESOLUTION", alert.domain, alert.source_tag)`.
 
-### 3.2. Areas of Technical Debt
+### 3.2. Minor Issues & Refinements
+### 3.3. Minor Issues & Refinements
 
-*   **[MEDIUM] Duplicated Message Parsing Logic in `network.rs`:** The `network.rs` module contains two very similar message parsing functions. This duplication was likely introduced during the initial build-out and subsequent debugging. It increases maintenance overhead and should be refactored into a single, robust function. This was planned in **Epic 4.5, Task #D**.
+#### 3.3.1. Configuration
+*   **File**: [`Cargo.toml:4`](Cargo.toml:4)
+*   **Issue**: The Rust edition is set to `2024`, which is invalid.
+*   **Suggestion**: Change the edition to `2021`.
 
-*   **[LOW] Inconsistent Naming in Enrichment Traits:**
-    *   The ASN lookup trait is named `EnrichmentProvider`, but the GeoIP lookup trait is `GeoIpLookup`.
-    *   The ASN implementation is `TsvAsnLookup`, but the GeoIP one is `MaxmindGeoIpProvider`.
-    *   This should be standardized to `T` for traits and `Provider` for implementations (e.g., `AsnProvider` trait, `TsvAsnProvider` struct).
+*   **File**: [`src/config.rs:128`](src/config.rs:128) and [`src/main.rs:131-133`](src/main.rs:131)
+*   **Issue**: `enrichment.asn_tsv_path` is optional in the config but required at runtime, causing a panic if not present.
+*   **Suggestion**: If enrichment is required, make `asn_tsv_path` non-optional in `EnrichmentConfig`. If it is optional, handle the `None` case in `main.rs` by substituting a "null" enrichment provider.
 
-*   **[LOW] `println!` in `matching.rs`:** The `PatternWatcher` uses `println!` for logging status updates. This bypasses the application's logging framework (`log` crate) and prevents consistent log formatting and filtering. This was planned in **Epic 4.5, Task #D**.
+#### 3.3.2. DNS Module
+*   **File**: [`src/dns/health.rs:36`](src/dns/health.rs:36)
+*   **Issue**: `DnsHealthMonitor::new` returns an `Arc<Self>`, which is unconventional.
+*   **Suggestion**: The constructor should return `Self`. The caller in `main.rs` should be responsible for wrapping it in an `Arc`.
 
-*   **[LOW] Confusing `PatternWatcher` API:** The `new` function for `PatternWatcher` takes a `HashMap` of patterns, which is immediately converted into a `Vec`. The API could be simplified by accepting a `Vec` directly, making the caller's responsibility clearer. This was planned in **Epic 4.5, Task #D**.
+*   **File**: [`src/dns/health.rs:111`](src/dns/health.rs:111)
+*   **Issue**: Potential race condition in the health recovery logic.
+*   **Suggestion**: The lock on `state` and `outcomes` should be held for the entire duration of the recovery state change to ensure atomicity.
 
-### 3.3. Insufficient Testing
+*   **File**: [`src/dns.rs:295`](src/dns.rs:295)
+*   **Issue**: The `nxdomain_retry_task` uses a `select!` loop with a manual sleep, which is less efficient and more complex than modern alternatives.
+*   **Suggestion**: Replace the loop with `tokio::time::sleep_until` for a more efficient and idiomatic implementation.
 
-*   **[MEDIUM] Missing Integration Test for TSV Provider:** While the `TsvAsnLookup` has excellent unit tests, there is no corresponding integration test in the `/tests` directory to verify its behavior within the full application pipeline, as was done for other components. **Epic 7, Task #13** specified this, but it appears to have been missed. A live test similar to `tests/live_enrichment.rs` should be created.
+#### 3.3.3. Matching Module
+*   **File**: [`src/matching.rs:258`](src/matching.rs:258)
+*   **Issue**: The file watcher does not handle `Remove` events for pattern files.
+*   **Suggestion**: Update `should_reload_patterns` to also trigger on `Remove` events.
 
-## 4. Summary of Unfinished Work from `plan.md`
+*   **File**: [`src/matching.rs:198`](src/matching.rs:198)
+*   **Issue**: The file watcher callback uses a blocking send (`blocking_send`) in an async context.
+*   **Suggestion**: Use a non-blocking `try_send` and log a warning if the channel is full, or ensure the channel has sufficient capacity.
 
-The following tasks from **Epic 4.5: Pre-Flight Refactoring** remain incomplete:
+#### 3.3.4. Outputs Module
+*   **File**: [`src/outputs.rs:71`](src/outputs.rs:71)
+*   **Issue**: The `StdoutOutput` uses blocking I/O (`std::io::stdout().lock()`) in an async task.
+*   **Suggestion**: Use `tokio::io::stdout()` and `tokio::io::AsyncWriteExt` for non-blocking writes.
 
-*   **#B - Implement Configurable Sampling:** `sample_rate` config exists but is not used.
-*   **#D - General Code Cleanup:**
-    *   Refactor duplicated message handling in `network.rs`.
-    *   Replace `println!` in `matching.rs`.
-    *   Simplify `PatternWatcher` API.
-    *   Make self-signed certificate handling configurable.
-
-## 5. Recommendations & Proposed Plan
-
-Based on this review, I propose the following plan to address the identified issues. This plan prioritizes closing feature gaps from the spec and paying down the most significant technical debt.
-
-1.  **Implement Configurable Sampling:**
-    *   Modify `CertStreamClient` in `src/network.rs` to read the `sample_rate` from the configuration.
-    *   Add logic to the message processing loop to randomly select a percentage of incoming domains.
-    *   Add a unit test to verify the sampling logic.
-
-2.  **Refactor Network Code & Add Configuration:**
-    *   Make the `allow_invalid_certs` flag in `src/network.rs` a boolean field in the main `Config` struct.
-    *   Refactor the duplicated message parsing functions into a single private helper function.
-
-3.  **Improve Testing for TSV Provider:**
-    *   Create a new integration test `tests/live_tsv_enrichment.rs`.
-    *   This test will configure the application to use the `Tsv` provider and run the full pipeline against the live `certstream` feed, asserting that enrichment occurs correctly.
-
-4.  **Address Minor Technical Debt:**
-    *   Change `println!` calls in `src/matching.rs` to `log::info!`.
-    *   Update the `PatternWatcher::new()` signature to accept a `Vec` instead of a `HashMap`.
-    *   Standardize the naming of enrichment traits and structs.
-
-Completing these tasks will bring the application into full compliance with the specification and significantly improve its maintainability.
+*   **File**: [`src/outputs.rs:92`](src/outputs.rs:92)
+*   **Issue**: The `format_plain_text` function inefficiently builds a `HashMap` on every call.
+*   **Suggestion**: Refactor the function to iterate over the `enrichment` `Vec` directly to find the required data, avoiding the unnecessary allocation.

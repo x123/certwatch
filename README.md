@@ -67,18 +67,14 @@ under `enrichment.asn_tsv_path`.
 The file **must** have the following five columns, separated by tabs:
 
 ```text
-CIDR    AS_Number   AS_Name Country_Code    Description
+start_ip    end_ip  asn country description
 ```
-
-A good starting point for this data is the combined IPv4 and IPv6 dataset
-available from [https://iptoasn.com](https://iptoasn.com). Use the [Combined
-IPv4+IPv6 to ASN map](https://iptoasn.com/data/ip2asn-combined.tsv.gz)
 
 **Example `ip-to-asn.tsv`:**
 
 ```text
-1.1.1.0/24	13335	CLOUDFLARENET	US	Cloudflare, Inc.
-8.8.8.0/24	15169	GOOGLE	US	Google LLC
+1.0.0.0	1.0.0.255	13335	US	CLOUDFLARENET
+8.8.8.0	8.8.8.255	15169	US	GOOGLE
 ```
 
 ### 4. Run the Application
