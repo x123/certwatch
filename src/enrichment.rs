@@ -7,7 +7,7 @@ pub mod tsv_lookup;
 #[cfg(test)]
 mod tests {
     
-    use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
+    use crate::core::{AsnInfo, EnrichmentInfo, EnrichmentProvider};
     use anyhow::{anyhow, Result};
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -59,7 +59,7 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
         let expected_info = EnrichmentInfo {
             ip,
-            data: Some(AsnData {
+            data: Some(AsnInfo {
                 as_number: 15169,
                 as_name: "Google LLC".to_string(),
                 country_code: Some("US".to_string()),
@@ -81,7 +81,7 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
         let expected_info = EnrichmentInfo {
             ip,
-            data: Some(AsnData {
+            data: Some(AsnInfo {
                 as_number: 13335,
                 as_name: "Cloudflare, Inc.".to_string(),
                 country_code: None,

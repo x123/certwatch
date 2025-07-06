@@ -3,6 +3,10 @@
 log_level = "info"
 #log_level = "error"
 
+# The number of concurrent domain processing tasks.
+# If commented out, defaults to (number of CPU cores).
+# concurrency = 16
+
 [metrics]
 log_metrics = true
 log_aggregation_seconds = 10
@@ -15,8 +19,8 @@ allow_invalid_certs = true
 [matching]
 # A list of file paths containing regex patterns.
 # For example: pattern_files = ["/path/to/your/patterns.txt"]
-pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt"]
-# pattern_files = ["ignored/phishing.txt", "ignored/dot-top.txt"]
+# pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt"]
+pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt", "ignored/dot-top.txt"]
 
 [dns]
 # Optional: Specify a custom DNS resolver. If commented out, uses the system default.

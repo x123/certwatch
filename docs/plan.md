@@ -621,14 +621,14 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 ### Epic 24: Performance & Stability Hardening
 **User Story:** As an operator, I want the application to be stable and performant under heavy load, so that it can reliably process high-volume data streams without crashing or slowing down.
 
-- **#69 - Implement Bounded Concurrency for Domain Processing**
+- [x] **#69 - Implement Bounded Concurrency for Domain Processing**
   - **Context:** The current "one task per domain" approach in the main processing loop is a critical performance bottleneck. This task will replace it with a bounded concurrency model to control the number of in-flight tasks and reduce overhead.
   - **Dependencies:** #11
   - **Subtasks:**
-    - [ ] In `main.rs`, refactor the main domain processing loop.
-    - [ ] Replace the `tokio::spawn` call for each domain with a `futures::stream::StreamExt::for_each_concurrent` block.
-    - [ ] Make the concurrency limit configurable, defaulting to a sensible value (e.g., `num_cpus::get() * 2`).
-    - [ ] Add a unit test to verify that the new loop processes domains correctly.
+    - [x] In `main.rs`, refactor the main domain processing loop.
+    - [x] Replace the `tokio::spawn` call for each domain with a `futures::stream::StreamExt::for_each_concurrent` block.
+    - [x] Make the concurrency limit configurable, defaulting to a sensible value (e.g., `num_cpus::get() * 2`).
+    - [x] Add a unit test to verify that the new loop processes domains correctly.
 
 ---
 ### Epic 25: Correctness & Reliability Fixes

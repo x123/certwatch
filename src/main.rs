@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use certwatch::{
+    build_alert,
     cli::Cli,
     config::{Config, OutputFormat},
     core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
@@ -16,11 +17,12 @@ use certwatch::{
     network::CertStreamClient,
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };
-use chrono::Utc;
 use clap::Parser;
+use futures::stream::StreamExt;
 use log::{error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
+use tokio_stream;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -49,6 +51,7 @@ async fn main() -> Result<()> {
         "Log Aggregation Interval: {}s",
         config.metrics.log_aggregation_seconds
     );
+    info!("Concurrency: {}", config.concurrency);
     info!("CertStream URL: {}", config.network.certstream_url);
     info!("Sample Rate: {}", config.network.sample_rate);
     let (dns_resolver, nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
@@ -197,41 +200,63 @@ async fn main() -> Result<()> {
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
         let alerts_tx = alerts_tx.clone();
+        let concurrency_limit = config.concurrency;
+        info!("Domain processing concurrency limit set to: {}", concurrency_limit);
 
         tokio::spawn(async move {
             while let Some(domains) = domains_rx.recv().await {
-                for domain in domains {
-                    let pattern_matcher = pattern_matcher.clone();
-                    let dns_manager = dns_manager.clone();
-                    let enrichment_provider = enrichment_provider.clone();
-                    let alerts_tx = alerts_tx.clone();
+                let stream = tokio_stream::iter(domains);
 
-                    tokio::spawn(async move {
-                        if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                            info!("Matched domain: {} (source: {})", domain, source_tag);
-                            match dns_manager.resolve_with_retry(&domain, &source_tag).await {
-                                Ok(dns_info) => {
-                                    let alert =
-                                        build_alert(domain, source_tag.to_string(), false, dns_info, enrichment_provider).await;
-                                    if let Err(e) = alerts_tx.send(alert).await {
-                                        error!("Failed to send alert to channel: {}", e);
-                                    }
-                                }
-                                Err(e) => {
-                                    if e.to_string().contains("NXDOMAIN") {
-                                        // Create an initial alert for the NXDOMAIN finding
-                                        let alert = build_alert(domain, source_tag.to_string(), false, DnsInfo::default(), enrichment_provider).await;
-                                         if let Err(e) = alerts_tx.send(alert).await {
-                                            error!("Failed to send NXDOMAIN alert to channel: {}", e);
+                stream
+                    .for_each_concurrent(concurrency_limit, |domain| {
+                        let pattern_matcher = pattern_matcher.clone();
+                        let dns_manager = dns_manager.clone();
+                        let enrichment_provider = enrichment_provider.clone();
+                        let alerts_tx = alerts_tx.clone();
+
+                        async move {
+                            if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
+                                info!("Matched domain: {} (source: {})", domain, source_tag);
+                                match dns_manager.resolve_with_retry(&domain, &source_tag).await {
+                                    Ok(dns_info) => {
+                                        let alert = build_alert(
+                                            domain,
+                                            source_tag.to_string(),
+                                            false,
+                                            dns_info,
+                                            enrichment_provider,
+                                        )
+                                        .await;
+                                        if let Err(e) = alerts_tx.send(alert).await {
+                                            error!("Failed to send alert to channel: {}", e);
                                         }
-                                    } else {
-                                        warn!("DNS resolution failed for {}: {}", domain, e);
+                                    }
+                                    Err(e) => {
+                                        if e.to_string().contains("NXDOMAIN") {
+                                            // Create an initial alert for the NXDOMAIN finding
+                                            let alert = build_alert(
+                                                domain,
+                                                source_tag.to_string(),
+                                                false,
+                                                DnsInfo::default(),
+                                                enrichment_provider,
+                                            )
+                                            .await;
+                                            if let Err(e) = alerts_tx.send(alert).await {
+                                                error!(
+                                                    "Failed to send NXDOMAIN alert to channel: {}",
+                                                    e
+                                                );
+                                            }
+                                        } else {
+                                            warn!("DNS resolution failed for {}: {}", domain, e);
+                                        }
                                     }
                                 }
                             }
                         }
-                    });
-                }
+                    })
+                    .await;
             }
         })
     };
@@ -283,37 +308,4 @@ async fn main() -> Result<()> {
     output_task.abort();
 
     Ok(())
-}
-
-/// Helper function to build an alert
-async fn build_alert(
-    domain: String,
-    source_tag: String,
-    resolved_after_nxdomain: bool,
-    dns_info: DnsInfo,
-    enrichment_provider: Arc<dyn EnrichmentProvider>,
-) -> Alert {
-    let mut enrichment_data = Vec::new();
-    let all_ips: Vec<_> = dns_info
-        .a_records
-        .iter()
-        .chain(dns_info.aaaa_records.iter())
-        .cloned()
-        .collect();
-
-    for ip in all_ips {
-        match enrichment_provider.enrich(ip).await {
-            Ok(info) => enrichment_data.push(info),
-            Err(e) => error!("Failed to enrich IP {}: {}", ip, e),
-        }
-    }
-
-    Alert {
-        timestamp: Utc::now().to_rfc3339(),
-        domain,
-        source_tag,
-        resolved_after_nxdomain,
-        dns: dns_info,
-        enrichment: enrichment_data,
-    }
 }

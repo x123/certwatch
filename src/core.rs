@@ -50,7 +50,7 @@ pub struct EnrichmentInfo {
     pub ip: IpAddr,
     /// ASN and GeoIP information
     #[serde(flatten)]
-    pub data: Option<AsnData>,
+    pub data: Option<AsnInfo>,
 }
 
 impl Default for EnrichmentInfo {
@@ -63,8 +63,8 @@ impl Default for EnrichmentInfo {
 }
 
 /// ASN and GeoIP data
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AsnData {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct AsnInfo {
     /// Autonomous System Number
     pub as_number: u32,
     /// Human-readable name of the AS

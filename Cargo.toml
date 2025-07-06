@@ -1,7 +1,7 @@
 [package]
 name = "certwatch"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -35,6 +35,9 @@ native-tls = "0.2"
 tokio-native-tls = "0.3"
 rangemap = "1.5.1"
 clap = { version = "4.5.40", features = ["derive"] }
+futures = "0.3.31"
+num_cpus = "1.17.0"
+tokio-stream = "0.1.17"
 
 [features]
 live-tests = []

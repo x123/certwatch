@@ -2,7 +2,7 @@
 
 use crate::{
     config::OutputFormat,
-    core::{Alert, AsnData},
+    core::{Alert, AsnInfo},
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -131,7 +131,7 @@ fn format_plain_text(alert: &Alert) -> String {
     .to_string()
 }
 
-fn format_asn_data(data: &AsnData) -> String {
+fn format_asn_data(data: &AsnInfo) -> String {
     let country = data.country_code.as_deref().unwrap_or("??");
     format!("[{}, {}, {}]", country, data.as_number, data.as_name)
 }
@@ -244,7 +244,7 @@ impl Output for SlackOutput {
 mod tests {
     use super::*;
     
-    use crate::core::{AsnData, DnsInfo, EnrichmentInfo};
+    use crate::core::{AsnInfo, DnsInfo, EnrichmentInfo};
     
     use std::sync::{Arc, Mutex};
 
@@ -262,7 +262,7 @@ mod tests {
             enrichment: vec![
                 EnrichmentInfo {
                     ip: "1.1.1.1".parse().unwrap(),
-                    data: Some(AsnData {
+                    data: Some(AsnInfo {
                         as_number: 13335,
                         as_name: "CLOUDFLARENET".to_string(),
                         country_code: Some("US".to_string()),
@@ -270,7 +270,7 @@ mod tests {
                 },
                 EnrichmentInfo {
                     ip: "2.2.2.2".parse().unwrap(),
-                    data: Some(AsnData {
+                    data: Some(AsnInfo {
                         as_number: 12345,
                         as_name: "Test ASN".to_string(),
                         country_code: Some("GB".to_string()),

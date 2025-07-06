@@ -1,7 +1,7 @@
 //! A high-performance, in-memory ASN lookup service using an interval map
 //! for IP range lookups from a TSV file.
 
-use crate::core::{AsnData, EnrichmentInfo, EnrichmentProvider};
+use crate::core::{AsnInfo, EnrichmentInfo, EnrichmentProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use log::{debug, info};
@@ -14,7 +14,7 @@ use std::path::Path;
 /// It holds an interval map (`RangeMap`) for fast IP range lookups.
 #[derive(Debug, Clone)]
 pub struct TsvAsnLookup {
-    map: RangeMap<u128, AsnData>,
+    map: RangeMap<u128, AsnInfo>,
 }
 
 impl TsvAsnLookup {
@@ -45,7 +45,7 @@ impl TsvAsnLookup {
             let start = ip_to_u128(start_ip);
             let end = ip_to_u128(end_ip);
 
-            let data = AsnData {
+            let data = AsnInfo {
                 as_number: row.asn,
                 as_name: row.description,
                 country_code: Some(row.country),
@@ -68,7 +68,7 @@ impl TsvAsnLookup {
     ///
     /// # Arguments
     /// * `ip` - The IP address to look up.
-    fn find(&self, ip: IpAddr) -> Option<AsnData> {
+    fn find(&self, ip: IpAddr) -> Option<AsnInfo> {
         let ip_num = ip_to_u128(ip);
         // `get` returns the value associated with the range containing the key.
         self.map.get(&ip_num).cloned()

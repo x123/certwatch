@@ -20,6 +20,8 @@ use std::path::PathBuf;
 pub struct Config {
     /// The logging level for the application.
     pub log_level: String,
+    /// The number of concurrent domain processing tasks.
+    pub concurrency: usize,
     /// Configuration for metrics.
     pub metrics: MetricsConfig,
     /// Configuration for the CertStream network client.
@@ -197,6 +199,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             log_level: "info".to_string(),
+            concurrency: num_cpus::get(),
             metrics: MetricsConfig::default(),
             network: NetworkConfig {
                 certstream_url: "wss://certstream.calidog.io".to_string(),

@@ -5,7 +5,8 @@
 
 pub mod health;
 
-use crate::core::{DnsInfo, DnsResolver};
+use crate::core::DnsInfo;
+pub use crate::core::DnsResolver;
 use crate::config::DnsConfig;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;

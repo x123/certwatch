@@ -27,6 +27,10 @@ pub struct Cli {
     #[arg(long, value_name = "RATE")]
     pub sample_rate: Option<f64>,
 
+    /// Number of concurrent domain processing tasks.
+    #[arg(long, value_name = "COUNT")]
+    pub concurrency: Option<usize>,
+
     /// Timeout for DNS resolution in milliseconds.
     #[arg(long, value_name = "MS")]
     pub dns_timeout_ms: Option<u64>,
@@ -65,6 +69,10 @@ impl Provider for Cli {
 
         if let Some(rate) = self.sample_rate {
             dict.insert("network.sample_rate".into(), Value::from(rate));
+        }
+
+        if let Some(concurrency) = self.concurrency {
+            dict.insert("concurrency".into(), Value::from(concurrency as u64));
         }
 
         if let Some(timeout) = self.dns_timeout_ms {
