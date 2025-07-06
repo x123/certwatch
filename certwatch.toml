@@ -5,13 +5,14 @@ log_metrics = true
 
 [network]
 certstream_url = "wss://127.0.0.1:8181/domains-only"
-sample_rate = 0.1
+sample_rate = 1.0
 allow_invalid_certs = true
 
 [matching]
 # A list of file paths containing regex patterns.
 # For example: pattern_files = ["/path/to/your/patterns.txt"]
-pattern_files = ["ignored/phishing.txt", "ignored/dot-top.txt"]
+pattern_files = ["ignored/phishing.txt"]
+# pattern_files = ["ignored/phishing.txt", "ignored/dot-top.txt"]
 
 [dns]
 resolver_pool_size = 10
@@ -32,6 +33,10 @@ recovery_check_domain = "google.com"
 
 [enrichment]
 # Path to the TSV ASN database file.
+# The file must be tab-separated with 5 columns:
+# CIDR, AS_Number, AS_Name, Country_Code, Description
+# https://iptoasn.com/data/ip2asn-combined.tsv.gz from https://iptoasn.com is a
+# useful dataset for enrichment
 asn_tsv_path = "ignored/ip2asn-combined.tsv"
 
 [output]
