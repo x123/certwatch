@@ -723,3 +723,26 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [ ] After sending the shutdown signal, continue capturing for a few seconds.
     - [ ] Assert that "received shutdown" log messages exist for all key components.
     - [ ] Assert that no "is alive" heartbeat messages are present in the logs after the shutdown signal was sent.
+
+
+---
+### Epic 28: Robust Shutdown for DNS Resolution
+**User Story:** As an operator, I want the application to shut down promptly (within a few seconds) when I press Ctrl-C, even when it is under heavy load from a high-volume pattern match, so that I can restart or redeploy the service without long delays.
+
+- [ ] **#87 - Make DNS Resolution Shutdown-Aware**
+  - **Context:** The current DNS resolution logic can block a worker task for an extended period, waiting for a DNS query to time out. This prevents the worker from observing the shutdown signal in a timely manner. This task will make the DNS resolution process itself cancellable.
+  - **Dependencies:** #76.1
+  - **Subtasks:**
+    - [ ] In `src/dns.rs`, modify the `DnsResolutionManager::resolve_with_retry` function to accept the shutdown signal receiver.
+    - [ ] Inside the function, wrap the `hickory-resolver`'s `lookup_ip` future in a `tokio::select!` block.
+    - [ ] The `select!` will race the DNS lookup against the shutdown signal.
+    - [ ] If the shutdown signal is received first, the function will immediately return a distinct error (e.g., `DnsError::Shutdown`) to the calling worker.
+    - [ ] The worker will interpret this error as a signal to terminate immediately.
+
+- [ ] **#88 - Propagate Shutdown Signal to DNS Manager**
+  - **Context:** The `DnsResolutionManager` needs access to the application's shutdown signal to pass it to the resolution logic.
+  - **Dependencies:** #87
+  - **Subtasks:**
+    - [ ] In `main.rs`, when creating the `DnsResolutionManager`, pass a clone of the shutdown signal receiver to its constructor.
+    - [ ] Update the `DnsResolutionManager::new` function signature to accept the receiver.
+    - [ ] In the main worker loop, pass the shutdown signal to `resolve_with_retry`.
