@@ -217,3 +217,32 @@ This epic addresses the feature gap identified in the 2025-07-06 code review, im
     - [x] In `src/network.rs`, modify the `CertStreamClient` to read the `sample_rate` from the configuration.
     - [x] In the message processing loop within `CertStreamClient`, add logic to process only a percentage of incoming messages. Use a random number generator to decide whether to keep or drop each message based on the `sample_rate`.
     - [x] Add a unit test to `src/network.rs` to verify the sampling logic. The test should simulate a stream of messages and assert that, on average, the correct percentage is processed.
+
+
+---
+### **Epic 9: Unify Country Code Enrichment**
+This epic addresses a feature gap identified during testing where the country code from the TSV provider was not being included in the final alert. It refactors the enrichment pipeline to handle country codes consistently across all providers.
+
+- **#15 - Refactor Enrichment Traits and Data Structures**
+  - **Context:** The current pipeline uses separate traits for ASN and GeoIP lookups, which is inefficient now that the TSV provider can supply both. This task will unify them.
+  - **Dependencies:** #7, #12
+  - **Subtasks:**
+    - [ ] In `src/core.rs`, add `country_code: Option<String>` to the `AsnInfo` struct.
+    - [ ] In `src/enrichment.rs`, merge the `GeoIpLookup` trait's functionality into the `EnrichmentProvider` trait. The `lookup` method will now return a complete `AsnInfo` object, including the country code.
+    - [ ] Delete the now-redundant `GeoIpLookup` trait.
+
+- **#16 - Update Enrichment Providers**
+  - **Context:** Both the MaxMind and TSV providers must be updated to implement the new unified `EnrichmentProvider` trait.
+  - **Dependencies:** #15
+  - **Subtasks:**
+    - [ ] In `src/enrichment/tsv_lookup.rs`, update `TsvAsnLookup` to store and return the country code in the `AsnInfo` struct.
+    - [ ] In `src/enrichment.rs`, refactor `MaxmindAsnLookup` to accept both ASN and GeoIP database readers in its constructor.
+    - [ ] Update the `MaxmindAsnLookup::lookup` method to perform both lookups and return a single, complete `AsnInfo` object.
+
+- **#17 - Update Application Integration**
+  - **Context:** The main application logic needs to be updated to use the new, simplified enrichment pipeline.
+  - **Dependencies:** #16
+  - **Subtasks:**
+    - [ ] In `main.rs`, update the logic to instantiate a single, unified `EnrichmentProvider`.
+    - [ ] Remove all logic related to the old `GeoIpLookup` service from the enrichment stage.
+    - [ ] Update integration tests, including `tests/live_enrichment.rs`, to assert that the `country_code` is present in the final alert output.
