@@ -47,8 +47,12 @@ impl Deduplicator {
     /// Generates a unique key for an alert.
     fn generate_key(&self, alert: &Alert) -> String {
         if alert.resolved_after_nxdomain {
-            // Special key for "First Resolution" alerts to ensure they are always processed.
-            let data = format!("{}::FIRST_RESOLUTION", alert.domain);
+            // Key for "First Resolution" alerts includes the source tag to ensure
+            // they are unique per source.
+            let data = format!(
+                "{}::{}::FIRST_RESOLUTION",
+                alert.domain, alert.source_tag
+            );
             blake3::hash(data.as_bytes()).to_hex().to_string()
         } else {
             let data = format!("{}{}", alert.domain, alert.source_tag);
@@ -115,5 +119,15 @@ mod tests {
 
         deduplicator.is_duplicate(&alert1).await;
         assert!(!deduplicator.is_duplicate(&alert2).await);
+    }
+
+    #[tokio::test]
+    async fn test_first_resolution_alerts_with_different_tags_are_not_duplicates() {
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let alert1 = create_test_alert("example.com", "source1", true);
+        let alert2 = create_test_alert("example.com", "source2", true);
+
+        deduplicator.is_duplicate(&alert1).await;
+        assert!(!deduplicator.is_duplicate(&alert2).await, "Second alert with a different source tag should not be a duplicate");
     }
 }

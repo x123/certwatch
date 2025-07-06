@@ -634,7 +634,7 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 ### Epic 25: Correctness & Reliability Fixes
 **User Story:** As a developer, I want the application to be correct and reliable, so that it behaves as specified and is resilient to edge cases and unexpected inputs.
 
-- **#70 - Correct Deduplication Key for "First Resolution" Alerts**
+- [x] **#70 - Correct Deduplication Key for "First Resolution" Alerts**
   - **Context:** The deduplication logic for "first resolution" alerts is currently incorrect, causing all such alerts to be treated as duplicates. This task will fix the key generation to ensure correctness.
   - **Dependencies:** #9
   - **Subtasks:**
