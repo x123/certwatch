@@ -15,6 +15,7 @@
 ## 3. Library & Environment Usage
 
   - **Verify Library References:** When referencing external libraries, the agent **must** double-check that the referenced classes, methods, or fields actually exist. Do not guess or hallucinate API names.
+  - **Consult Authoritative Documentation:** To find the correct version or API for a crate, the agent **must** consult its official documentation (e.g., on `crates.io` or `docs.rs`). Use the terminal-based browser to fetch and display this information directly: `nix run nixpkgs#links2 -- -dump URL`.
   - **Use the Nix Environment:** All development happens within the environment defined in `flake.nix` and managed by `direnv`. The agent should assume the necessary toolchains (e.g., the Rust compiler) are available in the shell.
 
 ## 4. Development & Testing Workflow
