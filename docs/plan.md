@@ -115,11 +115,11 @@ This epic addresses technical debt and feature gaps identified during the 2025-0
     - [x] Write unit tests for the `nxdomain_retry_task` logic.
 
 - [x] **#B - Implement Configurable Sampling**
-  - **Context:** The `CertStreamClient` lacks the required sampling feature to manage high-volume streams.
+  - **Context:** The `CertStreamClient` lacks the required sampling feature to manage high-volume streams. (Superseded by Epic 8)
   - **Dependencies:** #3
   - **Subtasks:**
-    - [ ] Add a `sample_rate` field to the application's configuration.
-    - [ ] In `CertStreamClient`, implement logic to process only a percentage of incoming domains based on the `sample_rate`.
+    - [x] Add a `sample_rate` field to the application's configuration.
+    - [x] In `CertStreamClient`, implement logic to process only a percentage of incoming domains based on the `sample_rate`.
 
 - [x] **#C - Add GeoIP Country Enrichment**
   - **Context:** The enrichment service currently uses a placeholder for the `country_code`. A real implementation is needed to match the spec.
@@ -516,14 +516,14 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 **User Story:** As a developer, I want the project's documentation to accurately reflect the current state of the implementation so that I can understand its features and configuration without confusion.
 
 **Tasks:**
-  - [ ] **#48: Align Metrics Documentation:**
+  - [x] **#48: Align Metrics Documentation:**
     - In `README.md` and `docs/specs.md`, remove all references to the "Live Metrics TUI" and the `--live-metrics` flag.
     - Document the existing `--log-metrics` flag and the `LoggingRecorder` as the current method for viewing metrics.
     - In `src/cli.rs`, rename the `--live-metrics` flag to `--log-metrics` to match its actual function.
-  - [ ] **#49: Remove Obsolete DNS Configuration:**
+  - [x] **#49: Remove Obsolete DNS Configuration:**
     - In `src/config.rs`, remove the `resolver_pool_size` field from the `DnsConfig` struct.
     - Update `certwatch.toml` to remove the corresponding setting.
-  - [ ] **#50: Clean Up `plan.md`:**
+  - [x] **#50: Clean Up `plan.md`:**
     - Mark the redundant task `#B - Implement Configurable Sampling` in Epic 4.5 as complete, noting it was superseded by Epic 8.
     - Review other tasks in Epic 4.5 and mark them as complete or create new tasks if necessary.
 

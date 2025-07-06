@@ -35,9 +35,9 @@ pub struct Cli {
     #[arg(long, value_name = "IP")]
     pub dns_resolver: Option<String>,
 
-    /// Enable the real-time metrics display.
+    /// Periodically log key metrics to the console.
     #[arg(long, action = clap::ArgAction::SetTrue)]
-    pub live_metrics: bool,
+    pub log_metrics: bool,
 }
 
 impl Provider for Cli {
@@ -69,7 +69,7 @@ impl Provider for Cli {
         
         // TODO: The `dns_resolver` argument is not yet supported in the config struct.
 
-        if self.live_metrics {
+        if self.log_metrics {
             dict.insert("log_metrics".into(), Value::from(true));
         }
 

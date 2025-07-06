@@ -16,8 +16,7 @@ IPs with ASN and country data from a local TSV file.
 within a configurable time window.
 - **Configurable Outputs:** Supports structured `JSON`, a compact `PlainText`
 summary for `stdout`, and webhook notifications (for Slack notifications).
-- **Live Metrics Dashboard:** An optional terminal-based UI (`TUI`) to monitor
-performance and operational metrics in real-time.
+- **Logged Metrics:** Periodically log key operational metrics to the console for monitoring.
 
 ## Getting Started
 
@@ -90,16 +89,16 @@ Once configured, you can run the application:
 ./target/release/certwatch
 ```
 
-## Live Monitoring
+## Metrics Logging
 
-To view the real-time metrics dashboard, run the application with the
-`--live-metrics` flag:
+To enable periodic metrics logging to the console, run the application with the
+`--log-metrics` flag:
 
 ```bash
-./target/release/certwatch --live-metrics
+./target/release/certwatch --log-metrics
 ```
 
-Press `q` or `Ctrl+C` to exit the UI and shut down the application.
+Metrics will be printed to the standard log output every 10 seconds.
 
 ## Further Reading
 

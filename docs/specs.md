@@ -82,7 +82,7 @@
   - `--sample-rate FLOAT`: Sampling percentage (0.00-1.00).
   - `--dns-timeout-ms MILLISECONDS`: DNS resolution timeout.
   - `--dns-resolver IP`: DNS resolver IP address.
-  - `--live-metrics`: Real-time metrics display.
+  - `--log-metrics`: Periodically log key metrics to the console.
 
 ### 3.2. Config File Options
 
@@ -103,7 +103,7 @@
 
 ## 4. Monitoring & Metrics
 
-  - **Real-time Metrics**: An optional live display toggled by `--live-metrics`.
+  - **Logged Metrics**: An optional feature to periodically print key metrics to the standard log output, toggled by `--log-metrics`.
   - **Key Metrics**:
       - Domains processed/second
       - Pattern matches/second (per tag)

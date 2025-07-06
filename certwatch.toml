@@ -15,7 +15,6 @@ pattern_files = ["ignored/phishing.txt"]
 # pattern_files = ["ignored/phishing.txt", "ignored/dot-top.txt"]
 
 [dns]
-resolver_pool_size = 10
 
 # DNS retry and backoff settings.
 standard_retries = 3

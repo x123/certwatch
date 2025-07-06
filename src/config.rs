@@ -58,8 +58,6 @@ pub struct MatchingConfig {
 /// Configuration for DNS resolution.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DnsConfig {
-    /// The number of concurrent DNS resolvers to use.
-    pub resolver_pool_size: usize,
     /// DNS retry and backoff settings.
     #[serde(flatten)]
     pub retry_config: DnsRetryConfig,
@@ -157,7 +155,6 @@ impl Default for Config {
                 pattern_files: vec![],
             },
             dns: DnsConfig {
-                resolver_pool_size: 10,
                 retry_config: DnsRetryConfig::default(),
                 health: DnsHealthConfig {
                     failure_threshold: 0.95,
