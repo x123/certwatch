@@ -18,9 +18,9 @@ use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
 
 /// Configuration for DNS retry policies
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DnsRetryConfig {
     /// Number of retries for standard failures (timeouts, server errors)
     pub standard_retries: u32,
@@ -181,14 +181,16 @@ impl DnsResolutionManager {
             match self.resolver.resolve(domain).await {
                 Ok(dns_info) => {
                     self.health_monitor.record_outcome(true);
+                    metrics::counter!("dns_resolutions", "status" => "success").increment(1);
                     return Ok(dns_info);
                 }
                 Err(e) => {
                     self.health_monitor.record_outcome(false);
-                    last_error = Some(format!("{}", e));
 
                     // Check if this is an NXDOMAIN error
                     if is_nxdomain_error(&e) {
+                        metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
+
                         // Schedule for NXDOMAIN retry queue
                         let retry_time = Instant::now()
                             + Duration::from_millis(self.config.nxdomain_initial_backoff_ms);
@@ -203,6 +205,14 @@ impl DnsResolutionManager {
                         // Return the NXDOMAIN error immediately for immediate alert generation
                         return Err(e);
                     }
+
+                    let error_str = e.to_string();
+                    if error_str.to_lowercase().contains("timeout") {
+                        metrics::counter!("dns_resolutions", "status" => "timeout").increment(1);
+                    } else {
+                        metrics::counter!("dns_resolutions", "status" => "failure").increment(1);
+                    }
+                    last_error = Some(error_str);
                     
                     // For standard errors, apply exponential backoff
                     if attempt < self.config.standard_retries {
@@ -233,6 +243,8 @@ impl DnsResolutionManager {
         let mut retry_heap: BinaryHeap<HeapItem> = BinaryHeap::new();
 
         loop {
+            metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
+
             // Determine the sleep duration. If the heap is empty, wait indefinitely
             // for a new message. Otherwise, sleep until the next retry is due.
             let sleep_duration = if let Some(Reverse(next_retry_time)) = retry_heap.peek().map(|(t, ..)| *t) {
@@ -253,6 +265,7 @@ impl DnsResolutionManager {
                 // Handle new NXDOMAIN domains
                 Some((domain, source_tag, retry_time)) = rx.recv() => {
                     retry_heap.push((Reverse(retry_time), domain, source_tag, 0));
+                    metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                 },
 
                 // Process retry queue
@@ -265,6 +278,7 @@ impl DnsResolutionManager {
 
                         // It's time, pop the item from the heap
                         if let Some((_, domain, source_tag, attempt)) = retry_heap.pop() {
+                            metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                             match resolver.resolve(&domain).await {
                                 Ok(dns_info) => {
                                     log::info!("Domain {} (tag: {}) now resolves after NXDOMAIN", domain, source_tag);
@@ -277,6 +291,7 @@ impl DnsResolutionManager {
                                         let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
                                         let next_retry = now + Duration::from_millis(backoff_ms);
                                         retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
+                                        metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                                     } else {
                                         log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts", domain, attempt + 1);
                                     }

@@ -216,16 +216,30 @@ impl Output for SlackOutput {
             ]
         });
 
-        self.client
+        let result = self.client
             .post(&self.webhook_url)
             .json(&payload)
             .send()
-            .await
-            .context("Failed to send request to Slack webhook")?
-            .error_for_status()
-            .context("Slack API returned an error status")?;
+            .await;
 
-        Ok(())
+        match result {
+            Ok(response) => {
+                match response.error_for_status() {
+                    Ok(_) => {
+                        metrics::counter!("webhook_deliveries", "status" => "success", "destination" => "slack").increment(1);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        metrics::counter!("webhook_deliveries", "status" => "failure", "destination" => "slack").increment(1);
+                        Err(e).context("Slack API returned an error status")
+                    }
+                }
+            }
+            Err(e) => {
+                metrics::counter!("webhook_deliveries", "status" => "failure", "destination" => "slack").increment(1);
+                Err(e).context("Failed to send request to Slack webhook")
+            }
+        }
     }
 }
 

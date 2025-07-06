@@ -33,12 +33,15 @@ impl Deduplicator {
     /// * `false` if the alert is not a duplicate.
     pub async fn is_duplicate(&self, alert: &Alert) -> bool {
         let key = self.generate_key(alert);
-        if self.cache.contains_key(&key) {
-            true
-        } else {
+        let is_dupe = self.cache.contains_key(&key);
+        
+        if !is_dupe {
             self.cache.insert(key, ()).await;
-            false
         }
+        
+        metrics::gauge!("deduplication_cache_size").set(self.cache.entry_count() as f64);
+        
+        is_dupe
     }
 
     /// Generates a unique key for an alert.

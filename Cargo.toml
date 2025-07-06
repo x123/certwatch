@@ -26,6 +26,8 @@ serde_json = "1.0"
 notify = "6.1"
 arc-swap = "1.6"
 blake3 = "1.5"
+metrics = "0.24.2"
+metrics-util = "0.20.0"
 
 # WebSocket dependencies for Epic 2
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }

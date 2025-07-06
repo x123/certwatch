@@ -193,6 +193,8 @@ impl CertStreamClient {
             Message::Text(text) => {
                 match parse_message(&text) {
                     Ok(domains) => {
+                        metrics::counter!("domains_processed").increment(domains.len() as u64);
+
                         if domains.is_empty() {
                             return Ok(());
                         }

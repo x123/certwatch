@@ -65,8 +65,13 @@ impl PatternMatcher for RegexMatcher {
     async fn match_domain(&self, domain: &str) -> Option<String> {
         // Find the first matching pattern
         if let Some(match_index) = self.regex_set.matches(domain).into_iter().next() {
-            // Return the corresponding tag
-            self.tags.get(match_index).cloned()
+            // A match was found, get the corresponding tag
+            if let Some(tag) = self.tags.get(match_index) {
+                metrics::counter!("pattern_matches", "tag" => tag.clone()).increment(1);
+                Some(tag.clone())
+            } else {
+                None
+            }
         } else {
             None
         }

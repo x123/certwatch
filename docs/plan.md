@@ -342,35 +342,35 @@ This epic refactors the output system to support multiple, configurable formats 
 
 ---
 
-- **#27 - Setup & Instrument Application**
+- [x] **#27 - Setup & Instrument Application**
   - **Context:** Add the core `metrics` dependency and sprinkle `metrics::*` macros throughout the application codebase at key locations to generate metric events.
   - **Dependencies:** All previous epics.
   - **Subtasks:**
-    - [ ] In `Cargo.toml`, add the `metrics` and `metrics-util` crates.
-    - [ ] In `src/network.rs`, add `metrics::counter!("domains_processed").increment(1);` for each domain received.
-    - [ ] In `src/matching.rs`, add `metrics::counter!("pattern_matches", "tag" => tag.clone()).increment(1);` for each match.
-    - [ ] In `src/dns.rs`, add counters for DNS resolution outcomes (`success`, `failure`, `timeout`).
-    - [ ] In `src/dns.rs`, add `metrics::gauge!("nxdomain_retry_queue_size").set(size);` to track the retry queue.
-    - [ ] In `src/outputs.rs`, add counters for webhook delivery outcomes.
-    - [ ] In `src/deduplication.rs`, add `metrics::gauge!("deduplication_cache_size").set(size);` to track the cache size.
+    - [x] In `Cargo.toml`, add the `metrics` and `metrics-util` crates.
+    - [x] In `src/network.rs`, add `metrics::counter!("domains_processed").increment(1);` for each domain received.
+    - [x] In `src/matching.rs`, add `metrics::counter!("pattern_matches", "tag" => tag.clone()).increment(1);` for each match.
+    - [x] In `src/dns.rs`, add counters for DNS resolution outcomes (`success`, `failure`, `timeout`).
+    - [x] In `src/dns.rs`, add `metrics::gauge!("nxdomain_retry_queue_size").set(size);` to track the retry queue.
+    - [x] In `src/outputs.rs`, add counters for webhook delivery outcomes.
+    - [x] In `src/deduplication.rs`, add `metrics::gauge!("deduplication_cache_size").set(size);` to track the cache size.
 
-- **#28 - Implement Logging Recorder**
+- [x] **#28 - Implement Logging Recorder**
   - **Context:** Create a simple metrics recorder that captures metric events and periodically prints a summary to the standard log output (`log::info!`). This provides a verifiable way to see that the instrumentation is working.
   - **Dependencies:** #27
   - **Subtasks:**
-    - [ ] Create a new module `src/metrics/logging_recorder.rs`.
-    - [ ] Define a `LoggingRecorder` struct that implements the `metrics::Recorder` trait.
-    - [ ] The recorder will store metric state in a thread-safe container (e.g., `Arc<DashMap<...>>`).
-    - [ ] Spawn a background task that, every N seconds, iterates through the stored metrics and prints them using `log::info!`.
+    - [x] Create a new module `src/metrics/logging_recorder.rs`.
+    - [x] Define a `LoggingRecorder` struct that implements the `metrics::Recorder` trait.
+    - [x] The recorder will store metric state in a thread-safe container (e.g., `Arc<DashMap<...>>`).
+    - [x] Spawn a background task that, every N seconds, iterates through the stored metrics and prints them using `log::info!`.
 
-- **#29 - Integrate Logging Recorder**
+- [x] **#29 - Integrate Logging Recorder**
   - **Context:** Add a command-line flag to enable the `LoggingRecorder`, allowing for easy debugging and verification of the metrics system.
   - **Dependencies:** #28
   - **Subtasks:**
-    - [ ] In `src/config.rs`, add a `--log-metrics` command-line argument.
-    - [ ] In `main.rs`, check for the `--log-metrics` flag at startup.
-    - [ ] If `true`, instantiate the `LoggingRecorder` and install it as the global metrics recorder using `metrics::set_boxed_recorder`.
-    - [ ] If `false`, do nothing, ensuring zero performance overhead.
+    - [x] In `src/config.rs`, add a `--log-metrics` command-line argument.
+    - [x] In `main.rs`, check for the `--log-metrics` flag at startup.
+    - [x] If `true`, instantiate the `LoggingRecorder` and install it as the global metrics recorder using `metrics::set_global_recorder`.
+    - [x] If `false`, do nothing, ensuring zero performance overhead.
 
 ---
 ### Epic 13: Real-time Metrics TUI

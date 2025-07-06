@@ -7,17 +7,20 @@
 
 use anyhow::Result;
 use figment::{
-    providers::{Format, Toml},
+    providers::{Format, Toml, Env, Serialized},
     Figment,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::dns::DnsRetryConfig;
 
 /// The main configuration struct for the application.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
+    /// Log metrics to the console periodically.
+    #[serde(default)]
+    pub log_metrics: bool,
     /// The logging level for the application.
     pub log_level: String,
     /// Configuration for the CertStream network client.
@@ -35,7 +38,7 @@ pub struct Config {
 }
 
 /// Configuration for the CertStream network client.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NetworkConfig {
     /// The URL of the CertStream WebSocket server.
     pub certstream_url: String,
@@ -46,14 +49,14 @@ pub struct NetworkConfig {
 }
 
 /// Configuration for pattern matching.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct MatchingConfig {
     /// A list of file paths containing regex patterns.
     pub pattern_files: Vec<PathBuf>,
 }
 
 /// Configuration for DNS resolution.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DnsConfig {
     /// The number of concurrent DNS resolvers to use.
     pub resolver_pool_size: usize,
@@ -65,7 +68,7 @@ pub struct DnsConfig {
 }
 
 /// Configuration for the DNS health monitor.
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct DnsHealthConfig {
     /// The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
     pub failure_threshold: f64,
@@ -76,14 +79,14 @@ pub struct DnsHealthConfig {
 }
 
 /// Configuration for IP address enrichment.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum AsnProvider {
     Maxmind,
     Tsv,
 }
 
 /// Configuration for IP address enrichment.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct EnrichmentConfig {
     /// The ASN provider to use.
     pub asn_provider: AsnProvider,
@@ -92,18 +95,18 @@ pub struct EnrichmentConfig {
     /// Path to the TSV ASN database file (if using Tsv).
     pub asn_tsv_path: Option<PathBuf>,
     /// Path to the MaxMind GeoLite2-Country database file.
-    pub geoip_db_path: PathBuf,
+    pub geoip_db_path: Option<PathBuf>,
 }
 
 /// The format for stdout output.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub enum OutputFormat {
     Json,
     PlainText,
 }
 
 /// Configuration for output and alerting.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OutputConfig {
     /// The format to use for stdout output.
     pub format: OutputFormat,
@@ -112,14 +115,14 @@ pub struct OutputConfig {
 }
 
 /// Configuration for Slack alerts.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SlackConfig {
     /// The Slack incoming webhook URL.
     pub webhook_url: String,
 }
 
 /// Configuration for alert deduplication.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DeduplicationConfig {
     /// The size of the deduplication cache.
     pub cache_size: usize,
@@ -134,7 +137,10 @@ impl Config {
     /// * `config_path` - The path to the TOML configuration file.
     pub fn load(config_path: &str) -> Result<Self> {
         let config: Config = Figment::new()
+            .merge(Serialized::defaults(Config::default()))
             .merge(Toml::file(config_path))
+            // Allow overriding with environment variables, e.g., CERTWATCH_LOG_METRICS=true
+            .merge(Env::prefixed("CERTWATCH_"))
             .extract()?;
         Ok(config)
     }
@@ -144,6 +150,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            log_metrics: false,
             log_level: "info".to_string(),
             network: NetworkConfig {
                 certstream_url: "wss://certstream.calidog.io".to_string(),
@@ -164,9 +171,9 @@ impl Default for Config {
             },
             enrichment: EnrichmentConfig {
                 asn_provider: AsnProvider::Maxmind,
-                asn_db_path: Some("data/GeoLite2-ASN.mmdb".into()),
+                asn_db_path: None,
                 asn_tsv_path: None,
-                geoip_db_path: "data/GeoLite2-Country.mmdb".into(),
+                geoip_db_path: None,
             },
             output: OutputConfig {
                 format: OutputFormat::PlainText,

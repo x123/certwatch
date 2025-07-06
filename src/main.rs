@@ -11,6 +11,7 @@ use certwatch::{
     dns::{DnsHealthMonitor, DnsResolutionManager, TrustDnsResolver},
     enrichment::{tsv_lookup::TsvAsnLookup, MaxmindEnrichmentProvider},
     matching::PatternWatcher,
+    metrics::logging_recorder::LoggingRecorder,
     network::CertStreamClient,
     outputs::{OutputManager, SlackOutput, StdoutOutput},
 };
@@ -37,8 +38,15 @@ async fn main() -> Result<()> {
 
     info!("CertWatch starting up...");
 
-    // Load configuration
-    // In a real app, this path would come from a CLI argument.
+    // =========================================================================
+    // Initialize Metrics Recorder if enabled
+    // =========================================================================
+    if config.log_metrics {
+        info!("Logging recorder enabled. Metrics will be printed every 10 seconds.");
+        let recorder = LoggingRecorder::new(Duration::from_secs(10));
+        metrics::set_global_recorder(recorder)
+            .expect("Failed to install logging recorder");
+    }
 
     // =========================================================================
     // 1. Instantiate Services
@@ -51,15 +59,27 @@ async fn main() -> Result<()> {
                 let asn_db_path = config.enrichment.asn_db_path.clone().ok_or_else(|| {
                     anyhow::anyhow!("asn_db_path is required for Maxmind provider")
                 })?;
+                let geoip_db_path = config.enrichment.geoip_db_path.clone().ok_or_else(|| {
+                    anyhow::anyhow!("geoip_db_path is required for Maxmind provider")
+                })?;
+                if !asn_db_path.exists() {
+                    return Err(anyhow::anyhow!("Maxmind ASN database not found at {:?}", asn_db_path));
+                }
+                if !geoip_db_path.exists() {
+                    return Err(anyhow::anyhow!("Maxmind GeoIP database not found at {:?}", geoip_db_path));
+                }
                 Arc::new(MaxmindEnrichmentProvider::new(
                     &asn_db_path,
-                    &config.enrichment.geoip_db_path,
+                    &geoip_db_path,
                 )?)
             }
             AsnProvider::Tsv => {
                 let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
                     anyhow::anyhow!("asn_tsv_path is required for Tsv provider")
                 })?;
+                if !tsv_path.exists() {
+                    return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
+                }
                 Arc::new(TsvAsnLookup::new(&tsv_path)?)
             }
         };
