@@ -10,6 +10,8 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
+// TODO fix this or make it optional locked behind test flags, we cannot always rely on 127.0.0.1
+// being available
 pub const TEST_CERTSTREAM_URL: &str = "wss://127.0.0.1:8181/domains-only";
 
 /// A test harness for running live integration tests against the CertStream feed.
