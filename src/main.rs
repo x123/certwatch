@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
                 let domain = match domain_to_process {
                     Some(domain) => domain,
                     None => {
-                        info!("Domain channel closed, worker {} shutting down.", i);
+                        debug!("Domain channel closed, worker {} shutting down.", i);
                         break;
                     }
                 };
@@ -331,7 +331,7 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(DnsError::Shutdown) => {
-                                info!("Worker {} DNS resolution cancelled by shutdown.", i);
+                                debug!("Worker {} DNS resolution cancelled by shutdown.", i);
                                 // The outer loop will catch the shutdown signal on the next iteration and exit gracefully.
                             }
                         }
@@ -341,7 +341,7 @@ async fn main() -> Result<()> {
                 tokio::select! {
                     biased;
                     _ = shutdown_rx.changed() => {
-                        info!("Worker {} received shutdown signal during processing, aborting domain.", i);
+                        debug!("Worker {} received shutdown signal during processing, aborting domain.", i);
                         // The loop will terminate on the next iteration.
                     }
                     _ = process_fut => {
