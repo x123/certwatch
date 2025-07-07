@@ -19,16 +19,20 @@ pub struct TsvAsnLookup {
 
 impl TsvAsnLookup {
     /// Creates a new `TsvAsnLookup` service by loading and parsing records
-    /// from a TSV file and building an interval map.
-    ///
-    /// # Arguments
-    /// * `path` - The path to the TSV file containing the IP range data.
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+    /// from a TSV file at the given path.
+    pub fn new_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         info!("Loading ASN data from TSV file: {:?}", path.as_ref());
+        let file = std::fs::File::open(path)?;
+        Self::new_from_reader(file)
+    }
+
+    /// Creates a new `TsvAsnLookup` service by parsing records from a
+    /// reader (e.g., a file or an in-memory string).
+    pub fn new_from_reader<R: std::io::Read>(reader: R) -> Result<Self> {
         let mut reader = csv::ReaderBuilder::new()
             .delimiter(b'\t')
             .has_headers(false)
-            .from_path(path)?;
+            .from_reader(reader);
 
         let mut map = RangeMap::new();
         for result in reader.deserialize() {
@@ -114,14 +118,14 @@ mod tests {
 
     #[test]
     fn test_load_and_parse_tsv() {
-        let lookup = TsvAsnLookup::new(test_data_path()).expect("Failed to load test data");
+        let lookup = TsvAsnLookup::new_from_path(test_data_path()).expect("Failed to load test data");
         // The new test file has 6 lines, one of which is "Not routed" and should be skipped.
         assert_eq!(lookup.map.len(), 5);
     }
 
     #[test]
     fn test_find_ip() {
-        let lookup = TsvAsnLookup::new(test_data_path()).expect("Failed to load test data");
+        let lookup = TsvAsnLookup::new_from_path(test_data_path()).expect("Failed to load test data");
 
         // Test Case 1: IPv4 address inside a range
         let ip1: IpAddr = "1.0.0.128".parse().unwrap();
@@ -145,3 +149,26 @@ mod tests {
         assert!(lookup.find(ip4).is_none());
     }
 }
+    #[test]
+    fn test_lookup_from_in_memory_tsv() {
+        let tsv_data = "8.8.8.0\t8.8.8.255\t15169\tUS\tGOOGLE";
+        let lookup = TsvAsnLookup::new_from_reader(tsv_data.as_bytes())
+            .expect("Failed to load in-memory data");
+
+        let ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let result = lookup.find(ip).expect("Should find ASN for ip");
+        assert_eq!(result.as_number, 15169);
+        assert_eq!(result.as_name, "GOOGLE");
+    }
+    #[test]
+    fn test_malformed_tsv_jagged_rows() {
+        let tsv_data = "8.8.8.0\t8.8.8.255\t15169\tUS"; // Missing the description field
+        let result = TsvAsnLookup::new_from_reader(tsv_data.as_bytes());
+        assert!(result.is_err());
+    }
+    #[test]
+    fn test_malformed_tsv_invalid_ip() {
+        let tsv_data = "not-an-ip\t8.8.8.255\t15169\tUS\tGOOGLE";
+        let result = TsvAsnLookup::new_from_reader(tsv_data.as_bytes());
+        assert!(result.is_err());
+    }

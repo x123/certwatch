@@ -70,7 +70,7 @@ pub async fn run(
             if !tsv_path.exists() {
                 return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
             }
-            Arc::new(TsvAsnLookup::new(&tsv_path)?)
+            Arc::new(TsvAsnLookup::new_from_path(&tsv_path)?)
         }
     };
     let deduplicator = Arc::new(Deduplicator::new(

@@ -240,12 +240,12 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Test simple, wildcard, and case-insensitive domain matches.
     - [x] Test non-matches and edge cases like empty inputs.
 
-- [ ] **#117 - Unit Test TSV Enrichment Logic**
+- [x] **#117 - Unit Test TSV Enrichment Logic**
   - **Context:** Add unit tests for `src/enrichment/tsv_lookup.rs`.
   - **Subtasks:**
-    - [ ] Test successful parsing and lookup from a valid in-memory TSV.
-    - [ ] Test lookup of non-existent keys.
-    - [ ] Test for errors on malformed TSV data (e.g., jagged rows).
+    - [x] Test successful parsing and lookup from a valid in-memory TSV.
+    - [x] Test lookup of non-existent keys.
+    - [x] Test for errors on malformed TSV data (e.g., jagged rows).
 
 - [ ] **#118 - Unit Test Configuration Parsing**
   - **Context:** Add unit tests for `src/config.rs`.

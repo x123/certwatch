@@ -5,7 +5,7 @@ use std::net::IpAddr;
 #[tokio::test]
 async fn test_tsv_enrichment_provider() {
     let tsv_path = "tests/data/ip-to-asn-test.tsv";
-    let enrichment_provider = TsvAsnLookup::new(tsv_path)
+    let enrichment_provider = TsvAsnLookup::new_from_path(tsv_path)
         .expect("Failed to create TSV enrichment provider");
 
     // Test Case 1: IPv4 address inside a range
