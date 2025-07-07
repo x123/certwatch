@@ -894,3 +894,57 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
     - [x] Add "License" section.
     - [x] Review "Further Reading" link.
     - [x] Ensure overall readability and scannability (headings, paragraphs, highlighting, lists, plain language, active voice).
+
+
+---
+### Epic 34: Modular Rule Engine for Flexible Pattern Matching
+
+**User Story:**
+As a security analyst or operator, I want to define flexible "rules" that group selectors (domain regex, IP/CIDR, ASN, country, org, etc.) and associate them with custom actions, so that I can precisely control which events trigger which outputs and reduce noise.
+
+- [x] **#102 - Define Rule Engine Architecture**
+  - **Context:** Design the core traits/interfaces for selectors and actions, specify the rule configuration schema (TOML/YAML), and document logical composition (AND/OR) and rule evaluation order.
+  - **Dependencies:** None
+  - **Subtasks:**
+    - [x] Design core traits/interfaces for selectors and actions.
+    - [x] Specify the rule configuration schema (TOML/YAML).
+    - [x] Document logical composition (AND/OR) and rule evaluation order.
+
+- [x] **#103 - Implement Selector and Action Traits**
+  - **Context:** Implement selectors for domain regex, IP/CIDR, ASN, country, org, etc., and actions for Slack, logging, ignore, etc. Write unit tests for each selector and action.
+  - **Dependencies:** #102
+  - **Subtasks:**
+    - [x] Implement selectors for domain regex, IP/CIDR, ASN, country, org, etc.
+    - [x] Implement actions for Slack, logging, ignore, etc.
+    - [x] Write unit tests for each selector and action.
+
+- [ ] **#104 - Build Rule Engine Core**
+  - **Context:** Implement rule evaluation logic with logical composition, support multiple rules and overlapping matches, and integrate with the enrichment data pipeline.
+  - **Dependencies:** #103
+  - **Subtasks:**
+    - [ ] Implement rule evaluation logic with logical composition.
+    - [ ] Support multiple rules and overlapping matches.
+    - [ ] Integrate with enrichment data pipeline.
+
+- [ ] **#105 - Hot-Reload and Validation**
+  - **Context:** Implement hot-reload for rule configuration, validate rules at load time with clear error reporting, and handle edge cases (invalid selectors, missing enrichment, performance with large rule sets).
+  - **Dependencies:** #104
+  - **Subtasks:**
+    - [ ] Implement hot-reload for rule configuration.
+    - [ ] Validate rules at load time, with clear error reporting.
+    - [ ] Handle edge cases: invalid selectors, missing enrichment, performance with large rule sets.
+
+- [ ] **#106 - Integrate Rule Engine into Main Pipeline**
+  - **Context:** Replace or augment existing pattern matching with the rule engine, ensure compatibility with output and alerting systems, and add integration tests for end-to-end rule evaluation and action dispatch.
+  - **Dependencies:** #105
+  - **Subtasks:**
+    - [ ] Replace or augment existing pattern matching with rule engine.
+    - [ ] Ensure compatibility with output and alerting systems.
+    - [ ] Add integration tests for end-to-end rule evaluation and action dispatch.
+
+- [ ] **#107 - Documentation and Examples**
+  - **Context:** Document rule configuration and usage in `docs/specs.md` and `README.md`, and provide example rule sets for common use cases.
+  - **Dependencies:** #106
+  - **Subtasks:**
+    - [ ] Document rule configuration and usage in `docs/specs.md` and `README.md`.
+    - [ ] Provide example rule sets for common use cases.
