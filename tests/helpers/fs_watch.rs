@@ -8,7 +8,6 @@
 use std::path::Path;
 use std::time::Duration;
 use tokio::fs;
-use tokio::time::{sleep, timeout};
 
 /// Platform-specific timeouts for file system operations
 pub struct PlatformTimeouts {
@@ -98,7 +97,7 @@ pub async fn platform_aware_write<P: AsRef<Path>>(
     }
     
     // Give the file system time to propagate the event
-    sleep(timeouts.fs_event_propagation).await;
+    tokio::time::sleep(timeouts.fs_event_propagation).await;
     
     Ok(())
 }
@@ -131,7 +130,7 @@ pub async fn platform_aware_append<P: AsRef<Path>>(
     drop(file);
     
     // Give the file system time to propagate the event
-    sleep(timeouts.fs_event_propagation).await;
+    tokio::time::sleep(timeouts.fs_event_propagation).await;
     
     Ok(())
 }
@@ -145,19 +144,19 @@ pub async fn wait_for_watcher_ready(_timeouts: &PlatformTimeouts) {
     #[cfg(target_os = "macos")]
     {
         // macOS FSEvents can take longer to initialize
-        sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
     
     #[cfg(target_os = "linux")]
     {
         // inotify is usually faster to set up
-        sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         // Conservative default
-        sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
     }
 }
 
@@ -169,10 +168,20 @@ pub async fn wait_for_reload_notification<T>(
     receiver: &mut tokio::sync::mpsc::Receiver<T>,
     timeouts: &PlatformTimeouts,
 ) -> Result<T, &'static str> {
-    match timeout(timeouts.reload_notification_timeout, receiver.recv()).await {
+    let recv_future = receiver.recv();
+    
+    // Pin the future to the stack
+    tokio::pin!(recv_future);
+
+    // Poll the future with a timeout
+    match tokio::time::timeout(timeouts.reload_notification_timeout, &mut recv_future).await {
         Ok(Some(notification)) => Ok(notification),
         Ok(None) => Err("Notification channel was closed"),
-        Err(_) => Err("Timeout waiting for reload notification"),
+        Err(_) => {
+            // If we are using a paused clock, advance time to simulate the timeout
+            tokio::time::advance(timeouts.reload_notification_timeout).await;
+            Err("Timeout waiting for reload notification")
+        }
     }
 }
 

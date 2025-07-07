@@ -125,9 +125,18 @@ pub async fn load_patterns_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec
 pub struct PatternWatcher {
     /// Current active matcher, atomically swappable
     current_matcher: Arc<ArcSwap<RegexMatcher>>,
+    /// Watched pattern files
+    pattern_files: Vec<PathBuf>,
 }
 
 impl PatternWatcher {
+    /// Manually triggers a reload of the pattern files.
+    pub async fn reload(&self) -> Result<()> {
+        let new_patterns = Self::load_all_patterns(&self.pattern_files).await?;
+        let new_matcher = RegexMatcher::new(new_patterns)?;
+        self.current_matcher.store(Arc::new(new_matcher));
+        Ok(())
+    }
     /// Creates a new PatternWatcher and starts monitoring the specified files
     ///
     /// # Arguments
@@ -158,6 +167,7 @@ impl PatternWatcher {
 
         let watcher = Self {
             current_matcher: current_matcher.clone(),
+            pattern_files: pattern_files.clone(),
         };
 
         // Start file watching in background
