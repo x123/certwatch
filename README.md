@@ -1,5 +1,8 @@
 # certwatch
 
+![certwatch logo](certwatch.png)
+
+--- 
 `certwatch` is a high-performance Rust command-line tool designed for real-time
 monitoring of Certificate Transparency logs. It helps security researchers,
 analysts, and developers detect and respond to potentially malicious domains
@@ -14,16 +17,10 @@ alerts to configurable outputs.
 `certwatch` offers a robust set of features to provide comprehensive domain
 monitoring:
 
-*   **Asynchronous & Non-Blocking Architecture:** Utilizes a fully
-non-blocking, asynchronous design for efficient handling of all I/O-bound
-operations, ensuring high performance under heavy load.
 *   **Real-time Monitoring:** Connects to a certstream websocket server to
 process domains from newly registered or renewed certificates as they appear.
 *   **High-Performance Pattern Matching:** Leverages Rust's `regex::RegexSet`
 for extremely fast matching against thousands of rules with minimal latency.
-*   **Pattern Hot-Reloading:** Enables dynamic updates to regex pattern files
-with a seamless switchover, allowing for continuous monitoring without
-interrupting the data stream or requiring a service restart.
 *   **DNS & IP Enrichment:** Resolves domains (A, AAAA, NS records) and
 enriches associated IPs with ASN and country data using a local TSV file for
 rapid lookups.
@@ -32,6 +29,12 @@ alerts within a configurable time window.
 *   **Configurable Outputs:** Supports various output formats including
 structured `JSON`, a compact `PlainText` summary for `stdout`, and webhook
 notifications (e.g., for Slack integration).
+*   **Asynchronous & Non-Blocking Architecture:** Utilizes a fully
+non-blocking, asynchronous design for efficient handling of all I/O-bound
+operations, ensuring high performance under heavy load.
+*   **Pattern Hot-Reloading:** Enables dynamic updates to regex pattern files
+with a seamless switchover, allowing for continuous monitoring without
+interrupting the data stream or requiring a service restart.
 *   **Logged Metrics:** Periodically logs key operational metrics to the
 console, providing insights into the application's performance and activity.
 
