@@ -19,6 +19,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep, Instant};
+use tracing::{debug, error, info, instrument, trace, warn};
 use hickory_resolver::{
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
     proto::xfer::Protocol,
@@ -79,7 +80,7 @@ impl HickoryDnsResolver {
                 // Otherwise, load from system config
                 let (system_config, _) = system_conf::read_system_conf()?;
                 if system_config.name_servers().is_empty() {
-                    log::warn!("No system DNS servers found, falling back to Cloudflare DNS.");
+                    warn!("No system DNS servers found, falling back to Cloudflare DNS.");
                     ResolverConfig::cloudflare()
                 } else {
                     system_config
@@ -141,7 +142,7 @@ impl DnsResolver for HickoryDnsResolver {
                 dns_info.a_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
             }
             Err(e) => {
-                log::debug!("A record lookup failed for {}: {}", domain, e);
+                debug!(domain, error = %e, "A record lookup failed");
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -154,7 +155,7 @@ impl DnsResolver for HickoryDnsResolver {
                 dns_info.aaaa_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
             }
             Err(e) => {
-                log::debug!("AAAA record lookup failed for {}: {}", domain, e);
+                debug!(domain, error = %e, "AAAA record lookup failed");
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -167,7 +168,7 @@ impl DnsResolver for HickoryDnsResolver {
                 dns_info.ns_records = lookup.into_iter().map(|r| r.to_string()).collect();
             }
             Err(e) => {
-                log::debug!("NS record lookup failed for {}: {}", domain, e);
+                debug!(domain, error = %e, "NS record lookup failed");
                 if first_error.is_none() {
                     first_error = Some(e);
                 }
@@ -258,6 +259,7 @@ impl DnsResolutionManager {
     }
 
     /// Attempts to resolve a domain with standard retry logic
+    #[instrument(skip(self), fields(domain = %domain, source_tag = %source_tag))]
     pub async fn resolve_with_retry(
         &self,
         domain: &str,
@@ -271,12 +273,12 @@ impl DnsResolutionManager {
                 biased;
 
                 _ = shutdown_rx.changed() => {
-                    log::debug!("DNS resolution for {} cancelled by shutdown signal", domain);
+                    debug!("DNS resolution cancelled by shutdown signal");
                     return Err(DnsError::Shutdown);
                 }
 
                 result = self.resolver.resolve(domain) => {
-                    log::info!("DnsResolutionManager: Received result for {}: {:?}", domain, result);
+                    trace!(?result, "DNS resolver result");
                     match result {
                         Ok(dns_info) => {
                             self.health_monitor.record_outcome(true);
@@ -285,11 +287,11 @@ impl DnsResolutionManager {
                         }
                         Err(DnsError::Resolution(e)) => {
                             self.health_monitor.record_outcome(false);
-                            log::info!("DnsResolutionManager: Handling resolution error for {}: {}", domain, e);
+                            warn!(error = %e, "Handling resolution error");
 
                             // Check if this is an NXDOMAIN error
                             if is_nxdomain_error_str(&e) {
-                                log::info!("DnsResolutionManager: Detected NXDOMAIN for {}", domain);
+                                info!("Detected NXDOMAIN");
                                 metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
 
                                 // Schedule for NXDOMAIN retry queue
@@ -300,14 +302,13 @@ impl DnsResolutionManager {
                                     source_tag.to_string(),
                                     retry_time,
                                 )) {
-                                    log::error!("Failed to schedule NXDOMAIN retry: {}", send_err);
+                                    error!(error = %send_err, "Failed to schedule NXDOMAIN retry");
                                 }
 
                                 // Return the NXDOMAIN error immediately for immediate alert generation
                                 return Err(DnsError::Resolution(e));
                             }
 
-                            log::info!("DnsResolutionManager: Standard failure for {}: {}", domain, e);
                             if e.to_lowercase().contains("timeout") {
                                 metrics::counter!("dns_resolutions", "status" => "timeout").increment(1);
                             } else {
@@ -318,13 +319,13 @@ impl DnsResolutionManager {
                             // For standard errors, apply exponential backoff
                             if attempt < self.config.standard_retries {
                                 let backoff_ms = self.config.standard_initial_backoff_ms * 2_u64.pow(attempt);
-                                log::info!("DnsResolutionManager: Retrying {} in {}ms", domain, backoff_ms);
+                                debug!(backoff_ms, "Retrying after backoff");
                                 sleep(Duration::from_millis(backoff_ms)).await;
                             }
                         }
                         Err(DnsError::Shutdown) => {
                             // This should not happen as the resolver itself doesn't know about shutdown
-                            log::warn!("Resolver unexpectedly returned a shutdown error");
+                            warn!("Resolver unexpectedly returned a shutdown error");
                             return Err(DnsError::Shutdown);
                         }
                     }
@@ -377,7 +378,7 @@ impl DnsResolutionManager {
                 biased;
 
                 _ = shutdown_rx.changed() => {
-                    log::info!("NXDOMAIN retry task received shutdown signal.");
+                    info!("NXDOMAIN retry task received shutdown signal.");
                     break;
                 }
 
@@ -400,9 +401,9 @@ impl DnsResolutionManager {
                             metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                             match resolver.resolve(&domain).await {
                                 Ok(dns_info) => {
-                                    log::info!("Domain {} (tag: {}) now resolves after NXDOMAIN", domain, source_tag);
+                                    info!(%domain, %source_tag, "Domain now resolves after NXDOMAIN");
                                     if let Err(e) = resolved_tx.send((domain, source_tag, dns_info)) {
-                                        log::error!("Failed to send resolved NXDOMAIN to channel: {}", e);
+                                        error!(error = %e, "Failed to send resolved NXDOMAIN to channel");
                                     }
                                 }
                                 Err(e) => {
@@ -413,10 +414,10 @@ impl DnsResolutionManager {
                                             retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
                                             metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                                        } else {
-                                           log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, res_err);
+                                            debug!(error = %res_err, attempt, "Giving up on NXDOMAIN retry");
                                        }
                                     } else {
-                                       log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, e);
+                                        debug!(error = %e, attempt, "Giving up on NXDOMAIN retry");
                                     }
                                 }
                             }

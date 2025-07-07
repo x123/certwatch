@@ -10,7 +10,7 @@ use certwatch::{
     dns::HickoryDnsResolver,
 };
 use clap::Parser;
-use log::{error, info};
+use tracing::{error, info};
 use tokio::sync::watch;
 
 #[tokio::main]
@@ -20,14 +20,15 @@ async fn main() -> Result<()> {
     // Load configuration by layering sources: defaults, file, environment, and CLI args.
     let config = Config::load(&cli).unwrap_or_else(|err| {
         // Manually initialize logger for this specific error
-        env_logger::init();
+        // Logging will be initialized by the time we get here if successful
         error!("Failed to load configuration: {}", err);
         // Exit if configuration fails, as it's a critical step.
         std::process::exit(1);
     });
 
-    // Initialize logging
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&config.log_level))
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
     info!("CertWatch starting up...");

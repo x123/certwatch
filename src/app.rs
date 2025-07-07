@@ -7,14 +7,15 @@ use crate::{
     deduplication::Deduplicator,
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     enrichment::tsv_lookup::TsvAsnLookup,
-    matching::PatternWatcher,
     internal_metrics::logging_recorder::LoggingRecorder,
+    matching::PatternWatcher,
     network::{CertStreamClient, WebSocketConnection},
     outputs::{OutputManager, SlackOutput, StdoutOutput},
+    types::{AlertSender, DomainReceiver},
     utils::heartbeat::run_heartbeat,
 };
 use anyhow::Result;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, Mutex, watch},
@@ -22,6 +23,7 @@ use tokio::{
 };
 
 /// Runs the main application logic.
+#[instrument(skip_all)]
 pub async fn run(
     config: Config,
     mut shutdown_rx: watch::Receiver<()>,
@@ -98,8 +100,12 @@ pub async fn run(
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    let (domains_tx, domains_rx) = mpsc::channel::<String>(config.performance.queue_capacity);
-    let (alerts_tx, mut alerts_rx) = mpsc::channel::<Alert>(1000);
+    let (domains_tx, domains_rx): (mpsc::Sender<String>, DomainReceiver) = {
+        let (tx, rx) = mpsc::channel::<String>(config.performance.queue_capacity);
+        (tx, Arc::new(Mutex::new(rx)))
+    };
+    let (alerts_tx, mut alerts_rx): (AlertSender, mpsc::Receiver<Alert>) =
+        mpsc::channel::<Alert>(1000);
 
     // =========================================================================
     // 3.5 Start Domain Queue Monitoring Task
@@ -178,12 +184,11 @@ pub async fn run(
     // =========================================================================
     // 6. Main Processing Loop (Worker Pool)
     // =========================================================================
-    let domains_rx = Arc::new(Mutex::new(domains_rx));
     let mut worker_handles = Vec::new();
     info!("Spawning {} worker tasks...", config.concurrency);
 
     for i in 0..config.concurrency {
-        let domains_rx = domains_rx.clone();
+        let domains_rx: DomainReceiver = domains_rx.clone();
         let pattern_matcher = pattern_matcher.clone();
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
@@ -348,27 +353,22 @@ pub async fn run(
 }
 
 /// Processes a single domain: matches, resolves, enriches, and sends alerts.
+#[instrument(skip_all, fields(domain = %domain, worker_id = worker_id))]
 async fn process_domain(
     domain: String,
     worker_id: usize,
     pattern_matcher: Arc<dyn PatternMatcher>,
     dns_manager: Arc<DnsResolutionManager>,
     enrichment_provider: Arc<dyn EnrichmentProvider>,
-    alerts_tx: mpsc::Sender<Alert>,
+    alerts_tx: AlertSender,
 ) -> Result<()> {
-    println!("[PROCESS_DOMAIN] Checking domain: {}", domain);
     if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-        println!("[PROCESS_DOMAIN] Matched domain: {} (source: {})", domain, source_tag);
-        debug!(
-            "Worker {} matched domain: {} (source: {})",
-            worker_id, domain, source_tag
-        );
+        debug!(source_tag, "Domain matched pattern");
         let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
-        println!("[PROCESS_DOMAIN] DNS result for {}: {:?}", domain, result);
-        info!("DNS resolution result for {}: {:?}", domain, result);
+        info!(?result, "DNS resolution result");
         match result {
             Ok(dns_info) => {
-                info!("Building alert for successful DNS resolution of {}", domain);
+                info!("Building alert for successful DNS resolution");
                 let alert = build_alert(
                     domain,
                     source_tag.to_string(),
@@ -382,9 +382,8 @@ async fn process_domain(
                 }
             }
             Err(DnsError::Resolution(e)) => {
-                info!("Handling DNS resolution error for {}: {}", domain, e);
                 if e.to_string().contains("NXDOMAIN") {
-                    info!("Building alert for NXDOMAIN of {}", domain);
+                    info!("Building alert for NXDOMAIN");
                     let alert = build_alert(
                         domain,
                         source_tag.to_string(),
@@ -400,18 +399,12 @@ async fn process_domain(
                         );
                     }
                 } else {
-                    debug!(
-                        "Worker {} failed DNS resolution for {}: {}",
-                        worker_id, domain, e
-                    );
+                    debug!(error = %e, "DNS resolution failed");
                     anyhow::bail!("DNS resolution failed: {}", e);
                 }
             }
             Err(DnsError::Shutdown) => {
-                debug!(
-                    "Worker {} DNS resolution cancelled by shutdown.",
-                    worker_id
-                );
+                debug!("DNS resolution cancelled by shutdown.");
             }
         }
     }
@@ -501,7 +494,7 @@ mod tests {
             pattern_matcher,
             dns_manager,
             enrichment_provider,
-            alerts_tx,
+            alerts_tx.clone(),
         )
         .await;
 

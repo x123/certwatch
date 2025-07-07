@@ -35,7 +35,7 @@ impl LoggingRecorder {
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        log::debug!("--- Metrics Snapshot ---");
+                        tracing::debug!("--- Metrics Snapshot ---");
 
                         for (key, counter) in registry.get_counter_handles() {
                             let value = counter.load(Ordering::Relaxed);
@@ -50,23 +50,23 @@ impl LoggingRecorder {
                                     } else {
                                         format!("[Agg. Counter] {}: {}", key, value)
                                     };
-                                    log::debug!("{}", message);
+                                    tracing::debug!("{}", message);
                                     counter.store(0, Ordering::Relaxed);
                                 }
                             } else {
                                 // Standard metrics are logged at INFO level.
-                                log::info!("[Counter] {}: {}", key, value);
+                                tracing::info!("[Counter] {}: {}", key, value);
                             }
                         }
 
                         for (key, gauge) in registry.get_gauge_handles() {
                             let value = f64::from_bits(gauge.load(Ordering::Relaxed));
-                            log::info!("[Gauge] {}: {}", key, value as u64);
+                            tracing::info!("[Gauge] {}: {}", key, value as u64);
                         }
                         // Note: Histograms are not logged in this simple implementation
                     }
                     _ = logging_shutdown_rx.changed() => {
-                        log::info!("Metrics logging task received shutdown signal.");
+                        tracing::info!("Metrics logging task received shutdown signal.");
                         break;
                     }
                 }

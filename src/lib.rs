@@ -17,6 +17,7 @@ pub mod matching;
 pub mod internal_metrics;
 pub mod network;
 pub mod outputs;
+pub mod types;
 
 // Re-export core types for convenience
 pub use core::*;

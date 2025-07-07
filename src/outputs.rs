@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::io::Write;
 use chrono::{Local, DateTime};
+use tracing::{error, info, instrument};
 
 use crate::core::Output;
 
@@ -24,10 +25,11 @@ impl OutputManager {
     }
 
     /// Sends an alert to all configured output destinations.
+    #[instrument(skip(self, alert), fields(domain = %alert.domain))]
     pub async fn send_alert(&self, alert: &Alert) -> Result<()> {
         for output in &self.outputs {
             if let Err(e) = output.send_alert(alert).await {
-                log::error!("Failed to send alert via an output: {}", e);
+                error!(error = %e, "Failed to send alert via an output");
             }
         }
         Ok(())
@@ -165,10 +167,10 @@ impl JsonOutput {
 impl Output for JsonOutput {
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         // This is a placeholder. A real implementation would write to the file.
-        log::info!(
-            "JSON_OUTPUT (to {}): {}",
-            self._file_path,
-            serde_json::to_string(alert)?
+        info!(
+            path = %self._file_path,
+            alert = %serde_json::to_string(alert)?,
+            "Writing alert to JSON file"
         );
         Ok(())
     }
@@ -195,6 +197,7 @@ impl SlackOutput {
 
 #[async_trait]
 impl Output for SlackOutput {
+    #[instrument(skip(self, alert), fields(domain = %alert.domain))]
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let payload = serde_json::json!({
             "text": format!("Suspicious domain detected: *{}*", alert.domain),

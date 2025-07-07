@@ -86,7 +86,7 @@ impl CertStreamClient {
         &self,
         mut connection: Box<dyn WebSocketConnection>,
     ) -> Result<()> {
-        log::info!("Starting CertStream client message processing");
+        tracing::info!("Starting CertStream client message processing");
         while let Some(msg_result) = connection.read_message().await {
             match msg_result {
                 Ok(message) => {
@@ -96,12 +96,12 @@ impl CertStreamClient {
                     }
                 }
                 Err(e) => {
-                    log::error!("WebSocket error: {}", e);
+                    tracing::error!("WebSocket error: {}", e);
                     return Err(anyhow::anyhow!("WebSocket error: {}", e));
                 }
             }
         }
-        log::info!("WebSocket connection closed");
+        tracing::info!("WebSocket connection closed");
         Ok(())
     }
 
@@ -124,24 +124,24 @@ impl CertStreamClient {
                 biased;
 
                 _ = shutdown_rx.changed() => {
-                    log::info!("CertStream client received shutdown signal.");
+                    tracing::info!("CertStream client received shutdown signal.");
                     return Ok(());
                 }
 
                 conn_result = self.connect_and_run() => {
                      match conn_result {
                         Ok(()) => {
-                            log::info!("Connection closed normally");
+                            tracing::info!("Connection closed normally");
                             backoff_ms = 1000; // Reset backoff on successful connection
                         }
                         Err(e) => {
-                            log::error!("Connection failed: {}", e);
+                            tracing::error!("Connection failed: {}", e);
                         }
                     }
                 }
             }
 
-            log::info!("Reconnecting in {} ms", backoff_ms);
+            tracing::info!("Reconnecting in {} ms", backoff_ms);
             tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
 
             // Exponential backoff with jitter
@@ -169,7 +169,7 @@ impl CertStreamClient {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
 
-        log::info!("Connected to {}", self.url);
+        tracing::info!("Connected to {}", self.url);
         self.process_messages(ws_stream).await
     }
 
@@ -225,19 +225,19 @@ impl CertStreamClient {
                                 // If the queue is full, we drop the domain and record it.
                                 if self.output_tx.send(domain).await.is_err() {
                                     // The receiver has been dropped, which is a critical error.
-                                    log::error!("Domain channel receiver dropped.");
+                                    tracing::error!("Domain channel receiver dropped.");
                                     return Err(anyhow::anyhow!("Domain channel closed."));
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        log::warn!("Failed to parse certstream message: {}", e);
+                        tracing::warn!("Failed to parse certstream message: {}", e);
                     }
                 }
             }
             Message::Close(_) => {
-                log::info!("Received close message from server");
+                tracing::info!("Received close message from server");
                 // This will be handled by the calling loop, which will exit
             }
             _ => {

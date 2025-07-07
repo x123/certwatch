@@ -163,7 +163,7 @@ impl PatternWatcher {
         // Load initial patterns from all files
         let initial_patterns = Self::load_all_patterns(&pattern_files).await?;
         let initial_matcher = RegexMatcher::new(initial_patterns)?;
-        log::info!("Loaded initial {} patterns", initial_matcher.patterns_count());
+        tracing::info!("Loaded initial {} patterns", initial_matcher.patterns_count());
 
         let current_matcher = Arc::new(ArcSwap::from_pointee(initial_matcher));
 
@@ -196,7 +196,7 @@ impl PatternWatcher {
                 match load_patterns_from_file(file_path).await {
                     Ok(mut patterns) => all_patterns.append(&mut patterns),
                     Err(e) => {
-                        log::warn!("Failed to load patterns from {:?}: {}", file_path, e);
+                        tracing::warn!("Failed to load patterns from {:?}: {}", file_path, e);
                         // Continue loading other files even if one fails
                     }
                 }
@@ -218,11 +218,11 @@ impl PatternWatcher {
             tokio::select! {
                 res = Self::run_file_watcher(current_matcher, pattern_files, reload_notifier) => {
                     if let Err(e) = res {
-                        log::error!("File watcher error: {}", e);
+                        tracing::error!("File watcher error: {}", e);
                     }
                 }
                 _ = shutdown_rx.changed() => {
-                    log::info!("Pattern watcher received shutdown signal.");
+                    tracing::info!("Pattern watcher received shutdown signal.");
                 }
             }
         });
@@ -250,7 +250,7 @@ impl PatternWatcher {
                     if !matches!(event.kind, EventKind::Access(_)) {
                         if let Err(e) = tx.blocking_send(()) {
                             // This can happen on shutdown, so a warning is sufficient.
-                            log::warn!("Failed to send file event notification: {}", e);
+                            tracing::warn!("Failed to send file event notification: {}", e);
                         }
                     }
                 }
@@ -262,7 +262,7 @@ impl PatternWatcher {
         for path in watched_paths.iter() {
             if let Some(parent) = path.parent() {
                 watcher.watch(parent, RecursiveMode::NonRecursive)?;
-                log::info!("Watching for changes to pattern file: {:?}", path);
+                tracing::info!("Watching for changes to pattern file: {:?}", path);
             }
         }
 
@@ -302,7 +302,7 @@ impl PatternWatcher {
                 }
             }
 
-            log::info!("File activity detected. Reloading patterns after debounce.");
+            tracing::info!("File activity detected. Reloading patterns after debounce.");
 
             let paths_to_load: Vec<PathBuf> = watched_paths.iter().cloned().collect();
             match Self::load_all_patterns(&paths_to_load).await {
@@ -312,7 +312,7 @@ impl PatternWatcher {
                         let new_count = new_matcher.patterns_count();
                         let diff = new_count as isize - old_count as isize;
                         current_matcher.store(Arc::new(new_matcher));
-                        log::info!(
+                        tracing::info!(
                             "Successfully reloaded {} patterns ({:+})",
                             new_count,
                             diff
@@ -320,16 +320,16 @@ impl PatternWatcher {
                         // Notify listeners that reload is complete
                         if let Some(ref notifier) = reload_notifier {
                             if notifier.send(()).await.is_err() {
-                                log::warn!("Reload notifier channel closed");
+                                tracing::warn!("Reload notifier channel closed");
                             }
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to compile new patterns: {}", e);
+                        tracing::error!("Failed to compile new patterns: {}", e);
                     }
                 },
                 Err(e) => {
-                    log::error!("Failed to load patterns for reload: {}", e);
+                    tracing::error!("Failed to load patterns for reload: {}", e);
                 }
             }
         }

@@ -65,11 +65,11 @@ impl DnsHealthMonitor {
         let monitor_clone = Arc::clone(&monitor);
         let mut update_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(async move {
-            log::debug!("Spawning DNS health monitor state update task.");
+            tracing::debug!("Spawning DNS health monitor state update task.");
             tokio::select! {
                 _ = monitor_clone.process_outcomes_task(outcome_rx) => {},
                 _ = update_shutdown_rx.changed() => {
-                    log::info!("DNS health monitor state update task received shutdown signal.");
+                    tracing::info!("DNS health monitor state update task received shutdown signal.");
                 }
             }
         });
@@ -94,9 +94,9 @@ impl DnsHealthMonitor {
 
     /// Records a resolution outcome by sending it to the state update task.
     pub fn record_outcome(&self, is_success: bool) {
-        log::debug!("Recording outcome: {}", is_success);
+        tracing::debug!(is_success, "Recording outcome");
         if let Err(e) = self.outcome_tx.send(is_success) {
-            log::error!("Failed to send DNS health outcome to channel: {}", e);
+            tracing::error!(error = %e, "Failed to send DNS health outcome to channel");
         }
     }
 
@@ -117,12 +117,12 @@ impl DnsHealthMonitor {
 
         if failure_rate >= self.config.failure_threshold && state.health == HealthState::Healthy {
             state.health = HealthState::Unhealthy;
-            log::error!(
-                "DNS resolver is now UNHEALTHY. Failure rate is {:.2}% over the last {} seconds ({} failures / {} total attempts).",
-                failure_rate * 100.0,
-                self.config.window_seconds,
+            tracing::error!(
+                failure_rate = failure_rate * 100.0,
+                window_seconds = self.config.window_seconds,
                 failures,
-                total
+                total,
+                "DNS resolver is now UNHEALTHY."
             );
         } else if failure_rate < self.config.failure_threshold && state.health == HealthState::Unhealthy {
             // Recovery is handled by the dedicated recovery task to ensure stability
@@ -137,7 +137,7 @@ impl DnsHealthMonitor {
             return;
         }
 
-        log::info!("DNS resolver is unhealthy, attempting recovery check...");
+        tracing::info!("DNS resolver is unhealthy, attempting recovery check...");
         match self.resolver.resolve(&self.config.recovery_check_domain).await {
             Ok(_) => {
                 // SAFETY: The lock is held for the entire state transition to ensure
@@ -150,14 +150,14 @@ impl DnsHealthMonitor {
                     state.health = HealthState::Healthy;
                     // Clear old failure outcomes to reset the failure rate calculation
                     state.outcomes.clear();
-                    log::info!("DNS resolver has RECOVERED and is now HEALTHY.");
+                    tracing::info!("DNS resolver has RECOVERED and is now HEALTHY.");
                 }
             }
             Err(e) => {
-                log::warn!(
-                    "DNS recovery check failed for {}: {}. Remaining in unhealthy state.",
-                    self.config.recovery_check_domain,
-                    e
+                tracing::warn!(
+                    domain = %self.config.recovery_check_domain,
+                    error = %e,
+                    "DNS recovery check failed. Remaining in unhealthy state."
                 );
             }
         }
@@ -172,7 +172,7 @@ impl DnsHealthMonitor {
                     tokio::time::sleep(Duration::from_secs(self.config.recovery_check_interval_seconds)).await;
                 }
                 _ = shutdown_rx.changed() => {
-                    log::info!("DNS health monitor recovery task received shutdown signal, exiting.");
+                    tracing::info!("DNS health monitor recovery task received shutdown signal, exiting.");
                     break;
                 }
             }
@@ -181,9 +181,9 @@ impl DnsHealthMonitor {
     /// Synchronously processes a single resolution outcome.
     /// This is the core logic, extracted for deterministic testing.
     pub fn process_outcome(&self, is_success: bool) {
-        log::debug!("Processing outcome: {}", is_success);
+        tracing::debug!(is_success, "Processing outcome");
         let mut state = self.monitor_state.lock().unwrap();
-        log::debug!("Acquired monitor state lock");
+        tracing::debug!("Acquired monitor state lock");
         let now = Instant::now();
 
         // Add the new outcome
@@ -210,11 +210,11 @@ impl DnsHealthMonitor {
 
     /// Background task that processes resolution outcomes from the channel.
     async fn process_outcomes_task(&self, mut outcome_rx: mpsc::UnboundedReceiver<bool>) {
-        log::debug!("Starting outcome processing loop.");
+        tracing::debug!("Starting outcome processing loop.");
         while let Some(is_success) = outcome_rx.recv().await {
             self.process_outcome(is_success);
         }
-        log::debug!("Outcome processing loop finished.");
+        tracing::debug!("Outcome processing loop finished.");
     }
 }
 
@@ -231,14 +231,14 @@ mod tests {
 
     impl Drop for ShutdownGuard {
         fn drop(&mut self) {
-            log::debug!("ShutdownGuard dropped, sending shutdown signal.");
+            tracing::debug!("ShutdownGuard dropped, sending shutdown signal.");
             self.0.send(()).ok();
         }
     }
 
     #[tokio::test]
     async fn test_state_transitions_to_unhealthy() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
             failure_threshold: 0.5,
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(monitor.current_state(), HealthState::Healthy);
 
         // Report 4 successes and 6 failures -> 60% failure rate
-        log::debug!("Recording 4 successes and 6 failures");
+        tracing::debug!("Recording 4 successes and 6 failures");
         for _ in 0..4 {
             monitor.record_outcome(true);
         }
@@ -273,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_state_remains_healthy_below_threshold() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
             failure_threshold: 0.8,
@@ -287,7 +287,7 @@ mod tests {
         assert_eq!(monitor.current_state(), HealthState::Healthy);
 
         // Report 5 successes and 5 failures -> 50% failure rate
-        log::debug!("Recording 5 successes and 5 failures");
+        tracing::debug!("Recording 5 successes and 5 failures");
         for _ in 0..5 {
             monitor.record_outcome(true);
         }
@@ -357,7 +357,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_no_state_change_when_unhealthy() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
             failure_threshold: 0.5,
@@ -369,7 +369,7 @@ mod tests {
         let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
 
         // Transition to Unhealthy
-        log::debug!("Recording two failures to become unhealthy");
+        tracing::debug!("Recording two failures to become unhealthy");
         monitor.record_outcome(false);
         monitor.record_outcome(false);
 
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(monitor.current_state(), HealthState::Unhealthy);
 
         // Add successes, bringing the failure rate below the threshold
-        log::debug!("Recording two successes");
+        tracing::debug!("Recording two successes");
         monitor.record_outcome(true);
         monitor.record_outcome(true);
 
@@ -399,7 +399,7 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_record_outcome_is_non_blocking() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
             // Disable the recovery task to prevent it from interfering.
@@ -414,25 +414,25 @@ mod tests {
         let lock_holder_monitor = monitor.clone();
         let lock_task = tokio::spawn(async move {
             {
-                log::debug!("[Lock Task] Acquiring lock...");
+                tracing::debug!("[Lock Task] Acquiring lock...");
                 let _lock = lock_holder_monitor.monitor_state.lock().unwrap();
-                log::debug!("[Lock Task] Lock acquired. Holding for 2s.");
+                tracing::debug!("[Lock Task] Lock acquired. Holding for 2s.");
                 // The lock is held inside this block.
             }
             // The lock is dropped here, before the await point.
             tokio::time::sleep(Duration::from_secs(2)).await;
-            log::debug!("[Lock Task] Finished sleeping.");
+            tracing::debug!("[Lock Task] Finished sleeping.");
         });
 
         // Give the lock task a moment to start and acquire the lock.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Now, call record_outcome. It should not block.
-        log::debug!("[Test] Calling record_outcome while lock is held elsewhere.");
+        tracing::debug!("[Test] Calling record_outcome while lock is held elsewhere.");
         let start = Instant::now();
         monitor.record_outcome(true);
         let duration = start.elapsed();
-        log::debug!("[Test] record_outcome returned in {:?}", duration);
+        tracing::debug!("[Test] record_outcome returned in {:?}", duration);
 
         assert!(
             duration < Duration::from_millis(100),
@@ -446,7 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_monitor_concurrent_updates() {
-        let _ = env_logger::builder().is_test(true).try_init();
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
             failure_threshold: 0.5,
@@ -461,34 +461,34 @@ mod tests {
         // Subscribe *before* spawning tasks to avoid a race condition
         let mut rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
 
-        log::debug!("Spawning {} update tasks", num_updates);
+        tracing::debug!("Spawning {} update tasks", num_updates);
         let mut tasks = Vec::new();
         for i in 0..num_updates {
             let monitor_clone = monitor.clone();
             tasks.push(tokio::spawn(async move {
-                log::debug!("Task {} recording outcome", i);
+                tracing::debug!("Task {} recording outcome", i);
                 monitor_clone.record_outcome(true);
             }));
         }
 
-        log::debug!("Awaiting all update tasks");
+        tracing::debug!("Awaiting all update tasks");
         for task in tasks {
             task.await.unwrap();
         }
-        log::debug!("All update tasks completed");
+        tracing::debug!("All update tasks completed");
 
         // Wait for the state update task to process all the messages
-        log::debug!("Waiting for state updates to be processed");
+        tracing::debug!("Waiting for state updates to be processed");
         for i in 0..num_updates {
-            log::debug!("Waiting for update #{}", i + 1);
+            tracing::debug!("Waiting for update #{}", i + 1);
             if let Err(e) = tokio::time::timeout(Duration::from_secs(5), rx.changed()).await {
                 // It's possible the channel is closed if the test finishes quickly.
                 // The final assertion on the number of outcomes is the source of truth.
-                log::warn!("Error waiting for health update #{}: {}. This might be okay if the task is already done.", i + 1, e);
+                tracing::warn!("Error waiting for health update #{}: {}. This might be okay if the task is already done.", i + 1, e);
                 break;
             }
         }
-        log::debug!("Finished waiting for state updates.");
+        tracing::debug!("Finished waiting for state updates.");
 
         assert_eq!(
             monitor.monitor_state.lock().unwrap().outcomes.len(),

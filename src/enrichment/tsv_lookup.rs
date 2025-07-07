@@ -4,7 +4,7 @@
 use crate::core::{AsnInfo, EnrichmentInfo, EnrichmentProvider};
 use anyhow::Result;
 use async_trait::async_trait;
-use log::{debug, info};
+use tracing::{debug, info};
 use rangemap::RangeMap;
 use serde::Deserialize;
 use std::net::IpAddr;

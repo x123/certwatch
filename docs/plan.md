@@ -253,3 +253,20 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Test parsing of a full, valid TOML configuration.
     - [x] Test that missing optional fields are populated with default values.
     - [x] Test for errors on invalid value types or missing required fields.
+---
+### Epic: Architectural Enhancements
+**User Story:** As a developer, I want the application to be more observable, maintainable, and robust, so that I can easily diagnose issues, contribute new features, and ensure long-term stability.
+
+- [x] **#119 - Enhanced Observability with `tracing`**
+  - **Context:** Integrate the `tracing` ecosystem for structured, context-rich logs.
+  - **Subtasks:**
+    - [x] Add `tracing` and `tracing-subscriber` to `Cargo.toml`.
+    - [x] Initialize the `tracing` subscriber in `src/main.rs`.
+    - [x] Add `#[tracing::instrument]` to key functions like `app::process_domain`, `outputs::OutputManager::send_alert`, and `dns::DnsResolutionManager::resolve_with_retry`.
+
+- [x] **#121 - Strategic Type Aliases for Readability**
+  - **Context:** Simplify complex type signatures to improve code readability.
+  - **Subtasks:**
+    - [x] Create a new `src/types.rs` module.
+    - [x] Define type aliases like `DomainReceiver` and `AlertSender`.
+    - [x] Refactor function signatures in `src/app.rs` to use the new aliases.

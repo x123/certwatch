@@ -1,4 +1,4 @@
-use log::debug;
+use tracing::debug;
 use tokio::time::{interval, Duration};
 
 /// Spawns a background task that logs a "heartbeat" message periodically.
@@ -14,16 +14,16 @@ pub async fn run_heartbeat(
     mut shutdown_rx: tokio::sync::watch::Receiver<()>,
 ) {
     let mut timer = interval(Duration::from_secs(3));
-    debug!("[Heartbeat] '{}' started.", task_name);
+    debug!(task_name, "Heartbeat started.");
     loop {
         tokio::select! {
             biased;
             _ = shutdown_rx.changed() => {
-                debug!("[Heartbeat] '{}' received shutdown. Exiting.", task_name);
+                debug!(task_name, "Heartbeat received shutdown. Exiting.");
                 break;
             }
             _ = timer.tick() => {
-                debug!("[Heartbeat] '{}' is alive.", task_name);
+                debug!(task_name, "Heartbeat is alive.");
             }
         }
     }
