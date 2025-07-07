@@ -28,7 +28,7 @@ use hickory_resolver::{
 /// Configuration for DNS retry policies
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DnsRetryConfig {
     /// Number of retries for standard failures (timeouts, server errors)
     pub standard_retries: u32,

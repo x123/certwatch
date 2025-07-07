@@ -247,9 +247,9 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Test lookup of non-existent keys.
     - [x] Test for errors on malformed TSV data (e.g., jagged rows).
 
-- [ ] **#118 - Unit Test Configuration Parsing**
+- [x] **#118 - Unit Test Configuration Parsing**
   - **Context:** Add unit tests for `src/config.rs`.
   - **Subtasks:**
-    - [ ] Test parsing of a full, valid TOML configuration.
-    - [ ] Test that missing optional fields are populated with default values.
-    - [ ] Test for errors on invalid value types or missing required fields.
+    - [x] Test parsing of a full, valid TOML configuration.
+    - [x] Test that missing optional fields are populated with default values.
+    - [x] Test for errors on invalid value types or missing required fields.

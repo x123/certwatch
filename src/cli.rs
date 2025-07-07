@@ -12,7 +12,7 @@ use figment::{
 use std::path::PathBuf;
 
 /// A high-performance, real-time Certificate Transparency Log monitor.
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Default)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// Path to the TOML configuration file.

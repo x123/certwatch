@@ -16,7 +16,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 /// The main configuration struct for the application.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct Config {
     /// The logging level for the application.
     pub log_level: String,
@@ -41,7 +41,7 @@ pub struct Config {
 }
 
 /// Configuration for performance tuning.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct PerformanceConfig {
     /// The capacity of the central domain queue.
     pub queue_capacity: usize,
@@ -56,7 +56,7 @@ impl Default for PerformanceConfig {
 }
 
 /// Configuration for the CertStream network client.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct NetworkConfig {
     /// The URL of the CertStream WebSocket server.
     pub certstream_url: String,
@@ -67,14 +67,14 @@ pub struct NetworkConfig {
 }
 
 /// Configuration for pattern matching.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct MatchingConfig {
     /// A list of file paths containing regex patterns.
     pub pattern_files: Vec<PathBuf>,
 }
 
 /// Configuration for DNS resolution.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DnsConfig {
     /// The IP address of the DNS resolver to use (e.g., "8.8.8.8:53").
     /// If not set, the system's default resolver will be used.
@@ -100,7 +100,7 @@ impl Default for DnsConfig {
 }
 
 /// Configuration for the DNS health monitor.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DnsHealthConfig {
     /// The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
     pub failure_threshold: f64,
@@ -124,7 +124,7 @@ impl Default for DnsHealthConfig {
 }
 
 /// Configuration for metrics.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct MetricsConfig {
     /// Log metrics to the console periodically.
     #[serde(default)]
@@ -144,14 +144,14 @@ impl Default for MetricsConfig {
 
 /// Configuration for IP address enrichment.
 /// Configuration for IP address enrichment.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct EnrichmentConfig {
     /// Path to the TSV ASN database file.
     pub asn_tsv_path: Option<PathBuf>,
 }
 
 /// The format for stdout output.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub enum OutputFormat {
     Json,
     PlainText,
@@ -167,7 +167,7 @@ impl fmt::Display for OutputFormat {
 }
 
 /// Configuration for output and alerting.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct OutputConfig {
     /// The format to use for stdout output.
     pub format: OutputFormat,
@@ -176,14 +176,14 @@ pub struct OutputConfig {
 }
 
 /// Configuration for Slack alerts.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct SlackConfig {
     /// The Slack incoming webhook URL.
     pub webhook_url: String,
 }
 
 /// Configuration for alert deduplication.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DeduplicationConfig {
     /// The size of the deduplication cache.
     pub cache_size: usize,
