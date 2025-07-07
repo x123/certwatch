@@ -20,7 +20,7 @@ use certwatch::{
 };
 use certwatch::utils::heartbeat::run_heartbeat;
 use clap::Parser;
-use log::{error, info, warn};
+use log::{error, info, debug};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, Mutex, watch},
@@ -294,7 +294,7 @@ async fn main() -> Result<()> {
                 // interrupted by a shutdown signal.
                 let process_fut = async {
                     if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                        info!("Worker {} matched domain: {} (source: {})", i, domain, source_tag);
+                        debug!("Worker {} matched domain: {} (source: {})", i, domain, source_tag);
                         match dns_manager.resolve_with_retry(&domain, &source_tag).await {
                             Ok(dns_info) => {
                                 let alert = build_alert(
@@ -327,7 +327,7 @@ async fn main() -> Result<()> {
                                         );
                                     }
                                 } else {
-                                    warn!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
+                                    debug!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
                                 }
                             }
                             Err(DnsError::Shutdown) => {
