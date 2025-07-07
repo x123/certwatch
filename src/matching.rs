@@ -248,7 +248,13 @@ impl PatternWatcher {
             }
         }
 
-        const DEBOUNCE_DURATION: Duration = Duration::from_millis(250);
+        const DEBOUNCE_DURATION: Duration = if cfg!(target_os = "macos") {
+            Duration::from_millis(400) // Longer timeout for macOS FSEvents
+        } else if cfg!(target_os = "windows") {
+            Duration::from_millis(300)
+        } else {
+            Duration::from_millis(250) // Default for Linux and others
+        };
 
         // Main event loop with debouncing logic
         loop {

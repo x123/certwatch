@@ -8,9 +8,15 @@ use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch};
-use tokio::time::{sleep, Duration};
+use tokio::time::sleep;
+use serial_test::serial;
+
+mod helpers;
+use helpers::fs_watch::{
+    PlatformTimeouts, platform_aware_write, platform_aware_append, 
+    wait_for_watcher_ready, wait_for_reload_notification, create_isolated_test_env
+};
 
 #[tokio::test]
 async fn test_pattern_watcher_multiple_files() -> Result<()> {
@@ -96,16 +102,20 @@ async fn test_load_patterns_from_file_integration() -> Result<()> {
 }
 
 #[tokio::test]
+#[serial]
 async fn test_debounced_hot_reload() -> Result<()> {
     let _ = env_logger::builder().is_test(true).try_init();
 
+    // Get platform-specific timeouts
+    let timeouts = PlatformTimeouts::for_current_platform();
+
     // --- Setup ---
-    // Create a temporary directory to ensure a clean watch environment
-    let temp_dir = tempfile::tempdir()?;
+    // Create an isolated temporary directory to ensure clean test environment
+    let temp_dir = create_isolated_test_env().await?;
     let temp_path = temp_dir.path().join("patterns.txt");
 
-    // Initial pattern - use fs::write to ensure truncation
-    tokio::fs::write(&temp_path, "initial.com\n").await?;
+    // Initial pattern - use platform-aware write
+    platform_aware_write(&temp_path, "initial.com\n", &timeouts).await?;
 
     let (reload_tx, mut reload_rx) = mpsc::channel(10);
     let (_shutdown_tx, mut shutdown_rx) = watch::channel(());
@@ -116,6 +126,9 @@ async fn test_debounced_hot_reload() -> Result<()> {
         Some(&mut shutdown_rx),
     )
     .await?;
+
+    // Wait for the watcher to be fully initialized
+    wait_for_watcher_ready(&timeouts).await;
 
     // --- Initial State Verification ---
     assert!(
@@ -129,23 +142,19 @@ async fn test_debounced_hot_reload() -> Result<()> {
 
     // --- Simulate Rapid File Changes ---
     // 1. Overwrite with a new pattern
-    tokio::fs::write(&temp_path, "interim.com\n").await?;
-    sleep(Duration::from_millis(50)).await;
+    platform_aware_write(&temp_path, "interim.com\n", &timeouts).await?;
+    
+    // Small delay between operations to ensure they're seen as separate events
+    sleep(timeouts.inter_operation_delay).await;
 
-    // 2. Append another pattern using an async-aware file handle
-    let mut file = tokio::fs::OpenOptions::new()
-        .append(true)
-        .open(&temp_path)
-        .await?;
-    file.write_all(b"final.com\n").await?;
-    file.flush().await?;
+    // 2. Append another pattern 
+    platform_aware_append(&temp_path, "final.com\n", &timeouts).await?;
 
     // --- Verification ---
-    // Wait for the debounced reload to occur.
-    // The timeout should be longer than the debounce duration in `matching.rs`.
-    match tokio::time::timeout(Duration::from_secs(1), reload_rx.recv()).await {
-        Ok(Some(_)) => log::info!("Reload detected."),
-        _ => panic!("Watcher did not reload after file modification"),
+    // Wait for the debounced reload to occur with platform-appropriate timeout
+    match wait_for_reload_notification(&mut reload_rx, &timeouts).await {
+        Ok(_) => log::info!("Reload detected."),
+        Err(msg) => panic!("Watcher did not reload after file modification: {}", msg),
     }
 
     // Ensure only one reload occurred despite multiple writes.
@@ -153,6 +162,9 @@ async fn test_debounced_hot_reload() -> Result<()> {
         reload_rx.try_recv().is_err(),
         "Should only be one reload notification"
     );
+
+    // Give the watcher a moment to fully process the reload
+    sleep(timeouts.fs_event_propagation).await;
 
     // Verify the final state of the patterns.
     assert!(
