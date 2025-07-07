@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! A mock implementation of the `Output` trait for testing purposes.
 
 use anyhow::Result;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Test helpers for running the full application instance.
 
 use anyhow::Result;

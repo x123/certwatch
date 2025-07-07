@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! A fake enrichment provider for testing purposes.
 
 use anyhow::Result;

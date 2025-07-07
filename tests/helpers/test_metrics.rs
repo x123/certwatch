@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! A simple in-memory metrics recorder for testing.
 
 use metrics::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, Unit};

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Cross-platform file system watching test helpers
 //!
 //! This module provides utilities for testing file system watching behavior

@@ -431,8 +431,6 @@ impl DnsResolutionManager {
 #[cfg(test)]
 pub mod test_utils {
     use super::{DnsError, DnsInfo, DnsResolver};
-    use crate::config::DnsHealthConfig;
-    use crate::dns::health::{DnsHealthMonitor, HealthState, MonitorState};
     use async_trait::async_trait;
     use std::collections::{HashMap, VecDeque};
     use std::sync::{Arc, Mutex};

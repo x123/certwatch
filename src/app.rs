@@ -419,7 +419,6 @@ async fn process_domain(
 mod tests {
     use super::*;
     use crate::core::{DnsInfo, DnsResolver, EnrichmentProvider, PatternMatcher};
-    use crate::core::{Alert, EnrichmentInfo};
     use crate::dns::{DnsError, DnsResolutionManager};
     use std::sync::Arc;
     use tokio::sync::mpsc;

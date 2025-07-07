@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! A mock DNS resolver for testing purposes.
 
 use async_trait::async_trait;

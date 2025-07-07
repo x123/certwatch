@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Mock WebSocketConnection for testing the CertStreamClient
 use async_trait::async_trait;
 use certwatch::network::WebSocketConnection;
