@@ -266,7 +266,7 @@ async fn main() -> Result<()> {
         let mut shutdown_rx = shutdown_rx.clone();
 
         let handle = tokio::spawn(async move {
-            info!("Worker {} started", i);
+            debug!("Worker {} started", i);
             loop {
                 // First, wait for a domain or a shutdown signal. The `async` block
                 // here contains the lifetime of the MutexGuard, fixing the borrow
@@ -274,7 +274,7 @@ async fn main() -> Result<()> {
                 let domain_to_process = tokio::select! {
                     biased;
                     _ = shutdown_rx.changed() => {
-                        info!("Worker {} received shutdown signal, exiting.", i);
+                        debug!("Worker {} received shutdown signal, exiting.", i);
                         break;
                     }
                     domain_option = async { domains_rx.lock().await.recv().await } => {
