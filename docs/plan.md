@@ -186,11 +186,11 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Write an integration test that injects a failing `FakeEnrichmentProvider`, processes a domain, and verifies the `cert_processing_failures` metric is incremented.
     - [x] Refactor `build_alert` to propagate errors instead of logging them, enabling the failure to be caught by the worker loop.
 
-- [ ] **#111 - Phase 3: Implement Failing DNS Resolver**
+- [x] **#111 - Phase 3: Implement Failing DNS Resolver**
   - **Context:** The application must be robust against DNS resolution failures, which are common network issues. We will test the application's reaction to these failures without mocking a full DNS server.
   - **Subtasks:**
-    - [ ] Create a `FailingDnsResolver` in `tests/helpers/` that implements the `DnsResolver` trait.
-    - [ ] The resolver's `resolve` method should immediately return a DNS error without performing any I/O.
-    - [ ] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn DnsResolver>`.
-    - [ ] Modify `TestAppBuilder` to allow injecting the `FailingDnsResolver`.
-    - [ ] Write an integration test that injects the `FailingDnsResolver`, processes a domain, and verifies the `cert_processing_failures` metric is incremented and a warning is logged.
+    - [x] Create a `MockDnsResolver` in `tests/helpers/` that implements the `DnsResolver` trait.
+    - [x] The resolver's `resolve` method can be configured to return a specific DNS error.
+    - [x] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn DnsResolver>`.
+    - [x] Modify `TestAppBuilder` to allow injecting the `MockDnsResolver`.
+    - [x] Write an integration test that injects the `MockDnsResolver`, processes a domain, and verifies the `cert_processing_failures` metric is incremented and a warning is logged.

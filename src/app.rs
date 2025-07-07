@@ -361,8 +361,11 @@ async fn process_domain(
             "Worker {} matched domain: {} (source: {})",
             worker_id, domain, source_tag
         );
-        match dns_manager.resolve_with_retry(&domain, &source_tag).await {
+        let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
+        info!("DNS resolution result for {}: {:?}", domain, result);
+        match result {
             Ok(dns_info) => {
+                info!("Building alert for successful DNS resolution of {}", domain);
                 let alert = build_alert(
                     domain,
                     source_tag.to_string(),
@@ -376,7 +379,9 @@ async fn process_domain(
                 }
             }
             Err(DnsError::Resolution(e)) => {
+                info!("Handling DNS resolution error for {}: {}", domain, e);
                 if e.to_string().contains("NXDOMAIN") {
+                    info!("Building alert for NXDOMAIN of {}", domain);
                     let alert = build_alert(
                         domain,
                         source_tag.to_string(),
@@ -396,6 +401,7 @@ async fn process_domain(
                         "Worker {} failed DNS resolution for {}: {}",
                         worker_id, domain, e
                     );
+                    anyhow::bail!("DNS resolution failed: {}", e);
                 }
             }
             Err(DnsError::Shutdown) => {
@@ -407,4 +413,105 @@ async fn process_domain(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{DnsInfo, DnsResolver, EnrichmentProvider, PatternMatcher};
+    use crate::core::{Alert, EnrichmentInfo};
+    use crate::dns::{DnsError, DnsResolutionManager};
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    // A mock pattern matcher for testing purposes.
+    struct MockPatternMatcher {
+        match_domain: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl PatternMatcher for MockPatternMatcher {
+        async fn match_domain(&self, _domain: &str) -> Option<String> {
+            if self.match_domain {
+                Some("test-source".to_string())
+            } else {
+                None
+            }
+        }
+    }
+
+    // A mock DNS resolver for testing purposes.
+    #[derive(Clone)]
+    struct MockDnsResolver {
+        resolve_to: Result<DnsInfo, DnsError>,
+    }
+
+    #[async_trait::async_trait]
+    impl DnsResolver for MockDnsResolver {
+        async fn resolve(&self, _domain: &str) -> Result<DnsInfo, DnsError> {
+            self.resolve_to.clone()
+        }
+    }
+
+    // A fake enrichment provider for testing.
+    struct FakeEnrichmentProvider;
+
+    #[async_trait::async_trait]
+    impl EnrichmentProvider for FakeEnrichmentProvider {
+        async fn enrich(&self, _ip: std::net::IpAddr) -> Result<crate::core::EnrichmentInfo> {
+            Ok(crate::core::EnrichmentInfo::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_domain_dns_timeout_propagates_error() {
+        // Arrange
+        let pattern_matcher = Arc::new(MockPatternMatcher { match_domain: true });
+        let (shutdown_tx, shutdown_rx) = watch::channel(());
+        let (_resolver, _health_monitor, _dns_manager) = {
+            let resolver = Arc::new(MockDnsResolver {
+                resolve_to: Err(DnsError::Resolution(
+                    "timeout".to_string(),
+                )),
+            });
+            let health_monitor = DnsHealthMonitor::new(
+                Default::default(),
+                resolver.clone(),
+                shutdown_rx.clone(),
+            );
+            let (manager, _) = DnsResolutionManager::new(
+                resolver.clone(),
+                Default::default(),
+                health_monitor.clone(),
+                shutdown_rx.clone(),
+            );
+            (resolver, health_monitor, manager)
+        };
+
+        let dns_manager = Arc::new(_dns_manager);
+        let enrichment_provider = Arc::new(FakeEnrichmentProvider);
+        let (alerts_tx, _alerts_rx) = mpsc::channel(1);
+
+        // Act
+        let result = process_domain(
+            "timeout.com".to_string(),
+            0,
+            pattern_matcher,
+            dns_manager,
+            enrichment_provider,
+            alerts_tx,
+        )
+        .await;
+
+        // Assert
+        assert!(result.is_err(), "Expected an error due to DNS timeout");
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("DNS resolution failed"),
+            "Error message should indicate a DNS resolution failure"
+        );
+
+        // ensure shutdown channel is used
+        drop(shutdown_tx);
+    }
 }

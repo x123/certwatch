@@ -22,6 +22,20 @@ impl TestMetrics {
             .cloned()
             .unwrap_or(0)
     }
+
+    pub async fn wait_for_counter(&self, name: &str, value: u64, timeout: std::time::Duration) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            if self.get_counter(name) >= value {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!(
+            "Timeout waiting for counter '{}' to reach '{}'",
+            name, value
+        );
+    }
 }
 
 impl Recorder for TestMetrics {

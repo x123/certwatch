@@ -10,7 +10,7 @@ use crate::core::DnsInfo;
 pub use crate::core::DnsResolver;
 use crate::config::DnsConfig;
 use crate::utils::heartbeat::run_heartbeat;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 pub use health::DnsHealthMonitor;
 use std::net::SocketAddr;
@@ -51,10 +51,10 @@ impl Default for DnsRetryConfig {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum DnsError {
     #[error("DNS resolution failed: {0}")]
-    Resolution(#[from] anyhow::Error),
+    Resolution(String),
 
     #[error("DNS resolution cancelled due to shutdown")]
     Shutdown,
@@ -177,18 +177,17 @@ impl DnsResolver for HickoryDnsResolver {
         // Only return an error if all lookups failed.
         if dns_info.is_empty() {
             if let Some(err) = first_error {
-                let anyhow_err = anyhow::Error::from(err);
-                if is_nxdomain_error(&anyhow_err) {
-                    return Err(DnsError::Resolution(anyhow_err));
+                let err_string = err.to_string();
+                if is_nxdomain_error_str(&err_string) {
+                    return Err(DnsError::Resolution(err_string));
                 }
-                return Err(DnsError::Resolution(anyhow!(
+                return Err(DnsError::Resolution(format!(
                     "All DNS lookups failed for {}: {}",
-                    domain,
-                    anyhow_err
+                    domain, err_string
                 )));
             } else {
                 // This case should be rare, but it's possible if all lookups succeed but return no records.
-                return Err(DnsError::Resolution(anyhow!(
+                return Err(DnsError::Resolution(format!(
                     "No A, AAAA, or NS records found for {}",
                     domain
                 )));
@@ -203,19 +202,8 @@ impl DnsResolver for HickoryDnsResolver {
 pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, dns_info)
 
 /// Checks if an `anyhow::Error` is an NXDOMAIN error.
-fn is_nxdomain_error(err: &anyhow::Error) -> bool {
-    if let Some(resolve_err) = err.downcast_ref::<hickory_resolver::ResolveError>() {
-        if let hickory_resolver::ResolveErrorKind::Proto(proto_err) = resolve_err.kind() {
-            matches!(
-                proto_err.kind(),
-                hickory_resolver::proto::ProtoErrorKind::NoRecordsFound { .. }
-            )
-        } else {
-            false
-        }
-    } else {
-        false
-    }
+fn is_nxdomain_error_str(err_str: &str) -> bool {
+    err_str.contains("NXDOMAIN")
 }
 
 /// Manages DNS resolution with dual-curve retry logic
@@ -288,6 +276,7 @@ impl DnsResolutionManager {
                 }
 
                 result = self.resolver.resolve(domain) => {
+                    log::info!("DnsResolutionManager: Received result for {}: {:?}", domain, result);
                     match result {
                         Ok(dns_info) => {
                             self.health_monitor.record_outcome(true);
@@ -296,9 +285,11 @@ impl DnsResolutionManager {
                         }
                         Err(DnsError::Resolution(e)) => {
                             self.health_monitor.record_outcome(false);
+                            log::info!("DnsResolutionManager: Handling resolution error for {}: {}", domain, e);
 
                             // Check if this is an NXDOMAIN error
-                            if is_nxdomain_error(&e) {
+                            if is_nxdomain_error_str(&e) {
+                                log::info!("DnsResolutionManager: Detected NXDOMAIN for {}", domain);
                                 metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
 
                                 // Schedule for NXDOMAIN retry queue
@@ -316,17 +307,18 @@ impl DnsResolutionManager {
                                 return Err(DnsError::Resolution(e));
                             }
 
-                            let error_str = e.to_string();
-                            if error_str.to_lowercase().contains("timeout") {
+                            log::info!("DnsResolutionManager: Standard failure for {}: {}", domain, e);
+                            if e.to_lowercase().contains("timeout") {
                                 metrics::counter!("dns_resolutions", "status" => "timeout").increment(1);
                             } else {
                                 metrics::counter!("dns_resolutions", "status" => "failure").increment(1);
                             }
-                            last_error = Some(error_str);
+                            last_error = Some(e);
 
                             // For standard errors, apply exponential backoff
                             if attempt < self.config.standard_retries {
                                 let backoff_ms = self.config.standard_initial_backoff_ms * 2_u64.pow(attempt);
+                                log::info!("DnsResolutionManager: Retrying {} in {}ms", domain, backoff_ms);
                                 sleep(Duration::from_millis(backoff_ms)).await;
                             }
                         }
@@ -340,12 +332,12 @@ impl DnsResolutionManager {
             }
         }
 
-        Err(DnsError::Resolution(anyhow!(last_error.unwrap_or_else(
-            || format!(
+        Err(DnsError::Resolution(last_error.unwrap_or_else(|| {
+            format!(
                 "DNS resolution failed after {} retries",
                 self.config.standard_retries
             )
-        ))))
+        })))
     }
 
     /// Background task that handles NXDOMAIN retries
@@ -415,11 +407,11 @@ impl DnsResolutionManager {
                                 }
                                 Err(e) => {
                                     if let DnsError::Resolution(res_err) = e {
-                                       if is_nxdomain_error(&res_err) && attempt < config.nxdomain_retries {
-                                           let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
-                                           let next_retry = now + Duration::from_millis(backoff_ms);
-                                           retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
-                                           metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
+                                       if is_nxdomain_error_str(&res_err) && attempt < config.nxdomain_retries {
+                                            let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
+                                            let next_retry = now + Duration::from_millis(backoff_ms);
+                                            retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
+                                            metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                                        } else {
                                            log::debug!("Giving up on NXDOMAIN retry for {} after {} attempts: {}", domain, attempt + 1, res_err);
                                        }
@@ -501,33 +493,14 @@ pub mod tests {
                 if let Some(response) = queue.pop_front() {
                     return match response {
                         Ok(dns_info) => Ok(dns_info),
-                        Err(error) => {
-                            if error == "NXDOMAIN" {
-                                let kind =
-                                    hickory_resolver::proto::ProtoErrorKind::NoRecordsFound {
-                                        response_code: ResponseCode::NXDomain,
-                                        soa: None,
-                                        negative_ttl: None,
-                                        query: Box::new(Default::default()),
-                                        authorities: None,
-                                        ns: None,
-                                        trusted: false,
-                                    };
-                                let proto_error = hickory_resolver::proto::ProtoError::from(kind);
-                                let resolve_error =
-                                    ResolveError::from(ResolveErrorKind::Proto(proto_error));
-                                Err(DnsError::Resolution(resolve_error.into()))
-                            } else {
-                                Err(DnsError::Resolution(anyhow!("{}", error)))
-                            }
-                        }
-                    };
-                }
-            }
-            Err(DnsError::Resolution(anyhow!(
-                "No more responses configured for {}",
-                domain
-            )))
+                        Err(error) => Err(DnsError::Resolution(error)),
+                   };
+               }
+           }
+           Err(DnsError::Resolution(format!(
+               "No more responses configured for {}",
+               domain
+           )))
         }
     }
 
@@ -552,7 +525,7 @@ pub mod tests {
         let result = resolver.resolve("nonexistent.com").await;
         assert!(result.is_err());
         if let Err(DnsError::Resolution(e)) = result {
-            assert!(is_nxdomain_error(&e));
+            assert!(is_nxdomain_error_str(&e));
         } else {
             panic!("Expected a resolution error");
         }
@@ -621,7 +594,7 @@ pub mod tests {
         // Should return NXDOMAIN error immediately (no standard retries)
         assert!(result.is_err());
         if let Err(DnsError::Resolution(e)) = result {
-            assert!(is_nxdomain_error(&e));
+            assert!(is_nxdomain_error_str(&e));
         } else {
             panic!("Expected a resolution error");
         }
@@ -683,7 +656,7 @@ pub mod tests {
         let result = manager.resolve_with_retry("newly-active.com", "test-tag").await;
         assert!(result.is_err());
         if let Err(DnsError::Resolution(e)) = result {
-            assert!(is_nxdomain_error(&e));
+            assert!(is_nxdomain_error_str(&e));
         } else {
             panic!("Expected a resolution error");
         }

@@ -309,18 +309,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_manager_dispatches_to_all() {
-        let outputs: Vec<Box<dyn Output>> = vec![
-            Box::new(MockOutput::new()),
-            Box::new(MockOutput::new()),
-        ];
+        let mock1 = Arc::new(MockOutput::new());
+        let mock2 = Arc::new(MockOutput::new());
+        let outputs: Vec<Arc<dyn Output>> = vec![mock1.clone(), mock2.clone()];
         let manager = OutputManager::new(outputs);
         let alert = create_test_alert();
 
         manager.send_alert(&alert).await.unwrap();
 
-        // This test structure needs adjustment as we can't access the mocks directly.
-        // A better approach would be for the mocks to use channels or other
-        // inspectable side-effects. For now, this test just ensures no panics.
+        assert_eq!(mock1.alerts.lock().unwrap().len(), 1);
+        assert_eq!(mock2.alerts.lock().unwrap().len(), 1);
+        assert_eq!(mock1.alerts.lock().unwrap()[0], alert);
+        assert_eq!(mock2.alerts.lock().unwrap()[0], alert);
     }
 
     #[tokio::test]

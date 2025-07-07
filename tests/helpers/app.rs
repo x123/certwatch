@@ -81,6 +81,15 @@ impl TestAppBuilder {
 
     /// Builds and spawns the application in a background task.
     pub async fn build(self) -> Result<TestApp> {
+        // Ensure the dummy ASN file exists to prevent startup errors
+        if let Some(path) = &self.config.enrichment.asn_tsv_path {
+            if !path.exists() {
+                let parent = path.parent().unwrap();
+                tokio::fs::create_dir_all(parent).await?;
+                tokio::fs::write(path, "").await?;
+            }
+        }
+
         let (shutdown_tx, shutdown_rx) = watch::channel(());
 
         let app_handle = tokio::spawn(async move {

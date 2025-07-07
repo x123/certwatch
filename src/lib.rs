@@ -4,7 +4,6 @@
 //! transparency logs and detecting suspicious domain registrations.
 
 use chrono::Utc;
-use log::error;
 pub mod utils;
 use std::sync::Arc;
 
