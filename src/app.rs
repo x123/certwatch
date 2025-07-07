@@ -356,12 +356,15 @@ async fn process_domain(
     enrichment_provider: Arc<dyn EnrichmentProvider>,
     alerts_tx: mpsc::Sender<Alert>,
 ) -> Result<()> {
+    println!("[PROCESS_DOMAIN] Checking domain: {}", domain);
     if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
+        println!("[PROCESS_DOMAIN] Matched domain: {} (source: {})", domain, source_tag);
         debug!(
             "Worker {} matched domain: {} (source: {})",
             worker_id, domain, source_tag
         );
         let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
+        println!("[PROCESS_DOMAIN] DNS result for {}: {:?}", domain, result);
         info!("DNS resolution result for {}: {:?}", domain, result);
         match result {
             Ok(dns_info) => {

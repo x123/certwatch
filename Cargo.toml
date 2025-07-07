@@ -42,9 +42,11 @@ thiserror = "2.0.12"
 
 [features]
 live-tests = []
+test-utils = []
 
 [dev-dependencies]
 tokio-test = "0.4"
+certwatch = { path = ".", features = ["test-utils"] }
 tempfile = "3.8"
 serde_json = "1.0"
 gag = "1.0.0"

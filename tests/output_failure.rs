@@ -8,7 +8,6 @@ use tokio::time::timeout;
 mod helpers;
 use helpers::{
     app::TestAppBuilder,
-    fake_dns::FakeDnsResolver,
     mock_output::FailableMockOutput,
     mock_ws::MockWebSocket,
 };
@@ -36,7 +35,20 @@ async fn test_output_failure_does_not_crash_app() -> Result<()> {
     let mut app_builder = TestAppBuilder::new()
         .with_outputs(vec![mock_output.clone()])
         .with_pattern_files(vec![pattern_path])
-        .with_dns_resolver(Arc::new(FakeDnsResolver::new()));
+        .with_dns_resolver({
+            let resolver = certwatch::dns::test_utils::FakeDnsResolver::new();
+            resolver.add_success_response("test.com", {
+                let mut dns_info = certwatch::core::DnsInfo::default();
+                dns_info.a_records.push("1.1.1.1".parse().unwrap());
+                dns_info
+            });
+            resolver.add_success_response("test2.com", {
+                let mut dns_info = certwatch::core::DnsInfo::default();
+                dns_info.a_records.push("2.2.2.2".parse().unwrap());
+                dns_info
+            });
+            Arc::new(resolver)
+        });
     app_builder.config.enrichment.asn_tsv_path = Some(asn_path);
     let app = app_builder.with_websocket(Box::new(mock_ws.clone())).build().await?;
 

@@ -104,11 +104,17 @@ pub async fn load_patterns_from_file<P: AsRef<Path>>(file_path: P) -> Result<Vec
     
     for line in content.lines() {
         let line = line.trim();
-        // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        patterns.push((line.to_string(), source_tag.clone()));
+
+        let parts: Vec<&str> = line.splitn(2, '\t').collect();
+        if parts.len() == 2 {
+            patterns.push((parts[0].to_string(), parts[1].to_string()));
+        } else {
+            // Fallback to using filename as tag if no tab is present
+            patterns.push((line.to_string(), source_tag.clone()));
+        }
     }
 
     Ok(patterns)

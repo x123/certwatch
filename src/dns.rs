@@ -428,7 +428,7 @@ impl DnsResolutionManager {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 pub mod test_utils {
     use super::{DnsError, DnsInfo, DnsResolver};
     use async_trait::async_trait;

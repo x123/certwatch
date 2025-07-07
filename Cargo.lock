@@ -292,6 +292,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "blake3",
+ "certwatch",
  "chrono",
  "clap",
  "csv",
