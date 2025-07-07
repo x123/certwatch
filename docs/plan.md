@@ -194,3 +194,36 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn DnsResolver>`.
     - [x] Modify `TestAppBuilder` to allow injecting the `MockDnsResolver`.
     - [x] Write an integration test that injects the `MockDnsResolver`, processes a domain, and verifies the `cert_processing_failures` metric is incremented and a warning is logged.
+
+
+### Epic: Eliminate Lock Contention in DNS Health Monitor
+
+- **ID:** `#112`
+- **Status:** Not Started
+- **Description:** The `DnsHealthMonitor` currently uses a blocking `Mutex` to guard its internal state, causing contention on the hot path of recording DNS outcomes. This epic refactors the monitor to use a message-passing model, moving all state mutations to a dedicated background task and making the `record_outcome` method non-blocking.
+
+---
+
+- [x] **#113 - Phase 1: Write a Failing Test to Prove Lock Contention**
+  - **Context:** Following TDD, we must first create a test that fails with the current implementation, proving the existence of the problem we intend to solve.
+  - **Subtasks:**
+    - [x] Create a new `#[tokio::test]` named `test_record_outcome_is_non_blocking` in `src/dns/health.rs`.
+    - [x] In the test, acquire a lock on the `monitor_state` to simulate a long-running operation holding the lock.
+    - [x] While the lock is held, spawn a separate task to call `record_outcome`.
+    - [x] Use `tokio::time::timeout` to assert that the call to `record_outcome` blocks and eventually times out. This failing test is the goal.
+
+- [x] **#114 - Phase 2: Implement Message-Passing Refactor**
+  - **Context:** With a failing test, we will now refactor the `DnsHealthMonitor` to eliminate the lock contention.
+  - **Subtasks:**
+    - [x] Add a `tokio::sync::mpsc::UnboundedSender<bool>` to the `DnsHealthMonitor` struct.
+    - [x] Create a private async `state_update_task` that runs in a loop, receiving outcomes from a channel and exclusively managing the `monitor_state` lock.
+    - [x] Update `DnsHealthMonitor::new` to create the channel and spawn the `state_update_task`.
+    - [x] Change `record_outcome` to be a single, non-blocking `self.outcome_tx.send(is_success)` call.
+
+- [x] **#115 - Phase 3: Verify Fix and Ensure Robustness**
+  - **Context:** After implementing the fix, we must verify that our original failing test now passes and add an additional test to ensure the new implementation is robust under load.
+  - **Subtasks:**
+    - [x] Run the `test_record_outcome_is_non_blocking` test and confirm that it now passes.
+    - [x] Create a new `#[tokio::test]` named `test_health_monitor_concurrent_updates`.
+    - [x] This test will spawn a large number of concurrent tasks that all call `record_outcome`.
+    - [x] After the tasks complete, the test will assert that the final state inside the monitor is correct (e.g., the number of outcomes matches the number of calls), proving that no messages were dropped.

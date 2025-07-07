@@ -429,14 +429,13 @@ impl DnsResolutionManager {
 }
 
 #[cfg(test)]
-pub mod tests {
-    use super::*;
+pub mod test_utils {
+    use super::{DnsError, DnsInfo, DnsResolver};
     use crate::config::DnsHealthConfig;
     use crate::dns::health::{DnsHealthMonitor, HealthState, MonitorState};
+    use async_trait::async_trait;
     use std::collections::{HashMap, VecDeque};
     use std::sync::{Arc, Mutex};
-    use hickory_resolver::{proto::op::ResponseCode, ResolveError, ResolveErrorKind};
-    use tokio::sync::watch;
 
     /// Fake DNS resolver for testing
     pub struct FakeDnsResolver {
@@ -494,15 +493,27 @@ pub mod tests {
                     return match response {
                         Ok(dns_info) => Ok(dns_info),
                         Err(error) => Err(DnsError::Resolution(error)),
-                   };
-               }
-           }
-           Err(DnsError::Resolution(format!(
-               "No more responses configured for {}",
-               domain
-           )))
+                    };
+                }
+            }
+            Err(DnsError::Resolution(format!(
+                "No more responses configured for {}",
+                domain
+            )))
         }
     }
+
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::config::DnsConfig;
+    use crate::dns::health::DnsHealthMonitor;
+    use crate::dns::test_utils::FakeDnsResolver;
+    use std::sync::Arc;
+    use tokio::sync::watch;
+    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_fake_dns_resolver_success() {
@@ -678,27 +689,5 @@ pub mod tests {
 
         // The resolver should have been called a second time
         assert_eq!(fake_resolver.get_call_count("newly-active.com"), 2);
-    }
-
-    /// Test helper to create a DnsHealthMonitor instance for unit tests.
-    /// This version does not spawn the background recovery task.
-    pub fn create_test_monitor(
-        resolver: Arc<FakeDnsResolver>,
-        threshold: f64,
-        window_seconds: u64,
-    ) -> DnsHealthMonitor {
-        let config = DnsHealthConfig {
-            failure_threshold: threshold,
-            window_seconds,
-            recovery_check_domain: "google.com".to_string(),
-        };
-        DnsHealthMonitor {
-            config,
-            monitor_state: Mutex::new(MonitorState {
-                health: HealthState::Healthy,
-                outcomes: VecDeque::new(),
-            }),
-            resolver,
-        }
     }
 }

@@ -108,6 +108,8 @@ pub struct DnsHealthConfig {
     pub window_seconds: u64,
     /// A known-good domain to resolve to check for recovery.
     pub recovery_check_domain: String,
+    /// The interval in seconds between recovery checks when the system is unhealthy.
+    pub recovery_check_interval_seconds: u64,
 }
 
 impl Default for DnsHealthConfig {
@@ -116,6 +118,7 @@ impl Default for DnsHealthConfig {
             failure_threshold: 0.95,
             window_seconds: 120,
             recovery_check_domain: "google.com".to_string(),
+            recovery_check_interval_seconds: 10,
         }
     }
 }
