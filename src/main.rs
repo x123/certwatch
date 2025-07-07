@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
         config.performance.queue_capacity
     );
     info!("CertStream URL: {}", config.network.certstream_url);
-    info!("Sample Rate: {}", config.network.sample_rate);
+    info!("Sample Rate: {}% (sample_rate:{})", (config.network.sample_rate * 100.0) as u64, config.network.sample_rate);
     let (dns_resolver, nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
     if let Some(resolver) = &config.dns.resolver {
         info!("DNS Resolver: {}", resolver);
