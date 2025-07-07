@@ -14,7 +14,7 @@ use crate::{
     utils::heartbeat::run_heartbeat,
 };
 use anyhow::Result;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, Mutex, watch},
@@ -185,56 +185,31 @@ pub async fn run(config: Config, mut shutdown_rx: watch::Receiver<()>) -> Result
                     }
                 };
 
-                let process_fut = async {
-                    if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                        debug!("Worker {} matched domain: {} (source: {})", i, domain, source_tag);
-                        match dns_manager.resolve_with_retry(&domain, &source_tag).await {
-                            Ok(dns_info) => {
-                                let alert = build_alert(
-                                    domain,
-                                    source_tag.to_string(),
-                                    false,
-                                    dns_info,
-                                    enrichment_provider.clone(),
-                                )
-                                .await;
-                                if let Err(e) = alerts_tx.send(alert).await {
-                                    error!("Worker {} failed to send alert to channel: {}", i, e);
-                                }
-                            }
-                            Err(DnsError::Resolution(e)) => {
-                                if e.to_string().contains("NXDOMAIN") {
-                                    let alert = build_alert(
-                                        domain,
-                                        source_tag.to_string(),
-                                        false,
-                                        DnsInfo::default(),
-                                        enrichment_provider.clone(),
-                                    )
-                                    .await;
-                                    if let Err(e) = alerts_tx.send(alert).await {
-                                        error!(
-                                            "Worker {} failed to send NXDOMAIN alert to channel: {}",
-                                            i, e
-                                        );
-                                    }
-                                } else {
-                                    debug!("Worker {} failed DNS resolution for {}: {}", i, domain, e);
-                                }
-                            }
-                            Err(DnsError::Shutdown) => {
-                                debug!("Worker {} DNS resolution cancelled by shutdown.", i);
-                            }
-                        }
-                    }
-                };
+                let process_fut = process_domain(
+                    domain.clone(),
+                    i,
+                    pattern_matcher.clone(),
+                    dns_manager.clone(),
+                    enrichment_provider.clone(),
+                    alerts_tx.clone(),
+                );
 
                 tokio::select! {
                     biased;
                     _ = shutdown_rx.changed() => {
-                        debug!("Worker {} received shutdown signal during processing, aborting domain.", i);
+                        debug!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
                     }
-                    _ = process_fut => {}
+                    result = process_fut => {
+                        match result {
+                            Ok(_) => {
+                                metrics::counter!("cert_processing_successes").increment(1);
+                            }
+                            Err(e) => {
+                                metrics::counter!("cert_processing_failures").increment(1);
+                                warn!("Failed to process certificate update for domain {}: {}", domain, e);
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -335,5 +310,67 @@ pub async fn run(config: Config, mut shutdown_rx: watch::Receiver<()>) -> Result
     }
 
     info!("All tasks shut down.");
+    Ok(())
+}
+
+/// Processes a single domain: matches, resolves, enriches, and sends alerts.
+async fn process_domain(
+    domain: String,
+    worker_id: usize,
+    pattern_matcher: Arc<dyn PatternMatcher>,
+    dns_manager: Arc<DnsResolutionManager>,
+    enrichment_provider: Arc<dyn EnrichmentProvider>,
+    alerts_tx: mpsc::Sender<Alert>,
+) -> Result<()> {
+    if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
+        debug!(
+            "Worker {} matched domain: {} (source: {})",
+            worker_id, domain, source_tag
+        );
+        match dns_manager.resolve_with_retry(&domain, &source_tag).await {
+            Ok(dns_info) => {
+                let alert = build_alert(
+                    domain,
+                    source_tag.to_string(),
+                    false,
+                    dns_info,
+                    enrichment_provider.clone(),
+                )
+                .await;
+                if alerts_tx.send(alert).await.is_err() {
+                    anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
+                }
+            }
+            Err(DnsError::Resolution(e)) => {
+                if e.to_string().contains("NXDOMAIN") {
+                    let alert = build_alert(
+                        domain,
+                        source_tag.to_string(),
+                        false,
+                        DnsInfo::default(),
+                        enrichment_provider.clone(),
+                    )
+                    .await;
+                    if alerts_tx.send(alert).await.is_err() {
+                        anyhow::bail!(
+                            "Alerts channel (NXDOMAIN) closed, worker {} exiting.",
+                            worker_id
+                        );
+                    }
+                } else {
+                    debug!(
+                        "Worker {} failed DNS resolution for {}: {}",
+                        worker_id, domain, e
+                    );
+                }
+            }
+            Err(DnsError::Shutdown) => {
+                debug!(
+                    "Worker {} DNS resolution cancelled by shutdown.",
+                    worker_id
+                );
+            }
+        }
+    }
     Ok(())
 }

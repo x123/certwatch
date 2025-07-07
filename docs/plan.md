@@ -1,4 +1,18 @@
 ---
+### Epic 35: Observability and Error Handling
+**User Story:** As a developer, I want to have clear, top-level logs and metrics for domain processing, so that I can easily monitor the application's health and diagnose failures without digging through deep call stacks.
+
+- [x] **#108 - Improve Error Handling in Core Processing Loop**
+  - **Context:** The current worker loop in `src/app.rs` ignores the result of the main processing logic, making it difficult to track failures. This task will introduce explicit error handling, logging, and metrics.
+  - **Subtasks:**
+    - [x] Extract the domain processing logic into a separate, fallible `process_domain` function in `src/app.rs`.
+    - [x] Update the worker loop to call this function and handle the `Result`.
+    - [x] On failure, log a `warn!` message including the domain and error.
+    - [x] On failure, increment a `cert_processing_failures` metric.
+    - [x] On success, increment a `cert_processing_successes` metric.
+    - [x] Ensure the graceful shutdown mechanism is preserved by correctly using `tokio::select!`.
+
+---
 ### Epic 27: Anti-Regression Testing for Graceful Shutdown
 **User Story:** As a developer, I want a robust suite of automated tests that can reliably detect shutdown hangs and deadlocks, so that this entire class of bug can be prevented from recurring in the future.
 
