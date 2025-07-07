@@ -1,68 +1,157 @@
 # certwatch
 
-`certwatch` is a high-performance Rust command-line tool that monitors Certificate Transparency logs in real-time. It connects to the certstream websocket, matches domains against thousands of regex patterns, enriches findings with DNS and ASN/GeoIP data, and sends alerts to configurable outputs. It is designed for security researchers to detect phishing, typosquatting, and other malicious domains as they are registered.
+`certwatch` is a high-performance Rust command-line tool designed for real-time
+monitoring of Certificate Transparency logs. It helps security researchers,
+analysts, and developers detect and respond to potentially malicious domains
+with newly registered or renewed certificates, such as those used in phishing
+or typosquatting attacks. By connecting to the certstream websocket,
+`certwatch` efficiently matches domains against thousands of user-defined regex
+patterns, enriches findings with crucial DNS and ASN/GeoIP data, and dispatches
+alerts to configurable outputs.
 
 ## Features
 
-- **Real-time Monitoring:** Connects to the certstream network to see domains
-from newly registered or renewed certificates.
-- **High-Performance Pattern Matching:** Uses Rust's `regex::RegexSet` to match
-against thousands of rules with very low latency.
-- **Pattern Hot-Reloading:** Update regex pattern files on the fly without
-restarting the service.
-- **DNS & IP Enrichment:** Resolves domains (A, AAAA, NS records) and enriches
-IPs with ASN and country data from a local TSV file.
-- **Alert Deduplication:** Avoids alert fatigue by suppressing duplicate alerts
-within a configurable time window.
-- **Configurable Outputs:** Supports structured `JSON`, a compact `PlainText`
-summary for `stdout`, and webhook notifications (for Slack notifications).
-- **Logged Metrics:** Periodically log key operational metrics to the console for monitoring.
+`certwatch` offers a robust set of features to provide comprehensive domain monitoring:
+
+*   **Real-time Monitoring:** Connects to a certstream websocket server to
+process domains from newly registered or renewed certificates as they appear.
+*   **High-Performance Pattern Matching:** Leverages Rust's `regex::RegexSet`
+for extremely fast matching against thousands of rules with minimal latency.
+*   **Pattern Hot-Reloading:** Allows for dynamic updates to regex pattern
+files without requiring a service restart, ensuring continuous monitoring.
+*   **DNS & IP Enrichment:** Resolves domains (A, AAAA, NS records) and
+enriches associated IPs with ASN and country data using a local TSV file for
+rapid lookups.
+*   **Alert Deduplication:** Prevents alert fatigue by suppressing duplicate
+alerts within a configurable time window.
+*   **Configurable Outputs:** Supports various output formats including
+structured `JSON`, a compact `PlainText` summary for `stdout`, and webhook
+notifications (e.g., for Slack integration).
+*   **Logged Metrics:** Periodically logs key operational metrics to the
+console, providing insights into the application's performance and activity.
 
 ## Getting Started
 
+To get `certwatch` up and running, follow these steps:
+
 ### 1. Prerequisites
 
-You need to have the Rust toolchain installed. You can find instructions at
+You need to have the Rust toolchain installed. You can find detailed
+installation instructions at
 [rust-lang.org](https://www.rust-lang.org/tools/install).
 
 ### 2. Build
 
-Clone the repository and build the project in release mode:
+Clone the repository and build the project in release mode for optimal
+performance:
 
 ```bash
-git clone <repository_url>
+git clone https://github.com/your-username/certwatch.git # Replace with your repository URL
 cd certwatch
 cargo build --release
 ```
 
-The binary will be located at `./target/release/certwatch`.
+The compiled binary will be located at `./target/release/certwatch`.
 
 ### 3. Configuration
 
-Before running, you need to set up your configuration file and data sources.
+Before running `certwatch`, you need to set up your configuration file and data
+sources.
 
 **a. Create `certwatch.toml`:**
 
-Copy the example configuration file `certwatch.toml` to a new file (or use it
-directly) and customize the settings.
+`certwatch` uses a `certwatch.toml` file for its configuration. You can copy
+the example configuration file from [certwatch-example.toml](./certwatch-example.toml)
+
+```toml
+# example certwatch.toml configuration 
+
+# Valid levels: debug, info, warn, error
+log_level = "info"
+
+# The number of concurrent domain processing tasks.
+# If commented out, defaults to (number of CPU cores).
+# concurrency = 16
+
+[metrics]
+log_metrics = true
+log_aggregation_seconds = 10
+
+[performance]
+queue_capacity = 100000
+
+[network]
+# REQUIRED: A running certstream-server certstream_url. Use
+# https://github.com/CaliDog/certstream-server or similar.
+certstream_url = "wss://127.0.0.1:8181/domains-only"
+sample_rate = 1.0 # 1.0 = 100% sampling, 0.01 = 1% sampling
+allow_invalid_certs = true
+
+[matching]
+# REQUIRED: A list of file paths containing regex patterns. For example:
+# pattern_files = ["patterns/phishing.txt", "patterns/malware.txt"]
+
+[dns]
+# Optional: Specify a custom DNS resolver. If commented out, uses the system default.
+# resolver = "192.168.1.1:53"
+
+# Optional: Specify the timeout for a single DNS query in milliseconds.
+# timeout_ms = 5000
+
+# DNS retry and backoff settings.
+standard_retries = 3
+standard_initial_backoff_ms = 500
+nxdomain_retries = 5
+nxdomain_initial_backoff_ms = 10000
+
+[dns.health]
+# The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
+failure_threshold = 0.95
+# The time window in seconds to consider for the failure rate calculation.
+window_seconds = 120
+# A known-good domain to resolve to check for recovery.
+recovery_check_domain = "google.com"
+
+[enrichment]
+# REQUIRED: Path to the TSV ASN database file.
+# The file must be tab-separated with 5 columns:
+# CIDR, AS_Number, AS_Name, Country_Code, Description
+# The https://iptoasn.com/data/ip2asn-combined.tsv.gz from https://iptoasn.com is a
+# compatible dataset for enrichment
+asn_tsv_path = "enrichment/ip2asn-combined.tsv"
+
+[output]
+# The format to use for stdout output. Can be "Json" or "PlainText".
+format = "PlainText"
+
+# Optional: webhooks
+# slack = { webhook_url = "https://hooks.slack.com/services/..." }
+
+[deduplication]
+cache_size = 100000
+cache_ttl_seconds = 3600
+```
 
 **b. Create Pattern Files:**
 
-In `certwatch.toml`, the `matching.pattern_files` key points to a list of text
+The `matching.pattern_files` key in `certwatch.toml` points to a list of text
 files containing regex patterns. Each file should contain one regex pattern per
-line. For example:
+line. For example, a file named `phishing.txt` might contain:
 
 ```text
-# contents of phishing.txt
+# contents of patterns/phishing.txt
 ^.*(login|secure|account|webscr|signin).*paypal.*$
 ^.*(apple|icloud).*(login|support|verify).*$
 ```
 
-**c. Create ASN Data File:**
+**c. Supply ASN Data File:**
 
 The enrichment service requires a tab-separated value (TSV) file containing
 IP-to-ASN mapping data. The path to this file is specified in `certwatch.toml`
 under `enrichment.asn_tsv_path`.
+
+A compatible dataset is the [Combined IPv4+IPv6 to ASN map](https://iptoasn.com/data/ip2asn-combined.tsv.gz) dataset from
+[ip2asn.com](https://ip2asn.com)
 
 The file **must** have the following five columns, separated by tabs:
 
@@ -79,15 +168,16 @@ start_ip    end_ip  asn country description
 
 ### 4. Run the Application
 
-Once configured, you can run the application:
+Once configured, you can run the application using the compiled binary:
 
 ```bash
-./target/release/certwatch
+certwatch
 ```
 
 ## Command-Line Arguments
 
 You can override settings from `certwatch.toml` using command-line arguments.
+This is useful for quick tests or temporary changes.
 
 | Flag | Description | Config Key |
 | --- | --- | --- |
@@ -101,11 +191,26 @@ You can override settings from `certwatch.toml` using command-line arguments.
 **Example:**
 
 ```bash
-./target/release/certwatch --dns-resolver 1.1.1.1:53 --log-metrics
+certwatch --dns-resolver 1.1.1.1:53 --log-metrics
 ```
+
+## Contributing
+
+We welcome contributions to `certwatch`! If you'd like to contribute, please consider:
+
+*   Reporting bugs or suggesting new features by opening an issue.
+*   Submitting pull requests for bug fixes or new functionalities.
+
+Please refer to `CONTRIBUTING.md` (coming soon!) for detailed guidelines on how to contribute.
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
 
 ## Further Reading
 
 For a detailed description of the architecture, data structures, and advanced
 features, please see the [**Final Product Requirements
 Document**](docs/specs.md).
+
+For the implementation plan, see the [**Epics**](docs/plan.md).

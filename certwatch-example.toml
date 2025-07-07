@@ -1,7 +1,7 @@
-# CertWatch Configuration File
+# example certwatch.toml configuration 
 
+# Valid levels: debug, info, warn, error
 log_level = "info"
-# log_level = "error"
 
 # The number of concurrent domain processing tasks.
 # If commented out, defaults to (number of CPU cores).
@@ -15,17 +15,15 @@ log_aggregation_seconds = 10
 queue_capacity = 100000
 
 [network]
+# REQUIRED: A running certstream-server certstream_url. Use
+# https://github.com/CaliDog/certstream-server or similar.
 certstream_url = "wss://127.0.0.1:8181/domains-only"
-sample_rate = 0.001
+sample_rate = 1.0 # 1.0 = 100% sampling, 0.01 = 1% sampling
 allow_invalid_certs = true
 
 [matching]
-# A list of file paths containing regex patterns.
-# For example: pattern_files = ["/path/to/your/patterns.txt"]
-# pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt"]
-# pattern_files = ["ignored/phishing2.txt"]
-# pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt"]
-pattern_files = ["ignored/phishing.txt", "ignored/royalmail.txt", "ignored/dot-top.txt", "ignored/many-tlds.txt"]
+# REQUIRED: A list of file paths containing regex patterns. For example:
+# pattern_files = ["patterns/phishing.txt", "patterns/malware.txt"]
 
 [dns]
 # Optional: Specify a custom DNS resolver. If commented out, uses the system default.
@@ -49,16 +47,18 @@ window_seconds = 120
 recovery_check_domain = "google.com"
 
 [enrichment]
-# Path to the TSV ASN database file.
+# REQUIRED: Path to the TSV ASN database file.
 # The file must be tab-separated with 5 columns:
 # CIDR, AS_Number, AS_Name, Country_Code, Description
-# https://iptoasn.com/data/ip2asn-combined.tsv.gz from https://iptoasn.com is a
-# useful dataset for enrichment
-asn_tsv_path = "ignored/ip2asn-combined.tsv"
+# The https://iptoasn.com/data/ip2asn-combined.tsv.gz from https://iptoasn.com is a
+# compatible dataset for enrichment
+asn_tsv_path = "enrichment/ip2asn-combined.tsv"
 
 [output]
 # The format to use for stdout output. Can be "Json" or "PlainText".
 format = "PlainText"
+
+# Optional: webhooks
 # slack = { webhook_url = "https://hooks.slack.com/services/..." }
 
 [deduplication]

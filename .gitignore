@@ -1,7 +1,8 @@
 .direnv/
 flake.lock
 .roo/
-ignored/
+data/
+todo.md
 # Added by cargo
 
 /target

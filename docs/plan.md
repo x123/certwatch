@@ -877,4 +877,20 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
   - **Subtasks:**
     - [ ] Run `cargo test --all-features` to ensure no regressions.
     - [ ] Run `certwatch --help` and verify that the generated help message is comprehensive and correctly documents all available flags.
-    - [ ] Manually test the override behavior by running the application with a config file and overriding a few key settings via CLI flags, confirming the CLI values take precedence.
+
+---
+### Epic 33: GitHub Documentation Best Practices
+**User Story:** As a potential contributor or user, I want the project's documentation to follow GitHub's best practices, so that I can easily understand and contribute to the project.
+
+- [x] **#101 - Enhance Project README for Clarity and New User Onboarding**
+  - **Context:** The `README.md` is the first point of contact for new users. It needs to be clear, concise, and follow best practices for GitHub documentation.
+  - **Dependencies:** None
+  - **Subtasks:**
+    - [x] Refine introduction and purpose.
+    - [x] Enhance features section.
+    - [x] Improve "Getting Started" section (Prerequisites, Build, Configuration).
+    - [x] Refine "Usage" section (Running, CLI Arguments).
+    - [x] Add "Contributing" section.
+    - [x] Add "License" section.
+    - [x] Review "Further Reading" link.
+    - [x] Ensure overall readability and scannability (headings, paragraphs, highlighting, lists, plain language, active voice).
