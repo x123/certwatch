@@ -227,3 +227,29 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Create a new `#[tokio::test]` named `test_health_monitor_concurrent_updates`.
     - [x] This test will spawn a large number of concurrent tasks that all call `record_outcome`.
     - [x] After the tasks complete, the test will assert that the final state inside the monitor is correct (e.g., the number of outcomes matches the number of calls), proving that no messages were dropped.
+
+---
+### Epic: Improve Unit Test Coverage
+**User Story:** As a developer, I want comprehensive unit tests for core logic so that I can refactor with confidence and catch regressions early.
+
+- [x] **#116 - Unit Test Pattern Matching Logic**
+  - **Context:** Add unit tests for `src/matching.rs` to verify the `RegexMatcher` in isolation.
+  - **Subtasks:**
+    - [x] Test successful compilation of valid regex patterns.
+    - [x] Test for errors on invalid regex patterns.
+    - [x] Test simple, wildcard, and case-insensitive domain matches.
+    - [x] Test non-matches and edge cases like empty inputs.
+
+- [ ] **#117 - Unit Test TSV Enrichment Logic**
+  - **Context:** Add unit tests for `src/enrichment/tsv_lookup.rs`.
+  - **Subtasks:**
+    - [ ] Test successful parsing and lookup from a valid in-memory TSV.
+    - [ ] Test lookup of non-existent keys.
+    - [ ] Test for errors on malformed TSV data (e.g., jagged rows).
+
+- [ ] **#118 - Unit Test Configuration Parsing**
+  - **Context:** Add unit tests for `src/config.rs`.
+  - **Subtasks:**
+    - [ ] Test parsing of a full, valid TOML configuration.
+    - [ ] Test that missing optional fields are populated with default values.
+    - [ ] Test for errors on invalid value types or missing required fields.

@@ -8,7 +8,7 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use regex::RegexSet;
+use regex::{RegexSet, RegexSetBuilder};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,13 +38,15 @@ impl RegexMatcher {
     pub fn new(patterns: Vec<(String, String)>) -> Result<Self> {
         if patterns.is_empty() {
             return Ok(Self {
-                regex_set: RegexSet::new(&[] as &[&str])?,
+                regex_set: RegexSet::empty(),
                 tags: Vec::new(),
             });
         }
 
         let (pattern_strings, tags): (Vec<String>, Vec<String>) = patterns.into_iter().unzip();
-        let regex_set = RegexSet::new(&pattern_strings)?;
+        let regex_set = RegexSetBuilder::new(&pattern_strings)
+            .case_insensitive(true)
+            .build()?;
 
         Ok(Self { regex_set, tags })
     }
@@ -516,3 +518,29 @@ mod tests {
         assert!(result.is_err(), "Expected error for nonexistent file");
     }
 }
+    #[tokio::test]
+    async fn test_match_is_case_insensitive() {
+        let patterns = vec![
+            (r"example\.com".to_string(), "corp".to_string()),
+        ];
+        let matcher = RegexMatcher::new(patterns).unwrap();
+
+        assert_eq!(
+            matcher.match_domain("EXAMPLE.COM").await,
+            Some("corp".to_string())
+        );
+        assert_eq!(
+            matcher.match_domain("Example.Com").await,
+            Some("corp".to_string())
+        );
+    }
+
+
+    #[tokio::test]
+    async fn test_empty_domain_input() {
+        let patterns = vec![(r".+".to_string(), "any".to_string())];
+        let matcher = RegexMatcher::new(patterns).unwrap();
+
+        // Matching an empty domain should not match anything
+        assert_eq!(matcher.match_domain("").await, None);
+    }
