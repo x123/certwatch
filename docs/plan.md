@@ -160,3 +160,36 @@ As a security analyst or operator, I want to define flexible "rules" that group 
   - **Subtasks:**
     - [ ] Document rule configuration and usage in `docs/specs.md` and `README.md`.
     - [ ] Provide example rule sets for common use cases.
+
+
+---
+### Epic 36: Enhance Test Suite with Failure Injection
+**User Story:** As a developer, I want to test the application's resilience against common failure modes, so that I can be confident it will behave predictably and not crash when external dependencies fail.
+
+- [x] **#109 - Phase 1: Implement Mockable Alert Sink**
+  - **Context:** The application should be resilient to failures when sending alerts (e.g., Slack API is down). We need to test this behavior.
+  - **Subtasks:**
+    - [x] Create a `FailableMockOutput` in `tests/helpers/` that implements the `Output` trait.
+    - [x] The mock is configurable to return an error on `send`.
+    - [x] It records alerts it receives for later inspection.
+    - [x] Modify `certwatch::app::run` to accept an optional, pre-built `Vec<Arc<dyn Output>>`.
+    - [x] Modify `TestAppBuilder` to allow injecting the mock outputs.
+    - [x] Write an integration test that injects a failing `FailableMockOutput`, triggers an alert, and verifies the application logs a warning and continues running.
+
+- [ ] **#110 - Phase 2: Implement Fake Enrichment Provider**
+  - **Context:** The application should handle failures from the enrichment service gracefully.
+  - **Subtasks:**
+    - [ ] Create a `FakeEnrichmentProvider` in `tests/helpers/` that implements the `EnrichmentProvider` trait.
+    - [ ] The fake should be configurable to return an error.
+    - [ ] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn EnrichmentProvider>`.
+    - [ ] Modify `TestAppBuilder` to allow injecting the `FakeEnrichmentProvider`.
+    - [ ] Write an integration test that injects a failing `FakeEnrichmentProvider`, processes a domain, and verifies the `cert_processing_failures` metric is incremented and a warning is logged.
+
+- [ ] **#111 - Phase 3: Implement Failing DNS Resolver**
+  - **Context:** The application must be robust against DNS resolution failures, which are common network issues. We will test the application's reaction to these failures without mocking a full DNS server.
+  - **Subtasks:**
+    - [ ] Create a `FailingDnsResolver` in `tests/helpers/` that implements the `DnsResolver` trait.
+    - [ ] The resolver's `resolve` method should immediately return a DNS error without performing any I/O.
+    - [ ] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn DnsResolver>`.
+    - [ ] Modify `TestAppBuilder` to allow injecting the `FailingDnsResolver`.
+    - [ ] Write an integration test that injects the `FailingDnsResolver`, processes a domain, and verifies the `cert_processing_failures` metric is incremented and a warning is logged.

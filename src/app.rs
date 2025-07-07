@@ -3,13 +3,13 @@
 use crate::{
     build_alert,
     config::Config,
-    core::{Alert, DnsInfo, EnrichmentProvider, Output, PatternMatcher},
+    core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     enrichment::tsv_lookup::TsvAsnLookup,
     matching::PatternWatcher,
     internal_metrics::logging_recorder::LoggingRecorder,
-    network::CertStreamClient,
+    network::{CertStreamClient, WebSocketConnection},
     outputs::{OutputManager, SlackOutput, StdoutOutput},
     utils::heartbeat::run_heartbeat,
 };
@@ -22,7 +22,13 @@ use tokio::{
 };
 
 /// Runs the main application logic.
-pub async fn run(config: Config, mut shutdown_rx: watch::Receiver<()>) -> Result<()> {
+pub async fn run(
+    config: Config,
+    mut shutdown_rx: watch::Receiver<()>,
+    output_override: Option<Vec<Arc<dyn Output>>>,
+    websocket_override: Option<Box<dyn WebSocketConnection>>,
+    dns_resolver_override: Option<Arc<dyn DnsResolver>>,
+) -> Result<()> {
     // =========================================================================
     // Initialize Metrics Recorder if enabled
     // =========================================================================
@@ -46,8 +52,13 @@ pub async fn run(config: Config, mut shutdown_rx: watch::Receiver<()>) -> Result
     let pattern_matcher = Arc::new(
         PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
     );
-    let (dns_resolver, _nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
-    let dns_resolver = Arc::new(dns_resolver);
+    let dns_resolver = match dns_resolver_override {
+        Some(resolver) => resolver,
+        None => {
+            let (resolver, _nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
+            Arc::new(resolver)
+        }
+    };
     let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
         anyhow::anyhow!("asn_tsv_path is required for enrichment")
     })?;
@@ -65,14 +76,19 @@ pub async fn run(config: Config, mut shutdown_rx: watch::Receiver<()>) -> Result
     // =========================================================================
     // 2. Setup Output Manager
     // =========================================================================
-    let mut outputs: Vec<Box<dyn Output>> = Vec::new();
-    outputs.push(Box::new(StdoutOutput::new(config.output.format.clone())));
-    if let Some(slack_config) = &config.output.slack {
-        outputs.push(Box::new(SlackOutput::new(
-            slack_config.webhook_url.clone(),
-        )));
-    }
-    let output_manager = Arc::new(OutputManager::new(outputs));
+    let output_manager = match output_override {
+        Some(outputs) => Arc::new(OutputManager::new(outputs)),
+        None => {
+            let mut outputs: Vec<Arc<dyn Output>> = Vec::new();
+            outputs.push(Arc::new(StdoutOutput::new(config.output.format.clone())));
+            if let Some(slack_config) = &config.output.slack {
+                outputs.push(Arc::new(SlackOutput::new(
+                    slack_config.webhook_url.clone(),
+                )));
+            }
+            Arc::new(OutputManager::new(outputs))
+        }
+    };
 
     // =========================================================================
     // 3. Create Channels for the Pipeline
@@ -126,7 +142,13 @@ pub async fn run(config: Config, mut shutdown_rx: watch::Receiver<()>) -> Result
     let certstream_task = {
         let shutdown_rx_clone = shutdown_rx.clone();
         tokio::spawn(async move {
-            if let Err(e) = certstream_client.run(shutdown_rx_clone).await {
+            let result = if let Some(ws) = websocket_override {
+                certstream_client.run_with_connection(ws).await
+            } else {
+                certstream_client.run(shutdown_rx_clone).await
+            };
+
+            if let Err(e) = result {
                 error!("CertStream client failed: {}", e);
             }
         })

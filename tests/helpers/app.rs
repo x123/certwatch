@@ -31,7 +31,10 @@ impl TestApp {
 /// A builder for creating `TestApp` instances with specific configurations.
 #[derive(Default)]
 pub struct TestAppBuilder {
-    config: Config,
+    pub config: Config,
+    outputs: Option<Vec<std::sync::Arc<dyn certwatch::core::Output>>>,
+    websocket: Option<Box<dyn certwatch::network::WebSocketConnection>>,
+    dns_resolver: Option<std::sync::Arc<dyn certwatch::core::DnsResolver>>,
 }
 
 impl TestAppBuilder {
@@ -47,7 +50,27 @@ impl TestAppBuilder {
         config.enrichment.asn_tsv_path = Some("/tmp/empty.tsv".into());
 
 
-        Self { config }
+        Self { config, outputs: None, websocket: None, dns_resolver: None }
+    }
+
+    pub fn with_outputs(mut self, outputs: Vec<std::sync::Arc<dyn certwatch::core::Output>>) -> Self {
+        self.outputs = Some(outputs);
+        self
+    }
+
+    pub fn with_websocket(mut self, ws: Box<dyn certwatch::network::WebSocketConnection>) -> Self {
+        self.websocket = Some(ws);
+        self
+    }
+
+    pub fn with_pattern_files(mut self, files: Vec<std::path::PathBuf>) -> Self {
+        self.config.matching.pattern_files = files;
+        self
+    }
+
+    pub fn with_dns_resolver(mut self, resolver: std::sync::Arc<dyn certwatch::core::DnsResolver>) -> Self {
+        self.dns_resolver = Some(resolver);
+        self
     }
 
     /// Builds and spawns the application in a background task.
@@ -55,7 +78,7 @@ impl TestAppBuilder {
         let (shutdown_tx, shutdown_rx) = watch::channel(());
 
         let app_handle = tokio::spawn(async move {
-            certwatch::app::run(self.config, shutdown_rx).await
+            certwatch::app::run(self.config, shutdown_rx, self.outputs, self.websocket, self.dns_resolver).await
         });
 
         Ok(TestApp {

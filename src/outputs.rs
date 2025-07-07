@@ -14,12 +14,12 @@ use crate::core::Output;
 
 /// Manages a collection of output destinations and dispatches alerts to all of them.
 pub struct OutputManager {
-    outputs: Vec<Box<dyn Output>>,
+    outputs: Vec<std::sync::Arc<dyn Output>>,
 }
 
 impl OutputManager {
     /// Creates a new `OutputManager`.
-    pub fn new(outputs: Vec<Box<dyn Output>>) -> Self {
+    pub fn new(outputs: Vec<std::sync::Arc<dyn Output>>) -> Self {
         Self { outputs }
     }
 
