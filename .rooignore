@@ -1,2 +1,7 @@
+.direnv/
 data/
 todo.md
+
+flake.lock
+result
+target/

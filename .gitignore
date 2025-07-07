@@ -1,8 +1,10 @@
 .direnv/
-flake.lock
 .roo/
 data/
-todo.md
-# Added by cargo
 
+flake.lock
+result
+todo.md
+
+# Added by cargo
 /target

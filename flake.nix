@@ -2,7 +2,7 @@
   description = "A Nix-flake-based Rust development environment";
 
   inputs = {
-    nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
+    nixpkgs.url = "nixpkgs/nixos-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -52,6 +52,29 @@
         env = {
           # Required by rust-analyzer
           RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
+        };
+      };
+    });
+
+    packages = forEachSupportedSystem ({pkgs}: {
+      default = pkgs.rustPlatform.buildRustPackage {
+        pname = "certwatch";
+        version = "0.1.0";
+        src = ./.;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+        };
+        nativeBuildInputs = with pkgs; [
+          pkg-config
+        ];
+        buildInputs = with pkgs; [
+          openssl
+        ];
+        meta = with pkgs.lib; {
+          description = "A tool for monitoring and analyzing certificate transparency logs.";
+          homepage = "https://github.com/x123/certwatch";
+          license = licenses.mit;
+          maintainers = [ maintainers.x123 ];
         };
       };
     });
