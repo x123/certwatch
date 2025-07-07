@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     });
 
     // Run the main application logic
-    if let Err(e) = certwatch::app::run(config, shutdown_rx, None, None, None).await {
+    if let Err(e) = certwatch::app::run(config, shutdown_rx, None, None, None, None).await {
         error!("Application error: {}", e);
         std::process::exit(1);
     }

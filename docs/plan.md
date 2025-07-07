@@ -176,14 +176,15 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Modify `TestAppBuilder` to allow injecting the mock outputs.
     - [x] Write an integration test that injects a failing `FailableMockOutput`, triggers an alert, and verifies the application logs a warning and continues running.
 
-- [ ] **#110 - Phase 2: Implement Fake Enrichment Provider**
+- [x] **#110 - Phase 2: Implement Fake Enrichment Provider**
   - **Context:** The application should handle failures from the enrichment service gracefully.
   - **Subtasks:**
-    - [ ] Create a `FakeEnrichmentProvider` in `tests/helpers/` that implements the `EnrichmentProvider` trait.
-    - [ ] The fake should be configurable to return an error.
-    - [ ] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn EnrichmentProvider>`.
-    - [ ] Modify `TestAppBuilder` to allow injecting the `FakeEnrichmentProvider`.
-    - [ ] Write an integration test that injects a failing `FakeEnrichmentProvider`, processes a domain, and verifies the `cert_processing_failures` metric is incremented and a warning is logged.
+    - [x] Create a `FakeEnrichmentProvider` in `tests/helpers/` that implements the `EnrichmentProvider` trait.
+    - [x] The fake is configurable to return an error.
+    - [x] Modify `certwatch::app::run` to accept an optional, pre-built `Arc<dyn EnrichmentProvider>`.
+    - [x] Modify `TestAppBuilder` to allow injecting the `FakeEnrichmentProvider`.
+    - [x] Write an integration test that injects a failing `FakeEnrichmentProvider`, processes a domain, and verifies the `cert_processing_failures` metric is incremented.
+    - [x] Refactor `build_alert` to propagate errors instead of logging them, enabling the failure to be caught by the worker loop.
 
 - [ ] **#111 - Phase 3: Implement Failing DNS Resolver**
   - **Context:** The application must be robust against DNS resolution failures, which are common network issues. We will test the application's reaction to these failures without mocking a full DNS server.

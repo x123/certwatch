@@ -23,14 +23,15 @@ pub mod outputs;
 pub use core::*;
 
 /// Helper function to build an alert
+use anyhow::Result;
+
 pub async fn build_alert(
     domain: String,
     source_tag: String,
     resolved_after_nxdomain: bool,
     dns_info: DnsInfo,
     enrichment_provider: Arc<dyn EnrichmentProvider>,
-) -> Alert {
-    let mut enrichment_data = Vec::new();
+) -> Result<Alert> {
     let all_ips: Vec<_> = dns_info
         .a_records
         .iter()
@@ -38,21 +39,21 @@ pub async fn build_alert(
         .cloned()
         .collect();
 
-    for ip in all_ips {
-        match enrichment_provider.enrich(ip).await {
-            Ok(info) => enrichment_data.push(info),
-            Err(e) => error!("Failed to enrich IP {}: {}", ip, e),
-        }
-    }
+    let enrichment_data_futures = all_ips
+        .into_iter()
+        .map(|ip| enrichment_provider.enrich(ip));
 
-    Alert {
+    let enrichment_data: Vec<EnrichmentInfo> =
+        futures::future::try_join_all(enrichment_data_futures).await?;
+
+    Ok(Alert {
         timestamp: Utc::now().to_rfc3339(),
         domain,
         source_tag,
         resolved_after_nxdomain,
         dns: dns_info,
         enrichment: enrichment_data,
-    }
+    })
 }
 
 pub mod app;

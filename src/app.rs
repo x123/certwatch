@@ -28,6 +28,7 @@ pub async fn run(
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
+    enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
 ) -> Result<()> {
     // =========================================================================
     // Initialize Metrics Recorder if enabled
@@ -59,15 +60,19 @@ pub async fn run(
             Arc::new(resolver)
         }
     };
-    let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
-        anyhow::anyhow!("asn_tsv_path is required for enrichment")
-    })?;
+    let enrichment_provider: Arc<dyn EnrichmentProvider> = match enrichment_provider_override {
+        Some(provider) => provider,
+        None => {
+            let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
+                anyhow::anyhow!("asn_tsv_path is required for enrichment")
+            })?;
 
-    if !tsv_path.exists() {
-        return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
-    }
-
-    let enrichment_provider: Arc<dyn EnrichmentProvider> = Arc::new(TsvAsnLookup::new(&tsv_path)?);
+            if !tsv_path.exists() {
+                return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
+            }
+            Arc::new(TsvAsnLookup::new(&tsv_path)?)
+        }
+    };
     let deduplicator = Arc::new(Deduplicator::new(
         Duration::from_secs(config.deduplication.cache_ttl_seconds),
         config.deduplication.cache_size as u64,
@@ -250,16 +255,23 @@ pub async fn run(
                     "Domain previously NXDOMAIN now resolves: {} ({})",
                     domain, source_tag
                 );
-                let alert = build_alert(
+                match build_alert(
                     domain,
                     source_tag,
                     true,
                     dns_info,
                     enrichment_provider.clone(),
                 )
-                .await;
-                if let Err(e) = alerts_tx.send(alert).await {
-                    error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
+                .await
+                {
+                    Ok(alert) => {
+                        if let Err(e) = alerts_tx.send(alert).await {
+                            error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to build alert for resolved NXDOMAIN: {}", e);
+                    }
                 }
             }
             info!("NXDOMAIN feedback loop finished.");
@@ -358,7 +370,7 @@ async fn process_domain(
                     dns_info,
                     enrichment_provider.clone(),
                 )
-                .await;
+                .await?;
                 if alerts_tx.send(alert).await.is_err() {
                     anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
                 }
@@ -372,7 +384,7 @@ async fn process_domain(
                         DnsInfo::default(),
                         enrichment_provider.clone(),
                     )
-                    .await;
+                    .await?;
                     if alerts_tx.send(alert).await.is_err() {
                         anyhow::bail!(
                             "Alerts channel (NXDOMAIN) closed, worker {} exiting.",
