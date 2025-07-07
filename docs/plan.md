@@ -704,15 +704,15 @@ This epic replaces the binary `maxminddb` dependency with a more transparent and
 ### Epic 27: Anti-Regression Testing for Graceful Shutdown
 **User Story:** As a developer, I want a robust suite of automated tests that can reliably detect shutdown hangs and deadlocks, so that this entire class of bug can be prevented from recurring in the future.
 
-- [ ] **#85 - Implement Timeout-Based Shutdown Test**
+- [x] **#85 - Implement Timeout-Based Shutdown Test**
   - **Context:** Create a high-level integration test that runs the entire application with mock inputs and asserts that it terminates within a strict time limit after a shutdown signal is sent. This acts as a primary, unambiguous signal for a deadlock.
   - **Dependencies:** #76.1
   - **Subtasks:**
-    - [ ] Create a new test file `tests/shutdown_integration.rs`.
-    - [ ] In the test, spawn the full application task using a helper function.
-    - [ ] After a brief delay, send the shutdown signal.
-    - [ ] `await` the application task's handle, wrapped in a `tokio::time::timeout`.
-    - [ ] The test fails if the timeout is exceeded.
+    - [x] Create a new test file `tests/shutdown_integration.rs`.
+    - [x] In the test, spawn the full application task using a helper function.
+    - [x] After a brief delay, send the shutdown signal.
+    - [x] `await` the application task's handle, wrapped in a `tokio::time::timeout`.
+    - [x] The test fails if the timeout is exceeded.
 
 - [ ] **#86 - Implement Heartbeat-Monitoring Shutdown Test**
   - **Context:** Create a more precise test that leverages the existing heartbeat utility to identify which specific component fails to terminate. This provides immediate diagnostic information when the timeout test fails.

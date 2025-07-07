@@ -20,22 +20,22 @@ pub enum HealthState {
 }
 
 /// A recent resolution attempt outcome.
-struct Outcome {
-    timestamp: Instant,
-    is_success: bool,
+pub struct Outcome {
+    pub timestamp: Instant,
+    pub is_success: bool,
 }
 
 /// Holds the mutable state of the health monitor, protected by a single Mutex.
-struct MonitorState {
-    health: HealthState,
-    outcomes: VecDeque<Outcome>,
+pub struct MonitorState {
+    pub health: HealthState,
+    pub outcomes: VecDeque<Outcome>,
 }
 
 /// Monitors the health of the DNS resolution system.
 pub struct DnsHealthMonitor {
-    config: DnsHealthConfig,
-    monitor_state: Mutex<MonitorState>,
-    resolver: Arc<dyn DnsResolver>,
+    pub config: DnsHealthConfig,
+    pub monitor_state: Mutex<MonitorState>,
+    pub resolver: Arc<dyn DnsResolver>,
 }
 
 impl DnsHealthMonitor {
@@ -176,31 +176,9 @@ impl DnsHealthMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::DnsHealthConfig;
-    use crate::dns::tests::FakeDnsResolver;
+    use crate::dns::tests::{create_test_monitor, FakeDnsResolver};
     use std::sync::Arc;
     use std::time::Duration;
-
-    fn create_test_monitor(
-        resolver: Arc<FakeDnsResolver>,
-        threshold: f64,
-        window_seconds: u64,
-    ) -> DnsHealthMonitor {
-        let config = DnsHealthConfig {
-            failure_threshold: threshold,
-            window_seconds,
-            recovery_check_domain: "google.com".to_string(),
-        };
-        // Don't start the recovery task for these unit tests
-        DnsHealthMonitor {
-            config,
-            monitor_state: Mutex::new(MonitorState {
-                health: HealthState::Healthy,
-                outcomes: VecDeque::new(),
-            }),
-            resolver,
-        }
-    }
 
     #[test]
     fn test_state_transitions_to_unhealthy() {
@@ -278,5 +256,26 @@ mod tests {
         let state = monitor.monitor_state.lock().unwrap();
         assert_eq!(state.outcomes.len(), 1);
         assert!(state.outcomes.front().unwrap().is_success);
+    }
+    #[test]
+    fn test_no_state_change_when_unhealthy() {
+        let resolver = Arc::new(FakeDnsResolver::new());
+        let monitor = create_test_monitor(resolver, 0.5, 10);
+
+        // Transition to Unhealthy
+        monitor.record_outcome(false);
+        monitor.record_outcome(false);
+        assert_eq!(monitor.current_state(), HealthState::Unhealthy);
+
+        // Add successes, bringing the failure rate below the threshold (2 failures, 2 successes -> 50%)
+        monitor.record_outcome(true);
+        monitor.record_outcome(true);
+
+        // State should remain Unhealthy because recovery is handled by a separate task
+        assert_eq!(
+            monitor.current_state(),
+            HealthState::Unhealthy,
+            "State should not change back to Healthy automatically"
+        );
     }
 }

@@ -54,3 +54,5 @@ pub async fn build_alert(
         enrichment: enrichment_data,
     }
 }
+
+pub mod app;

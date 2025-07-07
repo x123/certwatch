@@ -223,15 +223,10 @@ impl CertStreamClient {
                             for domain in sampled_domains {
                                 // Use a non-blocking send to avoid backpressure on the client.
                                 // If the queue is full, we drop the domain and record it.
-                                if let Err(e) = self.output_tx.try_send(domain) {
-                                    if let tokio::sync::mpsc::error::TrySendError::Full(_) = e {
-                                        metrics::counter!("dropped_domains").increment(1);
-                                        log::warn!("Domain queue is full. Dropping domain.");
-                                    } else {
-                                        // The receiver has been dropped, which is a critical error.
-                                        log::error!("Domain channel receiver dropped: {}", e);
-                                        return Err(anyhow::anyhow!("Domain channel closed: {}", e));
-                                    }
+                                if self.output_tx.send(domain).await.is_err() {
+                                    // The receiver has been dropped, which is a critical error.
+                                    log::error!("Domain channel receiver dropped.");
+                                    return Err(anyhow::anyhow!("Domain channel closed."));
                                 }
                             }
                         }

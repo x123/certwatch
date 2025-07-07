@@ -182,3 +182,51 @@ async fn test_debounced_hot_reload() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[serial]
+async fn test_hot_reload_on_delete() -> Result<()> {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let timeouts = PlatformTimeouts::for_current_platform();
+
+    // --- Setup ---
+    let temp_dir = create_isolated_test_env().await?;
+    let path1 = temp_dir.path().join("patterns1.txt");
+    let path2 = temp_dir.path().join("patterns2.txt");
+
+    platform_aware_write(&path1, "pattern1.com\n", &timeouts).await?;
+    platform_aware_write(&path2, "pattern2.com\n", &timeouts).await?;
+
+    let (reload_tx, mut reload_rx) = mpsc::channel(10);
+    let (_shutdown_tx, mut shutdown_rx) = watch::channel(());
+
+    let watcher = PatternWatcher::with_notifier(
+        vec![path1.clone(), path2.clone()],
+        Some(reload_tx),
+        Some(&mut shutdown_rx),
+    )
+    .await?;
+
+    wait_for_watcher_ready(&timeouts).await;
+
+    // --- Initial State Verification ---
+    assert!(watcher.match_domain("site-pattern1.com").await.is_some(), "Pattern 1 should match initially");
+    assert!(watcher.match_domain("site-pattern2.com").await.is_some(), "Pattern 2 should match initially");
+
+    // --- Simulate File Deletion ---
+    tokio::fs::remove_file(&path1).await?;
+
+    // --- Verification ---
+    match wait_for_reload_notification(&mut reload_rx, &timeouts).await {
+        Ok(_) => log::info!("Reload detected after file deletion."),
+        Err(msg) => panic!("Watcher did not reload after file deletion: {}", msg),
+    }
+
+    sleep(timeouts.fs_event_propagation).await;
+
+    // Verify the final state of the patterns.
+    assert!(watcher.match_domain("site-pattern1.com").await.is_none(), "Pattern 1 should be gone after deletion");
+    assert!(watcher.match_domain("site-pattern2.com").await.is_some(), "Pattern 2 should still match");
+
+    Ok(())
+}
