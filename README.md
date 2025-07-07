@@ -54,7 +54,7 @@ Clone the repository and build the project in release mode for optimal
 performance:
 
 ```bash
-git clone https://github.com/your-username/certwatch.git # Replace with your repository URL
+git clone https://github.com/x123/certwatch.git
 cd certwatch
 cargo build --release
 ```
