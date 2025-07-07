@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::io::Write;
+use chrono::{Local, DateTime};
 
 use crate::core::Output;
 
@@ -124,9 +125,12 @@ fn format_plain_text(alert: &Alert) -> String {
         "".to_string()
     };
 
+    let now: DateTime<Local> = Local::now();
+    let timestamp = now.format("%Y-%m-%dT%H:%M:%S%z").to_string();
+
     format!(
-        "[{}] {} -> {} {}{}",
-        alert.source_tag, alert.domain, first_ip_str, enrichment_details, other_ips_str
+        "[{}] {} -> {} {}{} [{}]",
+        alert.source_tag, alert.domain, first_ip_str, enrichment_details, other_ips_str, timestamp
     )
     .trim()
     .to_string()
@@ -346,9 +350,13 @@ mod tests {
         output.send_alert_to(&alert, &mut buffer).unwrap();
 
         let output_string = String::from_utf8(buffer).unwrap();
-        let expected =
-            "[test-source] example.com -> 1.1.1.1 [US, 13335, CLOUDFLARENET] (+2 other IPs)\n";
-        assert_eq!(output_string, expected);
+        // Updated expected string to include the timestamp.
+        // Note: The exact timestamp will vary, so we'll need a more robust assertion for actual testing.
+        // For now, this is a placeholder to ensure the format string is updated.
+        let expected_prefix = "[test-source] example.com -> 1.1.1.1 [US, 13335, CLOUDFLARENET] (+2 other IPs)";
+        assert!(output_string.starts_with(expected_prefix));
+        assert!(output_string.ends_with("]\n") || output_string.ends_with("]\r\n"));
+        assert!(output_string.len() > expected_prefix.len() + 10); // Ensure timestamp is present
     }
 
     #[test]
@@ -367,8 +375,12 @@ mod tests {
     #[test]
     fn test_format_plain_text_full() {
         let alert = create_test_alert();
-        let expected = "[test-source] example.com -> 1.1.1.1 [US, 13335, CLOUDFLARENET] (+2 other IPs)";
-        assert_eq!(format_plain_text(&alert), expected);
+        let formatted = format_plain_text(&alert);
+        // The exact timestamp will vary, so we'll check for the prefix and the presence of a timestamp.
+        let expected_prefix = "[test-source] example.com -> 1.1.1.1 [US, 13335, CLOUDFLARENET] (+2 other IPs)";
+        assert!(formatted.starts_with(expected_prefix));
+        assert!(formatted.ends_with("]"));
+        assert!(formatted.len() > expected_prefix.len() + 10); // Ensure timestamp is present
     }
 
     #[test]
@@ -376,8 +388,11 @@ mod tests {
         let mut alert = create_test_alert();
         alert.dns.a_records = vec!["1.1.1.1".parse().unwrap()];
         alert.dns.aaaa_records = vec![];
-        let expected = "[test-source] example.com -> 1.1.1.1 [US, 13335, CLOUDFLARENET]";
-        assert_eq!(format_plain_text(&alert), expected);
+        let formatted = format_plain_text(&alert);
+        let expected_prefix = "[test-source] example.com -> 1.1.1.1 [US, 13335, CLOUDFLARENET]";
+        assert!(formatted.starts_with(expected_prefix));
+        assert!(formatted.ends_with("]"));
+        assert!(formatted.len() > expected_prefix.len() + 10);
     }
 
     #[test]
@@ -386,16 +401,22 @@ mod tests {
         alert.dns.a_records = vec![];
         alert.dns.aaaa_records = vec![];
         alert.enrichment = vec![];
-        let expected = "[test-source] example.com ->";
-        assert_eq!(format_plain_text(&alert), expected);
+        let formatted = format_plain_text(&alert);
+        let expected_prefix = "[test-source] example.com ->";
+        assert!(formatted.starts_with(expected_prefix));
+        assert!(formatted.ends_with("]"));
+        assert!(formatted.len() > expected_prefix.len() + 10);
     }
 
     #[test]
     fn test_format_plain_text_no_enrichment_data() {
         let mut alert = create_test_alert();
         alert.enrichment = vec![];
-        let expected = "[test-source] example.com -> 1.1.1.1 [No enrichment data] (+2 other IPs)";
-        assert_eq!(format_plain_text(&alert), expected);
+        let formatted = format_plain_text(&alert);
+        let expected_prefix = "[test-source] example.com -> 1.1.1.1 [No enrichment data] (+2 other IPs)";
+        assert!(formatted.starts_with(expected_prefix));
+        assert!(formatted.ends_with("]"));
+        assert!(formatted.len() > expected_prefix.len() + 10);
     }
 
     #[test]
@@ -406,7 +427,10 @@ mod tests {
                 data.country_code = None;
             }
         }
-        let expected = "[test-source] example.com -> 1.1.1.1 [??, 13335, CLOUDFLARENET] (+2 other IPs)";
-        assert_eq!(format_plain_text(&alert), expected);
+        let formatted = format_plain_text(&alert);
+        let expected_prefix = "[test-source] example.com -> 1.1.1.1 [??, 13335, CLOUDFLARENET] (+2 other IPs)";
+        assert!(formatted.starts_with(expected_prefix));
+        assert!(formatted.ends_with("]"));
+        assert!(formatted.len() > expected_prefix.len() + 10);
     }
 }
