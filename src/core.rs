@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
 /// Represents a security alert for a suspicious domain
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Alert {
     /// ISO 8601 timestamp when the alert was generated
     pub timestamp: String,
