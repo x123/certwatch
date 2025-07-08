@@ -1,39 +1,35 @@
-# Project Guidelines
+# Cert-Watch Project Guidelines
 
-## 1. Project & Codebase Hygiene
+This document outlines the guiding principles, workflows, and coding standards
+for the Cert-Watch project. Adhering to these rules ensures consistency,
+quality, and maintainability.
 
-  - **No Artifacts:** No build artifacts, log files, or other generated files should be committed to the repository.
-  - **Cleanliness Over Complexity:** Less code is better than more code. Always aim for simplicity and clarity.
-  - **Rewrite Over Add:** Prefer refactoring an existing component to meet a new requirement over adding a new, duplicative one.
-  - **Flag Obsolete Code:** If a file or block of code becomes obsolete during a refactoring, it should be explicitly flagged for deletion in the commit message or a follow-up task.
+## 1. Guiding Principles & Workflow
 
-## 2. Error Handling & Concurrency
+This section covers the high-level philosophy and processes that govern the
+project.
 
-  - **Propagate Errors Explicitly:** Do not use fallback mechanisms that hide failures. The agent **must** use `Result<T, E>` and the `?` operator to propagate errors up the call stack. Errors should only be handled at the highest appropriate layer (e.g., the top of a running task), never ignored or replaced with default values.
-  - **Prioritize Message Passing for Concurrency:** To manage shared state and avoid race conditions, the agent's primary strategy **must** be message passing using channels (e.g., `tokio::sync::mpsc`). Direct shared-state primitives like `Arc<Mutex<T>>` should only be used in specific, well-justified cases, such as for read-mostly data like a shared configuration.
+### 1.1. Project Hygiene
 
-## 3. Library & Environment Usage
+-   **No Artifacts:** No build artifacts, log files, or other generated files
+should be committed to the repository.
+-   **Cleanliness Over Complexity:** Less code is better than more code. Always
+aim for simplicity and clarity.
+-   **Rewrite Over Add:** Prefer refactoring an existing component to meet a
+new requirement over adding a new, duplicative one.
+-   **Flag Obsolete Code:** If a file or block of code becomes obsolete during
+a refactoring, it should be explicitly flagged for deletion in the commit
+message or a follow-up task.
 
-  - **Verify Library References:** When referencing external libraries, the agent **must** double-check that the referenced classes, methods, or fields actually exist. Do not guess or hallucinate API names.
-  - **Consult Authoritative Documentation:** To find the correct version or API for a crate, the agent **must** consult its documentation. The primary method is to generate a local copy using `cargo doc --no-deps --target-dir=./data/rustdocs`. If local documentation is insufficient or online access is required, use the terminal-based browser as a fallback: `nix run nixpkgs#links2 -- -dump URL`.
-  - **Use the Nix Environment:** All development happens within the environment defined in `flake.nix` and managed by `direnv`. The agent should assume the necessary toolchains (e.g., the Rust compiler) are available in the shell.
+### 1.2. Version Control
 
-## 4. Development & Testing Workflow
-
-  - **Follow Test-Driven Development (TDD) with a Clear Structure:**
-      - Tests **must** be written before the implementation code.
-      - **Unit Tests:** Place these inside a `#[cfg(test)] mod tests { ... }` block within the same file as the code they test.
-      - **Integration Tests:** Place these in the top-level `/tests` directory to test how components work together.
-      - **Dependency Isolation:** For unit tests, the primary strategy **must** be **Trait-Based Dependency Injection** with hand-written "fake" implementations. Mocking libraries like `mockall` should only be used as a secondary tool when verifying the exact nature of an interaction is critical.
-      - **Hermetic Integration Tests:** When using the `TestAppBuilder` for integration tests, all external dependencies and side-effects **must** be mocked. This includes, but is not limited to, DNS resolution (`with_dns_resolver`), enrichment (`with_enrichment_provider`), WebSocket connections (`with_websocket`), and outputs (`with_outputs`). The goal is to create a fully controlled environment where the test outcome is deterministic and not subject to external factors or timing issues. Relying on default-initialized mocks or real services is strictly forbidden in these tests.
-      - **Prefer Focused Unit Tests over Broad Integration Tests:** While integration tests are valuable for verifying that components work together, they should not be the primary tool for testing business logic. Logic within a specific function or component **must** be tested with a focused unit test. Avoid writing "end-to-end" tests that run the entire application stack (`app::run`) just to verify a small piece of functionality. Such tests are often slow, brittle, and prone to race conditions. Instead, expose the relevant functions (e.g., by making them `pub`) and test them directly, providing fake implementations for their dependencies.
-     - **Avoid `tokio::time::sleep` for Synchronization:** Using `sleep` for synchronization in tests is a strong indicator of a brittle, non-deterministic test. It creates race conditions and slows down the test suite. Instead, **must** prefer deterministic synchronization primitives like `tokio::sync::Barrier` for coordinating concurrent tasks or `tokio::sync::oneshot` for signaling completion.
-
-## 5. Version Control
-
-  - **Suggest Structured Commit Messages:** When a task is complete, suggest a clear, well-structured commit message that follows the **Conventional Commits** specification and the **50/72 rule**.
-      - **Structure:** `type(scope): subject` line, an optional detailed description, and an optional footer for tags and references, all separated by blank lines.
-      - **Example:**
+-   **Suggest Structured Commit Messages:** When a task is complete, suggest a
+clear, well-structured commit message that follows the **Conventional Commits**
+specification and the **50/72 rule**.
+    -   **Structure:** `type(scope): subject` line, an optional detailed
+    description, and an optional footer for tags and references, all separated
+    by blank lines.
+    -   **Example:**
         ```text
         feat(dns): Add dual-curve retry logic
 
@@ -44,42 +40,126 @@
         Ticket: CERT-15
         ```
 
+### 1.3. Task Completion Protocol
 
-## 6. Task Completion & Handoff Protocol
+Follow these steps sequentially to ensure a clean and validated handoff of completed work.
 
-- **Update Plan:** Upon completing a task, the agent **must** first mark the corresponding task(s) as complete (e.g., `[x]`) in `docs/plan.md`.
-- **Validate Before Committing:** After updating the plan, the agent **must** run the full test suite (`cargo test --all-features`) to ensure no regressions have been introduced.
-- **Propose a Clear Commit:** After successful test execution, the agent **must** propose a well-structured commit message that adheres to the project's established conventions.
-- **Await User Approval:** The agent **must not** proceed to the next task until the user has explicitly confirmed that they have tested the application's functionality and approved the changes. This serves as a formal handoff and validation gate.
+1.  **Update Plan:** Mark the corresponding task(s) as complete (e.g., `[x]`)
+in `docs/plan.md`.
+2.  **Validate Changes:** Run the full test suite (`cargo test --all-features`)
+to ensure no regressions have been introduced.
+3.  **Propose Commit:** Propose a well-structured commit message that adheres
+to the project's version control conventions.
+4.  **Await User Approval:** Do not proceed to the next task until the user has
+explicitly confirmed that they have tested the application's functionality and
+approved the changes. This serves as a formal handoff and validation gate.
 
-# Rust Best Practices & Design Patterns
+---
 
-This document outlines the key design principles and patterns we will follow in this project, inspired by the "Rust Design Patterns" book.
+## 2. Environment & Tooling
 
-## 1. API and Type Design
+This section defines the development environment and how to interact with
+external code and libraries.
 
--   **Use Borrowed Types for Arguments:** Functions should prefer accepting borrowed types over owned types to increase flexibility and avoid unnecessary allocations (e.g., `&str` over `&String`, `&[T]` over `&Vec<T>`).
+### 2.1. Nix Environment
 
--   **Return Consumed Arguments on Error:** If a fallible function takes ownership of an argument, the `Err` variant of its `Result` should return the argument to the caller, allowing for recovery and retry logic without cloning.
+-   All development happens within the environment defined in `flake.nix` and
+managed by `direnv`. The necessary toolchains (e.g., the Rust compiler) are
+assumed to be available in the shell.
 
--   **Builder Pattern for Complex Construction:** For structs with multiple optional fields or complex initialization logic, provide a `builder()` method that returns a dedicated builder struct. This is preferred over a multitude of `new_with_*` constructors.
+### 2.2. Library Usage
 
--   **Newtype Pattern for Type Safety:** Use the newtype pattern (e.g., `struct UserId(u64);`) to leverage the type system for creating distinct, domain-specific types from primitives. This prevents logic errors, such as swapping a `UserId` with a generic `u64`.
+-   **Verify Library References:** When referencing external libraries,
+double-check that the referenced classes, methods, or fields actually exist. Do
+not guess or hallucinate API names.
+-   **Consult Authoritative Documentation:** To find the correct version or API
+for a crate, consult its documentation. The primary method is to generate a
+local copy using `cargo doc --no-deps --target-dir=./data/rustdocs`. If local
+documentation is insufficient or online access is required, use the
+terminal-based browser as a fallback: `nix run nixpkgs#links2 -- -dump URL`.
 
--   **RAII for Resource Management:** Use the RAII (Resource Acquisition Is Initialization) pattern with "guard" objects to manage resources that require explicit cleanup, such as locks, file handles, or network connections. The resource should be released in the guard's `Drop` implementation.
+---
 
-## 2. Code Structure & Safety
+## 3. Rust Coding Standards
 
--   **Contain `unsafe` Code:** All `unsafe` code must be encapsulated within the smallest possible module. This module must expose a minimal, safe API that upholds all necessary invariants. Every `unsafe` block must be justified with a `// SAFETY:` comment explaining why the code is safe.
+This section contains specific rules and best practices for writing Rust code
+in this project.
 
--   **Prefer Small, Focused Crates:** Decompose large projects into smaller, more focused crates that each do one thing well. This improves modularity, reusability, and compile times.
+### 3.1. API and Type Design
 
--   **Decompose Structs for Better Borrowing:** If a large struct is causing borrow checker issues, consider decomposing it into smaller, cohesive structs. This often leads to a cleaner design and allows for more granular borrowing.
+-   **Use Borrowed Types for Arguments:** Functions should prefer accepting
+borrowed types over owned types to increase flexibility and avoid unnecessary
+allocations (e.g., `&str` over `&String`, `&[T]` over `&Vec<T>`).
+-   **Return Consumed Arguments on Error:** If a fallible function takes
+ownership of an argument, the `Err` variant of its `Result` should return the
+argument to the caller, allowing for recovery and retry logic without cloning.
+-   **Builder Pattern for Complex Construction:** For structs with multiple
+optional fields or complex initialization logic, provide a `builder()` method
+that returns a dedicated builder struct. This is preferred over a multitude of
+`new_with_*` constructors.
+-   **Newtype Pattern for Type Safety:** Use the newtype pattern (e.g., `struct
+UserId(u64);`) to leverage the type system for creating distinct,
+domain-specific types from primitives. This prevents logic errors, such as
+swapping a `UserId` with a generic `u64`.
+-   **RAII for Resource Management:** Use the RAII (Resource Acquisition Is
+Initialization) pattern with "guard" objects to manage resources that require
+explicit cleanup. The resource should be released in the guard's `Drop`
+implementation.
 
-## 3. Anti-Patterns to Avoid
+### 3.2. Error Handling & Concurrency
 
--   **Avoid Cloning to Satisfy the Borrow Checker:** Do not use `.clone()` as a first resort to fix borrow checker errors. This often indicates a deeper ownership issue and can lead to performance problems or subtle bugs. Refactor the code to manage lifetimes correctly first.
+-   **Propagate Errors Explicitly:** Do not use fallback mechanisms that hide
+failures. Use `Result<T, E>` and the `?` operator to propagate errors up the
+call stack. Errors should only be handled at the highest appropriate layer
+(e.g., the top of a running task), never ignored or replaced with default
+values.
+-   **Prioritize Message Passing for Concurrency:** To manage shared state and
+avoid race conditions, the primary strategy must be message passing using
+channels (e.g., `tokio::sync::mpsc`). Direct shared-state primitives like
+`Arc<Mutex<T>>` should only be used in specific, well-justified cases, such as
+for read-mostly data like a shared configuration.
 
--   **Do Not Use `Deref` for Inheritance:** The `Deref` trait should be used for smart pointer types, not to simulate inheritance. Misusing `Deref` for polymorphism is an anti-pattern that can lead to confusing and un-idiomatic code.
+### 3.3. Testing Strategy
 
--   **Do Not Use `#![deny(warnings)]` in Libraries:** This can cause downstream projects to fail to build when a new version of the Rust compiler is released. Instead, use a CI pipeline with `RUSTFLAGS="-D warnings"` to enforce a no-warning policy during development.
+-   **Follow Test-Driven Development (TDD):** Tests must be written before the
+implementation code.
+-   **Test Structure:**
+    -   **Unit Tests:** Place these inside a `#[cfg(test)] mod tests { ... }`
+    block within the same file as the code they test.
+    -   **Integration Tests:** Place these in the top-level `/tests` directory.
+-   **Dependency Isolation:** For unit tests, the primary strategy must be
+**Trait-Based Dependency Injection** with hand-written "fake" implementations.
+Mocking libraries should only be used as a secondary tool when verifying the
+exact nature of an interaction is critical.
+-   **Hermetic Integration Tests:** When using the `TestAppBuilder` for
+integration tests, all external dependencies and side-effects must be mocked
+(e.g., `with_dns_resolver`, `with_enrichment_provider`, `with_websocket`,
+`with_outputs`). The goal is a fully controlled, deterministic test
+environment.
+-   **Prefer Focused Unit Tests:** Business logic must be tested with focused
+unit tests. Avoid broad "end-to-end" tests for verifying small pieces of
+functionality.
+-   **Avoid `tokio::time::sleep` for Synchronization:** Using `sleep` for
+synchronization in tests is forbidden. Use deterministic primitives like
+`tokio::sync::Barrier` or `tokio::sync::oneshot` instead.
+
+### 3.4. Code Structure & Safety
+
+-   **Contain `unsafe` Code:** All `unsafe` code must be encapsulated within
+the smallest possible module. This module must expose a minimal, safe API, and
+every `unsafe` block must be justified with a `// SAFETY:` comment.
+-   **Prefer Small, Focused Crates:** Decompose large projects into smaller,
+more focused crates that each do one thing well.
+-   **Decompose Structs for Better Borrowing:** If a large struct is causing
+borrow checker issues, consider decomposing it into smaller, cohesive structs.
+
+### 3.5. Anti-Patterns to Avoid
+
+-   **Avoid Cloning to Satisfy the Borrow Checker:** Do not use `.clone()` as a
+first resort to fix borrow checker errors. Refactor the code to manage
+lifetimes correctly first.
+-   **Do Not Use `Deref` for Inheritance:** The `Deref` trait should be used
+for smart pointer types, not to simulate inheritance.
+-   **Do Not Use `#![deny(warnings)]` in Libraries:** This can cause downstream
+projects to fail to build. Use a CI pipeline with `RUSTFLAGS="-D warnings"` to
+enforce a no-warning policy during development instead.
