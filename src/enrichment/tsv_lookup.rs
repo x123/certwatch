@@ -84,7 +84,7 @@ impl EnrichmentProvider for TsvAsnLookup {
     async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
         Ok(EnrichmentInfo {
             ip,
-            data: self.find(ip),
+            asn_info: self.find(ip),
         })
     }
 }

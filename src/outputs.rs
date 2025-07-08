@@ -96,7 +96,7 @@ fn format_plain_text(alert: &Alert) -> String {
     let enrichment_map: std::collections::HashMap<_, _> = alert
         .enrichment
         .iter()
-        .map(|e| (e.ip, e.data.as_ref()))
+        .map(|e| (e.ip, e.asn_info.as_ref()))
         .collect();
 
     let all_ips: Vec<_> = alert
@@ -201,7 +201,7 @@ mod tests {
             enrichment: vec![
                 EnrichmentInfo {
                     ip: "1.1.1.1".parse().unwrap(),
-                    data: Some(AsnInfo {
+                    asn_info: Some(AsnInfo {
                         as_number: 13335,
                         as_name: "CLOUDFLARENET".to_string(),
                         country_code: Some("US".to_string()),
@@ -209,7 +209,7 @@ mod tests {
                 },
                 EnrichmentInfo {
                     ip: "2.2.2.2".parse().unwrap(),
-                    data: Some(AsnInfo {
+                    asn_info: Some(AsnInfo {
                         as_number: 12345,
                         as_name: "Test ASN".to_string(),
                         country_code: Some("GB".to_string()),
@@ -340,8 +340,8 @@ mod tests {
     fn test_format_plain_text_no_country_code() {
         let mut alert = create_test_alert();
         if let Some(enr) = alert.enrichment.get_mut(0) {
-            if let Some(data) = enr.data.as_mut() {
-                data.country_code = None;
+            if let Some(asn_info) = enr.asn_info.as_mut() {
+                asn_info.country_code = None;
             }
         }
         let formatted = format_plain_text(&alert);

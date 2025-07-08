@@ -51,14 +51,14 @@ pub struct EnrichmentInfo {
     pub ip: IpAddr,
     /// ASN and GeoIP information
     #[serde(flatten)]
-    pub data: Option<AsnInfo>,
+    pub asn_info: Option<AsnInfo>,
 }
 
 impl Default for EnrichmentInfo {
     fn default() -> Self {
         Self {
             ip: std::net::Ipv4Addr::UNSPECIFIED.into(),
-            data: None,
+            asn_info: None,
         }
     }
 }

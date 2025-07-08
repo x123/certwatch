@@ -14,6 +14,7 @@ pub mod core;
 pub mod deduplication;
 pub mod dns;
 pub mod enrichment;
+pub mod formatting;
 pub mod matching;
 pub mod internal_metrics;
 pub mod network;

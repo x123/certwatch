@@ -97,9 +97,12 @@ async fn main() -> Result<()> {
 
             // Spawn the Slack notifier.
             let slack_config = config.output.slack.as_ref().unwrap().clone();
+            let slack_formatter =
+                Box::new(certwatch::formatting::SlackTextFormatter);
             let slack_client =
                 std::sync::Arc::new(certwatch::notification::slack::SlackClient::new(
                     slack_config.webhook_url.clone(),
+                    slack_formatter,
                 ));
             let slack_notifier = certwatch::notification::manager::NotificationManager::new(
                 slack_config,

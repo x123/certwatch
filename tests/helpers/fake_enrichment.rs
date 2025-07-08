@@ -33,7 +33,7 @@ impl EnrichmentProvider for FakeEnrichmentProvider {
         } else {
             Ok(EnrichmentInfo {
                 ip,
-                data: None,
+                asn_info: None,
             })
         }
     }

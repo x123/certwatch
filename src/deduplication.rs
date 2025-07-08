@@ -78,7 +78,7 @@ mod tests {
             dns: DnsInfo::default(),
             enrichment: vec![EnrichmentInfo {
                 ip: Ipv4Addr::new(1, 1, 1, 1).into(),
-                data: Some(AsnInfo {
+                asn_info: Some(AsnInfo {
                     as_number: 15169,
                     as_name: "Google LLC".to_string(),
                     country_code: Some("US".to_string()),

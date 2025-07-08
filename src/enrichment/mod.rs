@@ -20,7 +20,7 @@ pub struct NoOpEnrichmentProvider;
 #[async_trait]
 impl EnrichmentProvider for NoOpEnrichmentProvider {
     async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
-        Ok(EnrichmentInfo { ip, data: None })
+        Ok(EnrichmentInfo { ip, asn_info: None })
     }
 }
 

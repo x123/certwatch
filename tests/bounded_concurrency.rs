@@ -27,7 +27,7 @@ impl EnrichmentProvider for MockEnrichmentProvider {
     async fn enrich(&self, ip: std::net::IpAddr) -> Result<certwatch::core::EnrichmentInfo> {
         Ok(certwatch::core::EnrichmentInfo {
             ip,
-            data: Some(Default::default()),
+            asn_info: Some(Default::default()),
         })
     }
 }
