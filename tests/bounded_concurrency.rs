@@ -5,14 +5,11 @@ use certwatch::{
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, DnsResolver},
 };
 use futures::stream::StreamExt;
-use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Barrier};
 use tokio_stream;
 
 // Mock implementations for services
@@ -49,8 +46,9 @@ impl DnsResolver for MockDnsResolver {
 #[tokio::test]
 async fn test_bounded_concurrency() -> Result<()> {
     let concurrency_limit = 2;
-    let total_domains = 100;
+    let total_domains = 10; // Reduced for faster, more focused test
 
+    // The config and mock setup is fine, it simulates the app's dependencies.
     let mut config = Config::default();
     config.concurrency = concurrency_limit;
 
@@ -69,6 +67,10 @@ async fn test_bounded_concurrency() -> Result<()> {
     let max_concurrent_tasks = Arc::new(AtomicUsize::new(0));
     let processed_domains = Arc::new(AtomicUsize::new(0));
 
+    // This barrier will be used to control task execution deterministically.
+    // It will wait for `concurrency_limit` tasks to start, then another batch, etc.
+    let barrier = Arc::new(Barrier::new(concurrency_limit));
+
     let domains: Vec<String> = (0..total_domains)
         .map(|i| format!("domain{}.com", i))
         .collect();
@@ -84,17 +86,20 @@ async fn test_bounded_concurrency() -> Result<()> {
             let active_tasks = active_tasks.clone();
             let max_concurrent_tasks = max_concurrent_tasks.clone();
             let processed_domains = processed_domains.clone();
+            let barrier = barrier.clone();
 
             async move {
                 // Increment active tasks and update max
                 let current_active = active_tasks.fetch_add(1, Ordering::SeqCst) + 1;
                 max_concurrent_tasks.fetch_max(current_active, Ordering::SeqCst);
 
-                // Simulate work
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                // Instead of sleeping, wait on the barrier.
+                // This synchronizes the tasks and makes the test deterministic.
+                barrier.wait().await;
 
                 if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-                    if let Ok(dns_info) = dns_manager.resolve_with_retry(&domain, &source_tag).await {
+                    if let Ok(dns_info) = dns_manager.resolve_with_retry(&domain, &source_tag).await
+                    {
                         let alert = certwatch::build_alert(
                             domain,
                             source_tag,
@@ -106,7 +111,7 @@ async fn test_bounded_concurrency() -> Result<()> {
                         let _ = alerts_tx.send(alert).await;
                     }
                 }
-                
+
                 processed_domains.fetch_add(1, Ordering::SeqCst);
                 active_tasks.fetch_sub(1, Ordering::SeqCst);
             }

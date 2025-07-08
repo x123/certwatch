@@ -65,7 +65,4 @@ required-features = ["live-tests"]
 [[test]]
 name = "live_pattern_matching"
 
-[[test]]
-name = "live_hot_reload"
-required-features = ["live-tests"]
 

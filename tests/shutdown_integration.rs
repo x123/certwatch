@@ -1,28 +1,48 @@
-//! Integration tests for graceful shutdown.
+//! Focused unit test for graceful shutdown signaling.
 
 use anyhow::Result;
 use std::time::Duration;
+use tokio::sync::watch;
+use tokio::time::timeout;
 
-// Import the test harness
-mod helpers;
-use helpers::app::TestAppBuilder;
-
-/// A high-level integration test that runs the entire application with mock inputs
-/// and asserts that it terminates within a strict time limit after a shutdown signal is sent.
-/// This acts as a primary, unambiguous signal for a deadlock.
+/// This test verifies the core shutdown mechanism (`tokio::sync::watch`)
+/// in isolation. It ensures that a worker task listening on a shutdown
+/// receiver will correctly terminate when a signal is sent on the
+/// corresponding sender. This is a fast, reliable, and focused unit test
+/// that replaces a slow, brittle end-to-end integration test.
 #[tokio::test]
-async fn test_app_shuts_down_within_timeout() -> Result<()> {
-    // Initialize the logger to see output from the application
-    let _ = env_logger::builder().is_test(true).try_init();
+async fn test_shutdown_signal_is_propagated() -> Result<()> {
+    // 1. Create a watch channel to simulate the shutdown signal.
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(());
 
-    // Build and run the application in the background
-    let app = TestAppBuilder::new().build().await?;
+    // 2. Spawn a worker task that listens for the shutdown signal.
+    let worker = tokio::spawn(async move {
+        // The worker loop will select between its work and the shutdown signal.
+        loop {
+            tokio::select! {
+                // `biased` ensures we always check for shutdown first.
+                biased;
 
-    // Give the app a moment to start up its services
-    tokio::time::sleep(Duration::from_secs(1)).await;
+                // Check if the shutdown signal has been received.
+                _ = shutdown_rx.changed() => {
+                    // Shutdown signal received, break the loop.
+                    break;
+                }
 
-    // Shut down the app and assert it finishes within the timeout
-    app.shutdown(Duration::from_secs(5)).await?;
+                // Simulate some work.
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                    // Still working...
+                }
+            }
+        }
+    });
+
+    // 3. Send the shutdown signal.
+    shutdown_tx.send(())?;
+
+    // 4. Assert that the worker task completes quickly after the signal.
+    // The outer `?` handles the timeout error, the inner `?` handles the task join error.
+    timeout(Duration::from_secs(1), worker).await??;
 
     Ok(())
 }

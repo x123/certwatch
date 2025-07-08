@@ -5,9 +5,9 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use certwatch::network::{WebSocketConnection, CertStreamClient};
+use certwatch::network::{CertStreamClient, WebSocketConnection};
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
 /// Fake WebSocket implementation for testing
@@ -15,7 +15,6 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 pub struct FakeWebSocket {
     messages: Vec<Option<Result<String, WsError>>>,
     current_index: Arc<Mutex<usize>>,
-    connection_count: Arc<Mutex<usize>>,
 }
 
 impl FakeWebSocket {
@@ -24,19 +23,7 @@ impl FakeWebSocket {
         Self {
             messages,
             current_index: Arc::new(Mutex::new(0)),
-            connection_count: Arc::new(Mutex::new(0)),
         }
-    }
-
-    /// Returns the number of times this fake was "connected" to
-    pub fn connection_count(&self) -> usize {
-        *self.connection_count.lock().unwrap()
-    }
-
-    /// Simulates a new connection by incrementing the connection counter
-    pub fn connect(&self) {
-        let mut count = self.connection_count.lock().unwrap();
-        *count += 1;
     }
 }
 
@@ -44,121 +31,90 @@ impl FakeWebSocket {
 impl WebSocketConnection for FakeWebSocket {
     async fn read_message(&mut self) -> Option<Result<Message, WsError>> {
         let mut index = self.current_index.lock().unwrap();
-        if *index < self.messages.len() {
-            let message_result = &self.messages[*index];
-            *index += 1;
-            
-            match message_result {
-                Some(Ok(text)) => Some(Ok(Message::Text(text.clone().into()))),
-                Some(Err(_e)) => {
-                    // Create a simple WebSocket error for testing
-                    Some(Err(WsError::ConnectionClosed))
-                }
-                None => None,
-            }
-        } else {
-            None
+        if *index >= self.messages.len() {
+            return None;
+        }
+        let message_result = &self.messages[*index];
+        *index += 1;
+
+        match message_result {
+            Some(Ok(text)) => Some(Ok(Message::Text(text.clone().into()))),
+            Some(Err(_)) => Some(Err(WsError::ConnectionClosed)),
+            None => None,
         }
     }
 }
 
-#[tokio::test]
-async fn test_certstream_client_basic_functionality() {
-    // Create a sample valid "domains-only" certstream message
-    let sample_message = r#"{"data": ["test.example.com", "www.test.example.com"]}"#;
+/// Test helper to run the client and signal completion.
+async fn run_client_with_signal(
+    client: CertStreamClient,
+    connection: FakeWebSocket,
+) -> oneshot::Receiver<()> {
+    let (completion_tx, completion_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        // We don't care about the result, just that it finishes.
+        let _ = client.run_with_connection(Box::new(connection)).await;
+        // Signal that the client has finished processing.
+        let _ = completion_tx.send(());
+    });
+    completion_rx
+}
 
-    // Set up fake WebSocket with one valid message, then connection close
+#[tokio::test]
+async fn test_certstream_client_basic_functionality() -> Result<()> {
+    // 1. Arrange
+    let sample_message = r#"{"data": ["test.example.com", "www.test.example.com"]}"#;
     let fake_ws = FakeWebSocket::new_with_text_messages(vec![
         Some(Ok(sample_message.to_string())),
         None, // Simulate connection close
     ]);
-
-    // Create a channel to receive parsed domains
     let (tx, mut rx) = mpsc::channel::<String>(10);
-
-    // Create the client
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0, false);
 
-    // Run the client with the fake WebSocket (this should process one message then stop)
-    let client_handle = tokio::spawn(async move {
-        client.run_with_connection(Box::new(fake_ws)).await
-    });
+    // 2. Act
+    let completion_rx = run_client_with_signal(client, fake_ws).await;
 
-    // Wait for the parsed domains. We expect two separate messages.
+    // 3. Assert
+    // Wait for the client to signal completion. This is more robust than a timeout.
+    completion_rx.await?;
+
+    // Collect all messages from the channel.
     let mut received_domains = Vec::new();
-    for _ in 0..2 {
-        let domain = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            rx.recv()
-        ).await;
-        assert!(domain.is_ok(), "Should have received a domain within the timeout");
-        received_domains.push(domain.unwrap().unwrap());
+    while let Some(domain) = rx.recv().await {
+        received_domains.push(domain);
     }
 
-    // Verify we received the expected domains
+    // Verify the received domains.
     assert_eq!(received_domains.len(), 2);
     assert!(received_domains.contains(&"test.example.com".to_string()));
     assert!(received_domains.contains(&"www.test.example.com".to_string()));
 
-    // Clean up the client task
-    client_handle.abort();
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_certstream_client_handles_invalid_messages() {
-    // Create an invalid JSON message
+async fn test_certstream_client_handles_invalid_messages() -> Result<()> {
+    // 1. Arrange
     let invalid_message = r#"{"invalid": "structure"}"#;
-
-    // Set up fake WebSocket with invalid message, then connection close
     let fake_ws = FakeWebSocket::new_with_text_messages(vec![
         Some(Ok(invalid_message.to_string())),
         None, // Simulate connection close
     ]);
-
-    // Create a channel to receive parsed domains
     let (tx, mut rx) = mpsc::channel::<String>(10);
-
-    // Create the client
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0, false);
 
-    // Run the client with the fake WebSocket
-    let client_handle = tokio::spawn(async move {
-        client.run_with_connection(Box::new(fake_ws)).await
-    });
+    // 2. Act
+    let completion_rx = run_client_with_signal(client, fake_ws).await;
 
-    // Wait a short time to see if any domains are received (there shouldn't be any)
-    let received_domains = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        rx.recv()
-    ).await;
+    // 3. Assert
+    // Wait for the client to signal completion.
+    completion_rx.await?;
 
-    // The client should terminate normally after processing the invalid message and connection close
-    let client_result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        client_handle
-    ).await;
+    // Check that no domains were sent to the channel.
+    assert!(
+        rx.try_recv().is_err(),
+        "Should not have received any domains for invalid message"
+    );
 
-    // Debug: print what we actually received
-    match &received_domains {
-        Ok(Some(domains)) => println!("Received domains: {:?}", domains),
-        Ok(None) => println!("Received None (channel closed)"),
-        Err(_) => println!("Timeout - no domains received"),
-    }
-
-    // Verify no domains were received (invalid message should be logged and ignored)
-    // We expect either a timeout (no message sent) or channel closed (None)
-    match received_domains {
-        Ok(Some(_)) => panic!("Should not have received any domains for invalid message"),
-        Ok(None) => {
-            // Channel closed without sending domains - this is expected
-            println!("Test passed: Channel closed without sending domains");
-        }
-        Err(_) => {
-            // Timeout - also acceptable as it means no domains were sent
-            println!("Test passed: No domains received within timeout");
-        }
-    }
-    
-    // Verify the client terminated normally
-    assert!(client_result.is_ok(), "Client should have terminated normally");
+    Ok(())
 }

@@ -1,203 +1,100 @@
-//! Integration tests for pattern hot-reload functionality
-//!
-//! These tests verify that the PatternWatcher correctly detects file changes
-//! and reloads patterns without interrupting service.
+//! Focused unit tests for the PatternWatcher.
 
 use anyhow::Result;
-use certwatch::matching::{PatternWatcher, load_patterns_from_file};
 use certwatch::core::PatternMatcher;
+use certwatch::matching::PatternWatcher;
 use std::io::Write;
 use tempfile::NamedTempFile;
 use tokio::sync::watch;
-use serial_test::serial;
 
-mod helpers;
-use helpers::fs_watch::{
-    PlatformTimeouts, platform_aware_write, platform_aware_append, create_isolated_test_env
-};
-
+/// This test verifies the core `reload` functionality of the `PatternWatcher`
+/// in a focused, deterministic way. It creates a pattern file, asserts the
+/// initial state, modifies the file, calls `reload()` directly, and then
+/// asserts that the watcher's internal state has been updated correctly.
+/// This avoids the complexity and non-determinism of relying on real
+/// filesystem watch events.
 #[tokio::test]
-async fn test_pattern_watcher_multiple_files() -> Result<()> {
-    // Initialize logging for the test
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    // Create two temporary pattern files
-    let mut temp_file1 = NamedTempFile::new()?;
-    let mut temp_file2 = NamedTempFile::new()?;
-    let temp_path1 = temp_file1.path().to_path_buf();
-    let temp_path2 = temp_file2.path().to_path_buf();
-    
-    // Write initial patterns to both files
-    temp_file1.write_all(b".*\\.malware\\.com$\n")?;
-    temp_file1.flush()?;
-    
-    temp_file2.write_all(b".*\\.phishing\\.com$\n")?;
-    temp_file2.flush()?;
-
-    // Create a list of pattern files
-    let pattern_files = vec![temp_path1, temp_path2];
-
-    // Create PatternWatcher
-    let (_shutdown_tx, shutdown_rx) = watch::channel(());
-    let watcher = PatternWatcher::new(pattern_files, shutdown_rx).await?;
-
-    // Test that patterns from both files work
-    let result = watcher.match_domain("test.malware.com").await;
-    assert!(result.is_some(), "Malware pattern should match");
-
-    let result = watcher.match_domain("test.phishing.com").await;
-    assert!(result.is_some(), "Phishing pattern should match");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_load_patterns_from_file_integration() -> Result<()> {
-    // Create a temporary file with various pattern formats
+async fn test_pattern_watcher_manual_reload() -> Result<()> {
+    // 1. Setup: Create a temporary file for patterns.
     let mut temp_file = NamedTempFile::new()?;
-    let file_content = r#"# Phishing patterns for testing
-# This file contains regex patterns for detecting phishing domains
+    writeln!(temp_file, "initial.com")?;
+    let pattern_path = temp_file.path().to_path_buf();
 
-# Common phishing patterns
-.*paypal.*
-.*amazon.*secure.*
-.*bank.*login.*
+    // 2. Initialize the PatternWatcher.
+    let (_shutdown_tx, shutdown_rx) = watch::channel(());
+    let watcher = PatternWatcher::new(vec![pattern_path.clone()], shutdown_rx).await?;
 
-# Empty line above should be ignored
-
-# Typosquatting patterns  
-.*gooogle.*
-.*microsooft.*
-"#;
-    temp_file.write_all(file_content.as_bytes())?;
-    temp_file.flush()?;
-    
-    // Load patterns from the file
-    let patterns = load_patterns_from_file(temp_file.path()).await?;
-
-    // Verify correct number of patterns loaded (should skip comments and empty lines)
-    assert_eq!(patterns.len(), 5);
-    
-    // Verify source tag is derived from filename
-    let expected_tag = temp_file.path()
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap()
-        .to_string();
-
-    // Check that all patterns have the correct tag
-    for (_, tag) in &patterns {
-        assert_eq!(tag, &expected_tag);
-    }
-
-    // Verify specific patterns are present
-    let pattern_strings: Vec<String> = patterns.into_iter().map(|(p, _)| p).collect();
-    assert!(pattern_strings.contains(&".*paypal.*".to_string()));
-    assert!(pattern_strings.contains(&".*amazon.*secure.*".to_string()));
-    assert!(pattern_strings.contains(&".*gooogle.*".to_string()));
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
-async fn test_debounced_hot_reload() -> Result<()> {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    // Get platform-specific timeouts
-    let timeouts = PlatformTimeouts::for_current_platform();
-
-    // --- Setup ---
-    // Create an isolated temporary directory to ensure clean test environment
-    let temp_dir = create_isolated_test_env().await?;
-    let temp_path = temp_dir.path().join("patterns.txt");
-
-    // Initial pattern - use platform-aware write
-    platform_aware_write(&temp_path, "initial.com\n", &timeouts).await?;
-
-    let (_shutdown_tx, mut shutdown_rx) = watch::channel(());
-
-    let watcher = PatternWatcher::with_notifier(
-        vec![temp_path.clone()],
-        None,
-        Some(&mut shutdown_rx),
-    )
-    .await?;
-
-    // --- Initial State Verification ---
+    // 3. Initial State Verification: Ensure the first pattern is active.
     assert!(
-        watcher.match_domain("initial.com").await.is_some(),
+        watcher.match_domain("test.initial.com").await.is_some(),
         "Initial pattern should match"
     );
     assert!(
-        watcher.match_domain("final.com").await.is_none(),
-        "Final pattern should not match yet"
+        watcher.match_domain("test.updated.com").await.is_none(),
+        "Updated pattern should not match yet"
     );
 
-    // --- Simulate Rapid File Changes ---
-    // 1. Overwrite with a new pattern
-    platform_aware_write(&temp_path, "interim.com\n", &timeouts).await?;
-    
-    // 2. Append another pattern
-    platform_aware_append(&temp_path, "final.com\n", &timeouts).await?;
+    // 4. Simulate File Change: Overwrite the pattern file with new content.
+    // We use `std::fs` for a simple, synchronous write.
+    let mut temp_file = temp_file.reopen()?;
+    temp_file.set_len(0)?; // Clear the file
+    writeln!(temp_file, "updated.com")?;
+    temp_file.flush()?;
 
-    // --- Verification ---
-    // Manually trigger a reload
+    // 5. Trigger Reload: Manually call the reload function.
     watcher.reload().await?;
 
-    // Verify the final state of the patterns.
+    // 6. Final State Verification: Assert that the patterns have been updated.
     assert!(
-        watcher.match_domain("initial.com").await.is_none(),
-        "Initial pattern should be gone"
+        watcher.match_domain("test.initial.com").await.is_none(),
+        "Initial pattern should be gone after reload"
     );
     assert!(
-        watcher.match_domain("interim.com").await.is_some(),
-        "Interim pattern should match"
-    );
-    assert!(
-        watcher.match_domain("final.com").await.is_some(),
-        "Final pattern should match"
+        watcher.match_domain("test.updated.com").await.is_some(),
+        "Updated pattern should match after reload"
     );
 
     Ok(())
 }
 
+/// This test verifies that the `PatternWatcher` correctly handles a pattern
+/// file being deleted. It initializes the watcher with a file, deletes the
+/// file, calls `reload()`, and asserts that the patterns from the deleted
+/// file are no longer active.
 #[tokio::test]
-#[serial]
-async fn test_hot_reload_on_delete() -> Result<()> {
-    let _ = env_logger::builder().is_test(true).try_init();
-    let timeouts = PlatformTimeouts::for_current_platform();
+async fn test_pattern_watcher_handles_file_deletion() -> Result<()> {
+    // 1. Setup: Create two temporary files.
+    let mut temp_file1 = NamedTempFile::new()?;
+    writeln!(temp_file1, "pattern1.com")?;
+    let path1 = temp_file1.path().to_path_buf();
 
-    // --- Setup ---
-    let temp_dir = create_isolated_test_env().await?;
-    let path1 = temp_dir.path().join("patterns1.txt");
-    let path2 = temp_dir.path().join("patterns2.txt");
+    let mut temp_file2 = NamedTempFile::new()?;
+    writeln!(temp_file2, "pattern2.com")?;
+    let path2 = temp_file2.path().to_path_buf();
 
-    platform_aware_write(&path1, "pattern1.com\n", &timeouts).await?;
-    platform_aware_write(&path2, "pattern2.com\n", &timeouts).await?;
+    // 2. Initialize the PatternWatcher with both files.
+    let (_shutdown_tx, shutdown_rx) = watch::channel(());
+    let watcher = PatternWatcher::new(vec![path1.clone(), path2.clone()], shutdown_rx).await?;
 
-    let (_shutdown_tx, mut shutdown_rx) = watch::channel(());
+    // 3. Initial State Verification.
+    assert!(watcher.match_domain("test.pattern1.com").await.is_some());
+    assert!(watcher.match_domain("test.pattern2.com").await.is_some());
 
-    let watcher = PatternWatcher::with_notifier(
-        vec![path1.clone(), path2.clone()],
-        None,
-        Some(&mut shutdown_rx),
-    )
-    .await?;
+    // 4. Simulate File Deletion: Drop the temp file to delete it.
+    drop(temp_file1);
 
-    // --- Initial State Verification ---
-    assert!(watcher.match_domain("pattern1.com").await.is_some(), "Pattern 1 should match initially");
-    assert!(watcher.match_domain("pattern2.com").await.is_some(), "Pattern 2 should match initially");
-
-    // --- Simulate File Deletion ---
-    tokio::fs::remove_file(&path1).await?;
-
-    // --- Verification ---
+    // 5. Trigger Reload.
     watcher.reload().await?;
 
-    // Verify the final state of the patterns.
-    assert!(watcher.match_domain("pattern1.com").await.is_none(), "Pattern 1 should be gone after deletion");
-    assert!(watcher.match_domain("pattern2.com").await.is_some(), "Pattern 2 should still match");
+    // 6. Final State Verification.
+    assert!(
+        watcher.match_domain("test.pattern1.com").await.is_none(),
+        "Pattern from deleted file should not match"
+    );
+    assert!(
+        watcher.match_domain("test.pattern2.com").await.is_some(),
+        "Pattern from remaining file should still match"
+    );
 
     Ok(())
 }

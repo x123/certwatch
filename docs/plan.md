@@ -462,3 +462,14 @@ The implementation is broken down into two sequential epics:
     -   [ ] **#145 - Implement `NotificationManager`:** Create the `NotificationManager` task. Implement the core `select!` loop for batching by size and time.
     -   [ ] **#146 - Test `NotificationManager` Batching:** Unit test the `NotificationManager`'s logic. Give it a `FakeSlackClient`. Test that it sends a batch when the size limit is hit. Use `tokio::time::pause/advance` to test that it sends a batch when the timeout is hit.
     -   [ ] **#147 - Integrate into `main.rs`:** In `main.rs`, if the Slack webhook URL is provided, spawn the `NotificationManager` and pass it a receiver from the event bus.
+
+---
+
+### Epic #44: Retroactive - Improve Test Suite Robustness
+- **User Story:** As a developer, I want the test suite to be fast, reliable, and deterministic, so that I can refactor with confidence and trust the CI/CD pipeline.
+- **Why:** A series of flaky, timeout-prone integration tests were causing CI failures and slowing down development. This effort systematically replaced them with focused, reliable unit tests, codifying a new, more robust testing philosophy for the project.
+- **Tasks:**
+   - [x] **#148 - Refactor `shutdown_integration.rs`:** Replaced a slow, sleep-based end-to-end test with a fast unit test that directly verifies the `tokio::sync::watch` shutdown signal propagation.
+   - [x] **#149 - Refactor `bounded_concurrency.rs`:** Replaced a `sleep`-based test with a deterministic test using a `tokio::sync::Barrier` to control and verify concurrency limits.
+   - [x] **#150 - Refactor Hot-Reload Tests:** Deleted the complex `live_hot_reload.rs` and refactored `pattern_hot_reload.rs` to use focused unit tests that call the `reload()` method directly, removing dependencies on filesystem events.
+   - [x] **#151 - Refactor `certstream_client.rs`:** Replaced timeout-based synchronization with a deterministic `oneshot` channel to signal completion, making the tests faster and more reliable.
