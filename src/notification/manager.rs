@@ -127,6 +127,7 @@ mod tests {
         let (alert_tx, alert_rx) = broadcast::channel(100);
         let fake_client = Arc::new(FakeSlackClient::new());
         let config = SlackConfig {
+            enabled: true,
             webhook_url: "fake".to_string(),
             batch_size: 2,
             batch_timeout_seconds: 10,
@@ -158,6 +159,7 @@ mod tests {
         let (alert_tx, alert_rx) = broadcast::channel(100);
         let fake_client = Arc::new(FakeSlackClient::new());
         let config = SlackConfig {
+            enabled: true,
             webhook_url: "fake".to_string(),
             batch_size: 10,
             batch_timeout_seconds: 5,

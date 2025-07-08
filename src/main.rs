@@ -8,7 +8,6 @@ use certwatch::{
     cli::Cli,
     config::{Config, OutputFormat},
     core::Alert,
-    notification,
 };
 use clap::Parser;
 use tokio::sync::{broadcast, watch};
@@ -80,31 +79,38 @@ async fn main() -> Result<()> {
     // =========================================================================
     // Setup Notification Pipeline
     // =========================================================================
-    let alert_tx = if config.notifications.enabled {
-        let (tx, rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
-        info!("Notification pipeline enabled.");
-
-        // Always spawn the logging subscriber if notifications are on.
-        notification::logging_subscriber::spawn(rx, None, None);
-
-        // Spawn the Slack notifier only if a webhook URL is provided.
+    let alert_tx = {
+        let mut enabled = false;
         if let Some(slack_config) = &config.output.slack {
-            info!("Slack notifications enabled.");
+            if slack_config.enabled {
+                if slack_config.webhook_url.is_empty() {
+                    tracing::warn!("Slack notifications are enabled, but no webhook URL was provided. Slack notifications will be disabled.");
+                } else {
+                    enabled = true;
+                }
+            }
+        }
+
+        if enabled {
+            let (tx, _rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
+            info!("Slack notification pipeline enabled.");
+
+            // Spawn the Slack notifier.
+            let slack_config = config.output.slack.as_ref().unwrap().clone();
             let slack_client =
                 std::sync::Arc::new(certwatch::notification::slack::SlackClient::new(
                     slack_config.webhook_url.clone(),
                 ));
             let slack_notifier = certwatch::notification::manager::NotificationManager::new(
-                slack_config.clone(),
+                slack_config,
                 tx.subscribe(),
                 slack_client,
             );
             tokio::spawn(slack_notifier.run());
+            Some(tx)
+        } else {
+            None
         }
-
-        Some(tx)
-    } else {
-        None
     };
 
     // Run the main application logic
@@ -187,7 +193,12 @@ fn log_config_settings(config: &Config, cli: &Cli) {
     info!("Output Format: {}", output_format);
     info!(
         "Slack Output: {}",
-        if config.output.slack.is_some() {
+        if config
+            .output
+            .slack
+            .as_ref()
+            .is_some_and(|s| s.enabled && !s.webhook_url.is_empty())
+        {
             "Enabled"
         } else {
             "Disabled"

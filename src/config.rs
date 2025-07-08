@@ -38,8 +38,8 @@ pub struct Config {
     pub output: OutputConfig,
     /// Configuration for alert deduplication.
     pub deduplication: DeduplicationConfig,
-    /// Configuration for the notification system.
-    pub notifications: NotificationConfig,
+    // Note: The `notifications` field has been removed.
+    // Slack notification settings are now part of `OutputConfig`.
 }
 
 /// Configuration for performance tuning.
@@ -180,6 +180,9 @@ pub struct OutputConfig {
 /// Configuration for Slack alerts.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct SlackConfig {
+    /// Enables or disables Slack notifications.
+    #[serde(default)]
+    pub enabled: bool,
     /// The Slack incoming webhook URL.
     pub webhook_url: String,
     /// The maximum number of alerts to batch together before sending.
@@ -196,19 +199,6 @@ fn default_slack_batch_size() -> usize {
 
 fn default_slack_batch_timeout() -> u64 {
     300
-}
-
-/// Configuration for alert deduuplication.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct NotificationConfig {
-    /// Globally enables or disables the notification pipeline.
-    pub enabled: bool,
-}
-
-impl Default for NotificationConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 /// Configuration for alert deduplication.
@@ -274,7 +264,6 @@ impl Default for Config {
                 cache_size: 100_000,
                 cache_ttl_seconds: 3600,
             },
-            notifications: NotificationConfig::default(),
         }
     }
 }

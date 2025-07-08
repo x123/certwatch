@@ -60,15 +60,17 @@ format = "PlainText"
 
 # Optional: webhooks
 # [output.slack]
+# # To enable Slack notifications, set enabled to true and provide a webhook URL.
+# enabled = false
 # webhook_url = "https://hooks.slack.com/services/..."
 #
-# The maximum number of alerts to batch together before sending.
-# Defaults to 50.
-# batch_size = 50
+# # The maximum number of alerts to batch together before sending.
+# # Defaults to 50.
+# # batch_size = 50
 #
-# The maximum time in seconds to wait before sending a batch, even if it's not full.
-# Defaults to 300.
-# batch_timeout_seconds = 300
+# # The maximum time in seconds to wait before sending a batch, even if it's not full.
+# # Defaults to 300.
+# # batch_timeout_seconds = 300
 
 [deduplication]
 cache_size = 100000

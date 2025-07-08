@@ -456,6 +456,7 @@ The implementation is broken down into two sequential epics:
 -   **Tasks:**
     -   [x] **#140 - Add Dependencies:** Add `reqwest` and `serde_json` to `Cargo.toml`.
     -   [x] **#141 - Add Slack Configuration:** Add `--slack-webhook-url`, `--slack-batch-size`, and `--slack-batch-timeout` arguments and corresponding config entries.
+    -   [x] **#141b - Refactor Slack Configuration:** Co-located all Slack settings under `[output.slack]` for clarity, including a new `enabled` flag. Removed the confusing top-level `[notifications]` table.
     -   [x] **#142 - Implement `SlackMessage` Payload:** In a new `src/notification/slack.rs`, define the structs for the Slack message payload (`Attachment`, `Field`, etc.) and a function that serializes a `&[Alert]` into the correct JSON. Write unit tests for this serialization logic.
     -   [x] **#143 - Implement `SlackClient`:** Create a `SlackClient` struct that holds a `reqwest::Client` and the webhook URL. Give it a `send_batch(&self, alerts: &[Alert])` method.
     -   [x] **#144 - Test `SlackClient`:** Unit test the `SlackClient` using `wiremock-rs` (https://docs.rs/wiremock/latest/wiremock/ , latest version is 0.6.4). Test for successful posts, 500 errors, and network timeouts.

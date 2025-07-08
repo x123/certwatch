@@ -63,9 +63,9 @@ pub struct Cli {
     #[arg(long, hide = true)]
     pub test_mode: bool,
 
-    /// Enable the notification pipeline.
-    #[arg(long)]
-    pub enable_notifications: bool,
+    /// Enable Slack notifications, overriding the config file setting.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub slack_enabled: bool,
 
     /// The Slack incoming webhook URL.
     #[arg(long, value_name = "URL")]
@@ -138,23 +138,21 @@ impl Provider for Cli {
             dict.insert("enrichment".into(), Value::from(enrichment_dict));
         }
 
-        if self.enable_notifications {
-            dict.insert("notifications.enabled".into(), Value::from(true));
+        if self.slack_enabled {
+            dict.insert("output.slack.enabled".into(), Value::from(true));
         }
 
-        let mut slack_dict = Dict::new();
         if let Some(url) = &self.slack_webhook_url {
-            slack_dict.insert("webhook_url".into(), Value::from(url.clone()));
+            dict.insert("output.slack.webhook_url".into(), Value::from(url.clone()));
         }
         if let Some(size) = self.slack_batch_size {
-            slack_dict.insert("batch_size".into(), Value::from(size as u64));
+            dict.insert("output.slack.batch_size".into(), Value::from(size as u64));
         }
         if let Some(timeout) = self.slack_batch_timeout {
-            slack_dict.insert("batch_timeout_seconds".into(), Value::from(timeout));
-        }
-
-        if !slack_dict.is_empty() {
-            dict.insert("output.slack".into(), Value::from(slack_dict));
+            dict.insert(
+                "output.slack.batch_timeout_seconds".into(),
+                Value::from(timeout),
+            );
         }
 
         let mut map = Map::new();
