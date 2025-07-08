@@ -83,16 +83,23 @@ async fn main() -> Result<()> {
     let alert_tx = if config.notifications.enabled {
         let (tx, rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
         info!("Notification pipeline enabled.");
-        notification::logging_subscriber::spawn(rx, None);
+        notification::logging_subscriber::spawn(rx, None, None);
         Some(tx)
     } else {
         None
     };
 
     // Run the main application logic
+    let (domains_tx, domains_rx) = {
+        let (tx, rx) = tokio::sync::mpsc::channel(config.performance.queue_capacity);
+        (tx, std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
+    };
+
     if let Err(e) = certwatch::app::run(
         config,
         shutdown_rx,
+        domains_tx,
+        domains_rx,
         None,
         None,
         None,

@@ -1,7 +1,4 @@
-//! Handles the dispatching of alerts to various notification channels.
-//!
-//! This module defines the core traits and structures for a decoupled notification
-//! system. It uses a publisher/subscriber model, allowing the main application
-//! to publish alerts without being aware of the specific notification
-//! implementations that are listening for them.
+// This module will contain all notification-related logic,
+// including the event bus, subscribers, and specific notification
+// channel implementations like Slack.
 pub mod logging_subscriber;

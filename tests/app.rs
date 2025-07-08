@@ -4,9 +4,10 @@ use certwatch::{
     core::DnsInfo,
     dns::test_utils::FakeDnsResolver,
     enrichment::fake::FakeEnrichmentProvider,
+    types::DomainReceiver,
 };
 use std::sync::Arc;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 #[tokio::test]
 async fn test_app_startup_succeeds_with_healthy_resolver() {
@@ -17,9 +18,16 @@ async fn test_app_startup_succeeds_with_healthy_resolver() {
     fake_resolver.add_success_response("google.com", DnsInfo::default());
     let fake_enrichment = Arc::new(FakeEnrichmentProvider::new());
 
+    let (domains_tx, domains_rx): (mpsc::Sender<String>, DomainReceiver) = {
+        let (tx, rx) = mpsc::channel::<String>(config.performance.queue_capacity);
+        (tx, Arc::new(tokio::sync::Mutex::new(rx)))
+    };
+
     let app_handle = tokio::spawn(app::run(
         config,
         shutdown_rx,
+        domains_tx,
+        domains_rx,
         Some(vec![]),
         None,
         Some(fake_resolver),
@@ -43,9 +51,16 @@ async fn test_app_startup_fails_with_unhealthy_resolver() {
     fake_resolver.add_error_response("google.com", "Timeout");
     let fake_enrichment = Arc::new(FakeEnrichmentProvider::new());
 
+    let (domains_tx, domains_rx): (mpsc::Sender<String>, DomainReceiver) = {
+        let (tx, rx) = mpsc::channel::<String>(config.performance.queue_capacity);
+        (tx, Arc::new(tokio::sync::Mutex::new(rx)))
+    };
+
     let result = app::run(
         config,
         shutdown_rx,
+        domains_tx,
+        domains_rx,
         Some(vec![]),
         None,
         Some(fake_resolver),

@@ -18,7 +18,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, instrument, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{mpsc, Mutex, watch},
+    sync::{mpsc, watch},
     task::JoinHandle,
 };
 
@@ -28,6 +28,8 @@ use tokio::{
 pub async fn run(
     config: Config,
     mut shutdown_rx: watch::Receiver<()>,
+    domains_tx: mpsc::Sender<String>,
+    domains_rx: DomainReceiver,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
@@ -102,10 +104,6 @@ pub async fn run(
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    let (domains_tx, domains_rx): (mpsc::Sender<String>, DomainReceiver) = {
-        let (tx, rx) = mpsc::channel::<String>(config.performance.queue_capacity);
-        (tx, Arc::new(Mutex::new(rx)))
-    };
     let (alerts_tx, alerts_rx): (AlertSender, mpsc::Receiver<Alert>) =
         mpsc::channel::<Alert>(1000);
 
@@ -113,7 +111,7 @@ pub async fn run(
     // 3.5 Start Domain Queue Monitoring Task
     // =========================================================================
     let queue_monitor_task = {
-        let domains_tx = domains_tx.clone();
+        let domains_tx_clone = domains_tx.clone();
         let mut shutdown_rx = shutdown_rx.clone();
         let capacity = config.performance.queue_capacity as f64;
 
@@ -133,7 +131,7 @@ pub async fn run(
                         break;
                     }
                     _ = interval.tick() => {
-                        let used = capacity - domains_tx.capacity() as f64;
+                        let used = capacity - domains_tx_clone.capacity() as f64;
                         let fill_ratio = if capacity > 0.0 { used / capacity } else { 0.0 };
                         metrics::gauge!("domain_queue_fill_ratio").set(fill_ratio);
                     }
@@ -240,7 +238,7 @@ pub async fn run(
                             }
                             Err(e) => {
                                 metrics::counter!("cert_processing_failures").increment(1);
-                                warn!("Failed to process certificate update for domain {}: {}", domain, e);
+                                debug!("Failed to process certificate update for domain {}: {}", domain, e);
                             }
                         }
                     }
@@ -345,21 +343,20 @@ async fn output_task_logic(
         tokio::select! {
             biased;
             _ = shutdown_rx.changed() => {
-                println!("[DEBUG] Output task received shutdown signal.");
                 info!("Output task received shutdown signal.");
                 break;
             }
             Some(alert) = alerts_rx.recv() => {
-                println!("[DEBUG] Output task received alert for domain: {}", alert.domain);
+                debug!("Output task received alert for domain: {}", &alert.domain);
                 if !deduplicator.is_duplicate(&alert).await {
-                    println!("[DEBUG] Domain {} is not a duplicate. Processing.", alert.domain);
+                    debug!("Domain {} is not a duplicate. Processing.", &alert.domain);
                     metrics::counter!("agg.alerts_sent").increment(1);
 
                     // Publish to notification pipeline if enabled
                     if let Some(tx) = &alert_tx {
-                        println!("[DEBUG] Publishing alert to notification channel for domain: {}", alert.domain);
+                        debug!("Publishing alert to notification channel for domain: {}", &alert.domain);
                         if let Err(e) = tx.send(alert.clone()) {
-                            println!("[DEBUG] Failed to publish alert for domain: {}. Error: {}", alert.domain, e);
+                            debug!("Failed to publish alert for domain: {}. Error: {}", &alert.domain, &e);
                             warn!("Failed to publish alert to notification channel: {}", e);
                         }
                     }

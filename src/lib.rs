@@ -1,7 +1,8 @@
-//! CertWatch - A high-performance certificate transparency log monitor
-//!
-//! This library provides the core functionality for monitoring certificate
-//! transparency logs and detecting suspicious domain registrations.
+/// CertWatch - A high-performance certificate transparency log monitor
+///
+/// This library provides the core functionality for monitoring certificate
+/// transparency logs and detecting suspicious domain registrations.
+pub mod notification;
 
 use chrono::Utc;
 pub mod utils;
@@ -58,4 +59,3 @@ pub async fn build_alert(
 
 pub mod app;
 
-pub mod notification;

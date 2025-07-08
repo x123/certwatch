@@ -287,7 +287,7 @@ impl DnsResolutionManager {
                         }
                         Err(DnsError::Resolution(e)) => {
                             self.health_monitor.record_outcome(false);
-                            warn!(error = %e, "Handling resolution error");
+                            debug!(error = %e, "Handling resolution error");
 
                             // Check if this is an NXDOMAIN error
                             if is_nxdomain_error_str(&e) {
