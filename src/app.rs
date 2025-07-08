@@ -9,7 +9,7 @@ use crate::{
     internal_metrics::logging_recorder::LoggingRecorder,
     matching::PatternWatcher,
     network::{CertStreamClient, WebSocketConnection},
-    outputs::{OutputManager, SlackOutput, StdoutOutput},
+    outputs::{OutputManager, StdoutOutput},
     types::{AlertSender, DomainReceiver},
     utils::heartbeat::run_heartbeat,
 };
@@ -90,13 +90,8 @@ pub async fn run(
     let output_manager = match output_override {
         Some(outputs) => Arc::new(OutputManager::new(outputs)),
         None => {
-            let mut outputs: Vec<Arc<dyn Output>> = Vec::new();
-            outputs.push(Arc::new(StdoutOutput::new(config.output.format.clone())));
-            if let Some(slack_config) = &config.output.slack {
-                outputs.push(Arc::new(SlackOutput::new(
-                    slack_config.webhook_url.clone(),
-                )));
-            }
+            let outputs: Vec<Arc<dyn Output>> =
+                vec![Arc::new(StdoutOutput::new(config.output.format.clone()))];
             Arc::new(OutputManager::new(outputs))
         }
     };
@@ -354,10 +349,9 @@ async fn output_task_logic(
 
                     // Publish to notification pipeline if enabled
                     if let Some(tx) = &alert_tx {
-                        debug!("Publishing alert to notification channel for domain: {}", &alert.domain);
+                        info!("Publishing alert to notification channel for domain: {}", &alert.domain);
                         if let Err(e) = tx.send(alert.clone()) {
-                            debug!("Failed to publish alert for domain: {}. Error: {}", &alert.domain, &e);
-                            warn!("Failed to publish alert to notification channel: {}", e);
+                            error!(domain = %alert.domain, error = %e, "Failed to publish alert to notification channel");
                         }
                     }
 

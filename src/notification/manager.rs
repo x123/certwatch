@@ -32,6 +32,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
 
     /// Runs the notification manager's main loop.
     pub async fn run(mut self) {
+        info!("NotificationManager started.");
         let mut batch = Vec::with_capacity(self.config.batch_size);
         let mut timer = interval(Duration::from_secs(self.config.batch_timeout_seconds));
 
@@ -40,16 +41,17 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                 biased;
                 _ = timer.tick() => {
                     if !batch.is_empty() {
-                        debug!("Batch timer expired, sending {} alerts", batch.len());
+                        info!("Batch timer expired, sending {} alerts to Slack.", batch.len());
                         self.send_batch(&mut batch).await;
                     }
                 }
                 result = self.alert_rx.recv() => {
                     match result {
                         Ok(alert) => {
+                            debug!(domain = %alert.domain, "Received alert in NotificationManager.");
                             batch.push(alert);
                             if batch.len() >= self.config.batch_size {
-                                debug!("Batch size limit reached, sending {} alerts", batch.len());
+                                info!("Batch size limit reached, sending {} alerts to Slack.", batch.len());
                                 self.send_batch(&mut batch).await;
                                 timer.reset();
                             }
@@ -60,7 +62,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                         Err(broadcast::error::RecvError::Closed) => {
                             info!("Alert channel closed. Shutting down NotificationManager.");
                             if !batch.is_empty() {
-                                debug!("Sending final batch of {} alerts.", batch.len());
+                                info!("Sending final batch of {} alerts before shutdown.", batch.len());
                                 self.send_batch(&mut batch).await;
                             }
                             break;
@@ -69,6 +71,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                 }
             }
         }
+        info!("NotificationManager finished.");
     }
 
     /// Sends the current batch of alerts and clears the batch.

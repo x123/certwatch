@@ -1,4 +1,3 @@
-use metrics;
 // Service for sending alerts to various output destinations.
 
 use crate::{
@@ -177,74 +176,6 @@ impl Output for JsonOutput {
 }
 
 // =============================================================================
-// Slack Output
-// =============================================================================
-
-/// An output that sends alerts to a Slack webhook.
-pub struct SlackOutput {
-    client: reqwest::Client,
-    webhook_url: String,
-}
-
-impl SlackOutput {
-    pub fn new(webhook_url: String) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            webhook_url,
-        }
-    }
-}
-
-#[async_trait]
-impl Output for SlackOutput {
-    #[instrument(skip(self, alert), fields(domain = %alert.domain))]
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        let payload = serde_json::json!({
-            "text": format!("Suspicious domain detected: *{}*", alert.domain),
-            "blocks": [
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": format!(
-                            "*Domain:* `{}`\n*Source:* `{}`\n*Timestamp:* {}",
-                            alert.domain, alert.source_tag, alert.timestamp
-                        )
-                    }
-                },
-                {
-                    "type": "context",
-                    "elements": [
-                        {
-                            "type": "mrkdwn",
-                            "text": format!("Resolved after NXDOMAIN: `{}`", alert.resolved_after_nxdomain)
-                        }
-                    ]
-                }
-            ]
-        });
-
-        let response = self.client
-            .post(&self.webhook_url)
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed to send request to Slack webhook")?;
-
-        match response.error_for_status() {
-            Ok(_) => {
-                metrics::counter!("webhook_deliveries", "status" => "success", "destination" => "slack").increment(1);
-                Ok(())
-            }
-            Err(e) => {
-                metrics::counter!("webhook_deliveries", "status" => "failure", "destination" => "slack").increment(1);
-                Err(e).context("Slack API returned an error status")
-            }
-        }
-    }
-}
-
-// =============================================================================
 // Tests
 // =============================================================================
 
@@ -326,23 +257,6 @@ mod tests {
         assert_eq!(mock2.alerts.lock().unwrap()[0], alert);
     }
 
-    #[tokio::test]
-    async fn test_slack_output_request_format() {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#" "ok" "#)
-            .create_async()
-            .await;
-
-        let output = SlackOutput::new(server.url());
-        let alert = create_test_alert();
-
-        output.send_alert(&alert).await.unwrap();
-        mock.assert_async().await;
-    }
 
     #[test]
     fn test_stdout_output_plain_text_format() {

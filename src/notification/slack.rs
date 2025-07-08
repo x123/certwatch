@@ -5,6 +5,7 @@
 //! "attachments" field to create a well-formatted, readable alert summary.
 
 use serde::Serialize;
+use tracing::{error, info, instrument};
 
 /// Represents the top-level structure of a Slack message payload.
 #[derive(Serialize, Debug)]
@@ -211,19 +212,47 @@ impl SlackClientTrait for SlackClient {
     ///
     /// # Arguments
     /// * `alerts` - A slice of `Alert`s to send.
+    #[instrument(skip(self, alerts), fields(count = alerts.len()))]
     async fn send_batch(&self, alerts: &[crate::core::Alert]) -> anyhow::Result<()> {
         if alerts.is_empty() {
             return Ok(());
         }
 
+        info!("Attempting to send batch to Slack.");
+
         let message = build_slack_message(alerts);
-        self.client
+        let response = self
+            .client
             .post(&self.webhook_url)
             .json(&message)
             .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
+            .await;
+
+        match response {
+            Ok(res) => {
+                if res.status().is_success() {
+                    info!("Successfully sent batch of {} alerts to Slack.", alerts.len());
+                    Ok(())
+                } else {
+                    let status = res.status();
+                    let text = res.text().await.unwrap_or_default();
+                    error!(
+                        status = %status,
+                        body = %text,
+                        "Failed to send Slack notification"
+                    );
+                    anyhow::bail!(
+                        "Failed to send Slack notification: status {}, body: {}",
+                        status,
+                        text
+                    );
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "HTTP request to Slack failed");
+                Err(e.into())
+            }
+        }
     }
 }
 
