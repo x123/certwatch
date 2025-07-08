@@ -25,6 +25,7 @@
       - **Unit Tests:** Place these inside a `#[cfg(test)] mod tests { ... }` block within the same file as the code they test.
       - **Integration Tests:** Place these in the top-level `/tests` directory to test how components work together.
       - **Dependency Isolation:** For unit tests, the primary strategy **must** be **Trait-Based Dependency Injection** with hand-written "fake" implementations. Mocking libraries like `mockall` should only be used as a secondary tool when verifying the exact nature of an interaction is critical.
+      - **Hermetic Integration Tests:** When using the `TestAppBuilder` for integration tests, all external dependencies and side-effects **must** be mocked. This includes, but is not limited to, DNS resolution (`with_dns_resolver`), enrichment (`with_enrichment_provider`), WebSocket connections (`with_websocket`), and outputs (`with_outputs`). The goal is to create a fully controlled environment where the test outcome is deterministic and not subject to external factors or timing issues. Relying on default-initialized mocks or real services is strictly forbidden in these tests.
 
 ## 5. Version Control
 
