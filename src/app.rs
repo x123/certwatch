@@ -44,7 +44,9 @@ pub async fn run(
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
 ) -> Result<()> {
     // =========================================================================
-    // Initialize Metrics Recorder if enabled
+    // 1. Initialize Metrics Recorder (and logging)
+    //
+    // This MUST happen first so that startup logs are visible.
     // =========================================================================
     let mut metrics_task: Option<JoinHandle<()>> = None;
     if config.metrics.log_metrics {
@@ -61,11 +63,11 @@ pub async fn run(
     }
 
     // =========================================================================
-    // 1. Instantiate Services
+    // 2. Pre-flight Checks
     // =========================================================================
-    let pattern_matcher = Arc::new(
-        PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
-    );
+    // =========================================================================
+    // 2. Pre-flight Checks & Service Instantiation
+    // =========================================================================
     let dns_resolver = match dns_resolver_override {
         Some(resolver) => resolver,
         None => {
@@ -73,6 +75,15 @@ pub async fn run(
             Arc::new(resolver)
         }
     };
+
+    DnsHealthMonitor::startup_check(dns_resolver.as_ref(), &config.dns.health).await?;
+
+    // =========================================================================
+    // 3. Instantiate Remaining Services
+    // =========================================================================
+    let pattern_matcher = Arc::new(
+        PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
+    );
     let enrichment_provider: Arc<dyn EnrichmentProvider> = match enrichment_provider_override {
         Some(provider) => provider,
         None => {
@@ -391,10 +402,10 @@ async fn process_domain(
     if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
         debug!(source_tag, "Domain matched pattern");
         let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
-        info!(?result, "DNS resolution result");
+        debug!(?result, "DNS resolution result");
         match result {
             Ok(dns_info) => {
-                info!("Building alert for successful DNS resolution");
+                debug!("Building alert for successful DNS resolution");
                 let alert = build_alert(
                     domain,
                     source_tag.to_string(),
@@ -409,7 +420,7 @@ async fn process_domain(
             }
             Err(DnsError::Resolution(e)) => {
                 if e.to_string().contains("NXDOMAIN") {
-                    info!("Building alert for NXDOMAIN");
+                    debug!("Building alert for NXDOMAIN");
                     let alert = build_alert(
                         domain,
                         source_tag.to_string(),

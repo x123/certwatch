@@ -1,7 +1,6 @@
 .direnv/
 .roo/
 data/
-
 flake.lock
 result
 todo.md

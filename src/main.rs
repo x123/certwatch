@@ -7,7 +7,6 @@ use anyhow::Result;
 use certwatch::{
     cli::Cli,
     config::{Config, OutputFormat},
-    dns::HickoryDnsResolver,
 };
 use clap::Parser;
 use tracing::{error, info};
@@ -17,24 +16,33 @@ use tokio::sync::watch;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Load configuration by layering sources: defaults, file, environment, and CLI args.
-    let config = Config::load(&cli).unwrap_or_else(|err| {
-        // Manually initialize logger for this specific error
-        // Logging will be initialized by the time we get here if successful
-        error!("Failed to load configuration: {}", err);
-        // Exit if configuration fails, as it's a critical step.
-        std::process::exit(1);
-    });
-
-    // Initialize tracing subscriber
+    // Initialize logging ASAP. We'll use a default log level for now.
+    // The final log level will be determined by the config.
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(
+            "info".parse().unwrap(),
+        ))
         .init();
 
     info!("CertWatch starting up...");
 
+    // Load configuration by layering sources: defaults, file, environment, and CLI args.
+    let config = Config::load(&cli).unwrap_or_else(|err| {
+        error!("Failed to load configuration: {}", err);
+        std::process::exit(1);
+    });
+
+    // Re-initialize the logger with the final log level from the config.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(config.log_level.parse().unwrap()),
+        )
+        .try_init();
+
+
     // Log the loaded configuration settings for visibility
-    log_config_settings(&config, &cli)?;
+    log_config_settings(&config, &cli);
 
     // =========================================================================
     // Create Shutdown Channel
@@ -59,7 +67,7 @@ async fn main() -> Result<()> {
 }
 
 /// Logs the final, merged configuration settings to the console.
-fn log_config_settings(config: &Config, cli: &Cli) -> Result<()> {
+fn log_config_settings(config: &Config, cli: &Cli) {
     info!("-------------------- Configuration --------------------");
     info!("Log Level: {}", config.log_level);
     info!("Log Metrics: {}", config.metrics.log_metrics);
@@ -74,12 +82,10 @@ fn log_config_settings(config: &Config, cli: &Cli) -> Result<()> {
     );
     info!("CertStream URL: {}", config.network.certstream_url);
     info!("Sample Rate: {}% (sample_rate:{})", (config.network.sample_rate * 100.0) as u64, config.network.sample_rate);
-    let (_dns_resolver, nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
     if let Some(resolver) = &config.dns.resolver {
         info!("DNS Resolver: {}", resolver);
     } else {
-        let ns_str: Vec<String> = nameservers.iter().map(|s| s.to_string()).collect();
-        info!("DNS Resolver: System Default ({})", ns_str.join(", "));
+        info!("DNS Resolver: System Default");
     }
     if let Some(timeout) = config.dns.timeout_ms {
         info!("DNS Timeout: {}ms", timeout);
@@ -128,5 +134,4 @@ fn log_config_settings(config: &Config, cli: &Cli) -> Result<()> {
         config.deduplication.cache_ttl_seconds
     );
     info!("-------------------------------------------------------");
-    Ok(())
 }

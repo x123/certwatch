@@ -282,3 +282,22 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Create a new `src/types.rs` module.
     - [x] Define type aliases like `DomainReceiver` and `AlertSender`.
     - [x] Refactor function signatures in `src/app.rs` to use the new aliases.
+
+
+---
+### Epic 38: Improve Startup Resilience and Diagnostics
+**User Story:** As an operator, I want the application to provide immediate, clear feedback on startup if a critical dependency like DNS is misconfigured, so I can diagnose and fix the issue without confusion.
+
+- [x] **#123 - Prevent Hang on Unresponsive DNS Resolver**
+  - **Context:** The application would hang silently on startup if the configured DNS resolver was unreachable, making it difficult to debug.
+  - **Subtasks:**
+    - [x] Implemented a pre-flight health check in `DnsHealthMonitor` to validate the DNS resolver on startup.
+    - [x] Refactored the check to be mockable and accept a `&amp;dyn DnsResolver`.
+    - [x] Integrated the check into `app::run` to ensure it runs before any other services.
+    - [x] Added integration tests using a `FakeDnsResolver` to verify both successful and failing startup scenarios.
+- [x] **#124 - Ensure Early Startup Logging**
+  - **Context:** No log messages were visible until late in the startup process, making it hard to trace initialization issues.
+  - **Subtasks:**
+    - [x] Refactored `main.rs` to initialize the `tracing_subscriber` immediately after parsing CLI arguments.
+    - [x] Ensured that configuration loading and pre-flight checks are now logged.
+    - [x] Removed network-dependent checks from the configuration logging function.

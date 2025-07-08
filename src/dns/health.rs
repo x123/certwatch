@@ -7,10 +7,12 @@
 use crate::config::DnsHealthConfig;
 use crate::core::DnsResolver;
 use crate::utils::heartbeat::run_heartbeat;
+use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
+use tracing::info;
 
 /// Represents the health state of the DNS resolver.
 #[derive(Debug, PartialEq, Clone)]
@@ -42,6 +44,25 @@ pub struct DnsHealthMonitor {
 }
 
 impl DnsHealthMonitor {
+    /// Performs a quick, one-off health check to ensure the configured DNS
+    /// resolver is responsive before starting the main application.
+    pub async fn startup_check(
+        resolver: &dyn DnsResolver,
+        config: &DnsHealthConfig,
+    ) -> Result<()> {
+        info!("Performing startup DNS health check...");
+
+        match resolver.resolve(&config.recovery_check_domain).await {
+            Ok(_) => {
+                info!("DNS health check passed.");
+                Ok(())
+            }
+            Err(e) => {
+                anyhow::bail!("DNS health check failed: Resolver could not resolve '{}': {}. Please check your DNS configuration.", config.recovery_check_domain, e)
+            }
+        }
+    }
+
     /// Creates a new DNS health monitor and starts its background tasks.
     pub fn new(
         config: DnsHealthConfig,
