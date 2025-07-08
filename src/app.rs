@@ -3,7 +3,7 @@
 use crate::{
     build_alert,
     config::Config,
-    core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output, PatternMatcher},
+    core::{Alert, DnsInfo, DnsResolver, EnrichmentInfo, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     enrichment::tsv_lookup::TsvAsnLookup,
@@ -21,6 +21,17 @@ use tokio::{
     sync::{mpsc, Mutex, watch},
     task::JoinHandle,
 };
+
+// A simple no-op enrichment provider for when the TSV database is not available.
+#[derive(Debug, Clone)]
+struct NoOpEnrichmentProvider;
+
+#[async_trait::async_trait]
+impl EnrichmentProvider for NoOpEnrichmentProvider {
+    async fn enrich(&self, ip: std::net::IpAddr) -> Result<EnrichmentInfo> {
+        Ok(EnrichmentInfo { ip, data: None })
+    }
+}
 
 /// Runs the main application logic.
 #[instrument(skip_all)]
@@ -65,14 +76,29 @@ pub async fn run(
     let enrichment_provider: Arc<dyn EnrichmentProvider> = match enrichment_provider_override {
         Some(provider) => provider,
         None => {
-            let tsv_path = config.enrichment.asn_tsv_path.clone().ok_or_else(|| {
-                anyhow::anyhow!("asn_tsv_path is required for enrichment")
-            })?;
-
-            if !tsv_path.exists() {
-                return Err(anyhow::anyhow!("TSV database not found at {:?}", tsv_path));
+            if let Some(tsv_path) = &config.enrichment.asn_tsv_path {
+                if tsv_path.exists() {
+                    match TsvAsnLookup::new_from_path(tsv_path) {
+                        Ok(lookup) => Arc::new(lookup),
+                        Err(e) => {
+                            warn!(
+                                "Failed to load ASN database from {:?}, proceeding without enrichment: {}",
+                                tsv_path, e
+                            );
+                            Arc::new(NoOpEnrichmentProvider)
+                        }
+                    }
+                } else {
+                    warn!(
+                        "ASN database not found at {:?}, proceeding without enrichment.",
+                        tsv_path
+                    );
+                    Arc::new(NoOpEnrichmentProvider)
+                }
+            } else {
+                info!("No ASN database configured, proceeding without enrichment.");
+                Arc::new(NoOpEnrichmentProvider)
             }
-            Arc::new(TsvAsnLookup::new_from_path(&tsv_path)?)
         }
     };
     let deduplicator = Arc::new(Deduplicator::new(

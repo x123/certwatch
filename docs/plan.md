@@ -1,4 +1,16 @@
 ---
+### Epic 37: Unplanned Maintenance &amp; Bug Fixes
+**User Story:** As a developer, I want to quickly address critical bugs and regressions to ensure the application remains stable and reliable for users.
+
+- [x] **#122 - Fix Startup Crash Due to Missing ASN Database**
+  - **Context:** A regression was introduced that caused the application to panic and exit on startup if the optional ASN TSV database file was not found at the path specified in the configuration.
+  - **Subtasks:**
+    - [x] Used `git bisect` to identify the faulty commit (`e0866a59`).
+    - [x] Analyzed the commit to understand the root cause of the regression.
+    - [x] Modified `src/app.rs` to handle the missing file gracefully by logging a warning and disabling the enrichment feature, rather than crashing.
+    - [x] Verified the fix by running the application and confirming it no longer panics.
+
+---
 ### Epic 35: Observability and Error Handling
 **User Story:** As a developer, I want to have clear, top-level logs and metrics for domain processing, so that I can easily monitor the application's health and diagnose failures without digging through deep call stacks.
 

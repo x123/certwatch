@@ -18,16 +18,16 @@ queue_capacity = 100000
 # REQUIRED: A running certstream-server certstream_url. Use
 # https://github.com/CaliDog/certstream-server or similar.
 certstream_url = "wss://127.0.0.1:8181/domains-only"
-sample_rate = 1.0 # 1.0 = 100% sampling, 0.01 = 1% sampling
+sample_rate = 0.01 # 1.0 = 100% sampling, 0.01 = 1% sampling
 allow_invalid_certs = true
 
 [matching]
 # REQUIRED: A list of file paths containing regex patterns. For example:
-# pattern_files = ["patterns/phishing.txt", "patterns/malware.txt"]
+pattern_files = ["data/patterns/match-all.txt"]
 
 [dns]
 # Optional: Specify a custom DNS resolver. If commented out, uses the system default.
-# resolver = "192.168.1.1:53"
+resolver = "8.8.8.8:53"
 
 # Optional: Specify the timeout for a single DNS query in milliseconds.
 # timeout_ms = 5000
