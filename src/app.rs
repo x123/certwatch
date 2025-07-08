@@ -3,10 +3,9 @@
 use crate::{
     build_alert,
     config::Config,
-    core::{Alert, DnsInfo, DnsResolver, EnrichmentInfo, EnrichmentProvider, Output, PatternMatcher},
+    core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output, PatternMatcher},
     deduplication::Deduplicator,
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
-    enrichment::tsv_lookup::TsvAsnLookup,
     internal_metrics::logging_recorder::LoggingRecorder,
     matching::PatternWatcher,
     network::{CertStreamClient, WebSocketConnection},
@@ -22,16 +21,6 @@ use tokio::{
     task::JoinHandle,
 };
 
-// A simple no-op enrichment provider for when the TSV database is not available.
-#[derive(Debug, Clone)]
-struct NoOpEnrichmentProvider;
-
-#[async_trait::async_trait]
-impl EnrichmentProvider for NoOpEnrichmentProvider {
-    async fn enrich(&self, ip: std::net::IpAddr) -> Result<EnrichmentInfo> {
-        Ok(EnrichmentInfo { ip, data: None })
-    }
-}
 
 /// Runs the main application logic.
 #[instrument(skip_all)]
@@ -84,34 +73,8 @@ pub async fn run(
     let pattern_matcher = Arc::new(
         PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
     );
-    let enrichment_provider: Arc<dyn EnrichmentProvider> = match enrichment_provider_override {
-        Some(provider) => provider,
-        None => {
-            if let Some(tsv_path) = &config.enrichment.asn_tsv_path {
-                if tsv_path.exists() {
-                    match TsvAsnLookup::new_from_path(tsv_path) {
-                        Ok(lookup) => Arc::new(lookup),
-                        Err(e) => {
-                            warn!(
-                                "Failed to load ASN database from {:?}, proceeding without enrichment: {}",
-                                tsv_path, e
-                            );
-                            Arc::new(NoOpEnrichmentProvider)
-                        }
-                    }
-                } else {
-                    warn!(
-                        "ASN database not found at {:?}, proceeding without enrichment.",
-                        tsv_path
-                    );
-                    Arc::new(NoOpEnrichmentProvider)
-                }
-            } else {
-                info!("No ASN database configured, proceeding without enrichment.");
-                Arc::new(NoOpEnrichmentProvider)
-            }
-        }
-    };
+    let enrichment_provider = enrichment_provider_override
+        .expect("Enrichment provider is now required to be passed into app::run");
     let deduplicator = Arc::new(Deduplicator::new(
         Duration::from_secs(config.deduplication.cache_ttl_seconds),
         config.deduplication.cache_size as u64,
@@ -490,8 +453,8 @@ mod tests {
 
     #[async_trait::async_trait]
     impl EnrichmentProvider for FakeEnrichmentProvider {
-        async fn enrich(&self, _ip: std::net::IpAddr) -> Result<crate::core::EnrichmentInfo> {
-            Ok(crate::core::EnrichmentInfo::default())
+        async fn enrich(&self, ip: std::net::IpAddr) -> Result<crate::core::EnrichmentInfo> {
+            Ok(EnrichmentInfo { ip, data: None })
         }
     }
 

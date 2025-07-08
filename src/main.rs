@@ -56,8 +56,36 @@ async fn main() -> Result<()> {
         shutdown_tx.send(()).expect("Failed to send shutdown signal");
     });
 
+    // =========================================================================
+    // Pre-flight Checks
+    // =========================================================================
+    info!("Performing Enrichment data check...");
+    let enrichment_provider =
+        certwatch::enrichment::health::startup_check(&config)
+            .await
+            .map_err(|e| {
+                error!("Enrichment data check failed: {}", e);
+                e
+            })?;
+    info!("Enrichment data check successful.");
+
+    // In test mode, exit immediately after successful startup checks.
+    if cli.test_mode {
+        info!("Test mode enabled. Exiting after successful startup.");
+        return Ok(());
+    }
+
     // Run the main application logic
-    if let Err(e) = certwatch::app::run(config, shutdown_rx, None, None, None, None).await {
+    if let Err(e) = certwatch::app::run(
+        config,
+        shutdown_rx,
+        None,
+        None,
+        None,
+        Some(enrichment_provider),
+    )
+    .await
+    {
         error!("Application error: {}", e);
         std::process::exit(1);
     }

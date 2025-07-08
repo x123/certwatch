@@ -301,3 +301,18 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Refactored `main.rs` to initialize the `tracing_subscriber` immediately after parsing CLI arguments.
     - [x] Ensured that configuration loading and pre-flight checks are now logged.
     - [x] Removed network-dependent checks from the configuration logging function.
+
+---
+### Epic 39: Improve Startup Resilience for Enrichment Data
+**User Story:** As an operator, I want the application to fail fast with a clear error message if the configured TSV enrichment file is missing or invalid, so I can avoid silent failures and quickly diagnose configuration issues.
+
+- [x] **#125 - Implement Pre-flight Check for TSV Enrichment Data**
+  - **Context:** Following the "Startup Pattern", we will add a pre-flight check to validate the TSV enrichment data source at application startup.
+  - **Subtasks:**
+    - [x] Create a new integration test file `tests/enrichment_startup.rs`.
+    - [x] Add integration tests to verify that the application exits with an error if the `asn_tsv_path` is configured but the file is missing or malformed.
+    - [x] Add an integration test to verify that the application starts successfully if `asn_tsv_path` is not configured.
+    - [x] Create a new module `src/enrichment/health.rs`.
+    - [x] Implement a `startup_check(config: &Config) -> Result<Arc<dyn EnrichmentProvider>>` function in the new module.
+    - [x] Refactor `main()` to call the new `startup_check` function.
+    - [x] Refactor `app::run()` to accept the `EnrichmentProvider` as an argument, removing the internal creation logic.

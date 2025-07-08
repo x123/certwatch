@@ -203,11 +203,14 @@ impl Config {
     pub fn load(cli: &Cli) -> Result<Self> {
         let config_path = cli.config.clone().unwrap_or_else(|| "certwatch.toml".into());
 
-        let figment = Figment::new()
-            .merge(Serialized::defaults(Config::default()))
-            .merge(Toml::file(config_path))
-            .merge(Env::prefixed("CERTWATCH_"))
-            .merge(cli.clone());
+        let mut figment = Figment::new()
+            .merge(Serialized::defaults(Config::default()));
+
+        if config_path.exists() {
+            figment = figment.merge(Toml::file(&config_path));
+        }
+
+        let figment = figment.merge(Env::prefixed("CERTWATCH_")).merge(cli.clone());
 
         let config: Config = figment.extract()?;
         Ok(config)

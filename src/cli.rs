@@ -54,6 +54,14 @@ pub struct Cli {
     /// Output alerts in JSON format to stdout, overriding the config file setting.
     #[arg(short, long, action = clap::ArgAction::SetTrue)]
     pub json: bool,
+
+    /// Path to the TSV ASN database file.
+    #[arg(long, value_name = "FILE")]
+    pub enrichment_asn_tsv_path: Option<PathBuf>,
+
+    /// (For testing only) Exit immediately after successful startup.
+    #[arg(long, hide = true)]
+    pub test_mode: bool,
 }
 
 impl Provider for Cli {
@@ -103,6 +111,15 @@ impl Provider for Cli {
                 "metrics.log_aggregation_seconds".into(),
                 Value::from(seconds),
             );
+        }
+
+        if let Some(path) = self.enrichment_asn_tsv_path.as_ref() {
+            let mut enrichment_dict = Dict::new();
+            enrichment_dict.insert(
+                "asn_tsv_path".into(),
+                Value::from(path.to_string_lossy().into_owned()),
+            );
+            dict.insert("enrichment".into(), Value::from(enrichment_dict));
         }
 
         let mut map = Map::new();
