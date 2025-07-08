@@ -14,6 +14,7 @@ use crate::{
     utils::heartbeat::run_heartbeat,
 };
 use anyhow::Result;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, instrument, warn};
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -31,6 +32,7 @@ pub async fn run(
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
+    alert_tx: Option<broadcast::Sender<Alert>>,
 ) -> Result<()> {
     // =========================================================================
     // 1. Initialize Metrics Recorder (and logging)
@@ -104,7 +106,7 @@ pub async fn run(
         let (tx, rx) = mpsc::channel::<String>(config.performance.queue_capacity);
         (tx, Arc::new(Mutex::new(rx)))
     };
-    let (alerts_tx, mut alerts_rx): (AlertSender, mpsc::Receiver<Alert>) =
+    let (alerts_tx, alerts_rx): (AlertSender, mpsc::Receiver<Alert>) =
         mpsc::channel::<Alert>(1000);
 
     // =========================================================================
@@ -286,37 +288,13 @@ pub async fn run(
     // =========================================================================
     // 8. Alert Deduplication and Output Task
     // =========================================================================
-    let output_task = {
-        let mut shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
-            let hb_shutdown_rx = shutdown_rx.clone();
-            tokio::spawn(
-                async move { run_heartbeat("OutputManager", hb_shutdown_rx).await },
-            );
-
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = shutdown_rx.changed() => {
-                        info!("Output task received shutdown signal.");
-                        break;
-                    }
-                    Some(alert) = alerts_rx.recv() => {
-                        if !deduplicator.is_duplicate(&alert).await {
-                            metrics::counter!("agg.alerts_sent").increment(1);
-                            if let Err(e) = output_manager.send_alert(&alert).await {
-                                error!("Failed to send alert via output manager: {}", e);
-                            }
-                        }
-                    }
-                    else => {
-                        break;
-                    }
-                }
-            }
-            info!("Output task finished.");
-        })
-    };
+    let output_task = tokio::spawn(output_task_logic(
+        shutdown_rx.clone(),
+        alerts_rx,
+        deduplicator,
+        output_manager,
+        alert_tx,
+    ));
 
     info!("CertWatch initialized successfully. Monitoring for domains...");
 
@@ -352,9 +330,57 @@ pub async fn run(
     Ok(())
 }
 
+#[instrument(skip_all)]
+async fn output_task_logic(
+    mut shutdown_rx: watch::Receiver<()>,
+    mut alerts_rx: mpsc::Receiver<Alert>,
+    deduplicator: Arc<Deduplicator>,
+    output_manager: Arc<OutputManager>,
+    alert_tx: Option<broadcast::Sender<Alert>>,
+) {
+    let hb_shutdown_rx = shutdown_rx.clone();
+    tokio::spawn(async move { run_heartbeat("OutputManager", hb_shutdown_rx).await });
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown_rx.changed() => {
+                println!("[DEBUG] Output task received shutdown signal.");
+                info!("Output task received shutdown signal.");
+                break;
+            }
+            Some(alert) = alerts_rx.recv() => {
+                println!("[DEBUG] Output task received alert for domain: {}", alert.domain);
+                if !deduplicator.is_duplicate(&alert).await {
+                    println!("[DEBUG] Domain {} is not a duplicate. Processing.", alert.domain);
+                    metrics::counter!("agg.alerts_sent").increment(1);
+
+                    // Publish to notification pipeline if enabled
+                    if let Some(tx) = &alert_tx {
+                        println!("[DEBUG] Publishing alert to notification channel for domain: {}", alert.domain);
+                        if let Err(e) = tx.send(alert.clone()) {
+                            println!("[DEBUG] Failed to publish alert for domain: {}. Error: {}", alert.domain, e);
+                            warn!("Failed to publish alert to notification channel: {}", e);
+                        }
+                    }
+
+                    if let Err(e) = output_manager.send_alert(&alert).await {
+                        error!("Failed to send alert via output manager: {}", e);
+                    }
+                }
+            }
+            else => {
+                break;
+            }
+        }
+    }
+    info!("Output task finished.");
+}
+
+
 /// Processes a single domain: matches, resolves, enriches, and sends alerts.
 #[instrument(skip_all, fields(domain = %domain, worker_id = worker_id))]
-async fn process_domain(
+pub async fn process_domain(
     domain: String,
     worker_id: usize,
     pattern_matcher: Arc<dyn PatternMatcher>,

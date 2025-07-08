@@ -38,6 +38,8 @@ pub struct Config {
     pub output: OutputConfig,
     /// Configuration for alert deduplication.
     pub deduplication: DeduplicationConfig,
+    /// Configuration for the notification system.
+    pub notifications: NotificationConfig,
 }
 
 /// Configuration for performance tuning.
@@ -182,6 +184,19 @@ pub struct SlackConfig {
     pub webhook_url: String,
 }
 
+/// Configuration for alert deduuplication.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct NotificationConfig {
+    /// Globally enables or disables the notification pipeline.
+    pub enabled: bool,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
 /// Configuration for alert deduplication.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DeduplicationConfig {
@@ -245,6 +260,7 @@ impl Default for Config {
                 cache_size: 100_000,
                 cache_ttl_seconds: 3600,
             },
+            notifications: NotificationConfig::default(),
         }
     }
 }

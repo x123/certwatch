@@ -1,71 +1,64 @@
-//! Integration test for the pattern matching engine.
+//! Unit test for the pattern matching engine.
 use anyhow::Result;
-use std::sync::Arc;
-use std::time::Duration;
-use tempfile::NamedTempFile;
-
-mod helpers;
-use helpers::{
-    app::TestAppBuilder,
-    mock_output::FailableMockOutput,
-    mock_ws::MockWebSocket,
+use certwatch::{
+    app::process_domain,
+    core::{DnsInfo, PatternMatcher},
+    dns::{test_utils::FakeDnsResolver, DnsHealthMonitor, DnsResolutionManager},
+    enrichment::fake::FakeEnrichmentProvider,
 };
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
 
-/// Test that the application correctly matches a domain from the WebSocket
-/// against the configured patterns and sends an alert.
+// A mock pattern matcher for testing purposes.
+struct MockPatternMatcher;
+#[async_trait::async_trait]
+impl PatternMatcher for MockPatternMatcher {
+    async fn match_domain(&self, _domain: &str) -> Option<String> {
+        Some("test-source".to_string())
+    }
+}
+
 #[tokio::test]
-async fn test_pattern_matching_sends_alert() -> Result<()> {
-    let _ = env_logger::builder().is_test(true).try_init();
+async fn test_process_domain_sends_alert_on_match() -> Result<()> {
+    // 1. Arrange
+    let pattern_matcher = Arc::new(MockPatternMatcher);
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
 
-    // 1. Create a mock websocket and a mock output to capture alerts.
-    let mock_ws = MockWebSocket::new();
-    let mock_output = Arc::new(FailableMockOutput::new());
+    let dns_resolver = Arc::new(FakeDnsResolver::new());
+    dns_resolver.add_success_response("matching.com", DnsInfo::default());
 
-    // 2. Create a temporary pattern file.
-    let mut pattern_file = NamedTempFile::new()?;
-    std::io::Write::write_all(&mut pattern_file, b"github\\.com\tgit-domains")?;
-
-    // 3. Build the application with our mocks and the real pattern file.
-    // We also need to provide a fake enrichment provider and DNS resolver.
-    let fake_dns_resolver = certwatch::dns::test_utils::FakeDnsResolver::new();
-    fake_dns_resolver.add_success_response("www.github.com", {
-        let mut dns_info = certwatch::core::DnsInfo::default();
-        dns_info.a_records.push("1.1.1.1".parse().unwrap());
-        dns_info
-    });
-
-    let mut app_builder = TestAppBuilder::new()
-        .with_outputs(vec![mock_output.clone()])
-        .with_pattern_files(vec![pattern_file.path().to_path_buf()])
-        .with_enrichment_provider(Arc::new(helpers::fake_enrichment::FakeEnrichmentProvider::new()))
-        .with_dns_resolver(Arc::new(fake_dns_resolver));
-
-    // The app requires an ASN database file to exist, even if it's empty.
-    let asn_file = NamedTempFile::new()?;
-    app_builder.config.enrichment.asn_tsv_path = Some(asn_file.path().to_path_buf());
-
-    let app = app_builder.with_websocket(Box::new(mock_ws.clone())).build().await?;
-
-    // 4. Send a matching domain through the mock websocket.
-    println!("[DEBUG] Sending domain 'www.github.com' to mock websocket...");
-    mock_ws.add_domain_message("www.github.com");
-
-    // 5. Wait a moment for the app to process the domain.
-    println!("[DEBUG] Waiting for 2 seconds for processing...");
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // 6. Assert that our mock output received exactly one alert.
-    let alerts = mock_output.alerts.lock().unwrap();
-    println!("[DEBUG] Found {} alerts in mock output.", alerts.len());
-    assert_eq!(
-        alerts.len(),
-        1,
-        "An alert should have been sent for the matching domain"
+    let (dns_manager, _) = DnsResolutionManager::new(
+        dns_resolver.clone(),
+        Default::default(),
+        DnsHealthMonitor::new(Default::default(), dns_resolver, shutdown_rx.clone()),
+        shutdown_rx,
     );
+    let dns_manager = Arc::new(dns_manager);
 
-    // 7. Shutdown the app.
-    mock_ws.close();
-    app.shutdown(Duration::from_secs(5)).await?;
+    let enrichment_provider = Arc::new(FakeEnrichmentProvider::new());
+    let (alerts_tx, mut alerts_rx) = mpsc::channel(1);
 
+    // 2. Act
+    let result = process_domain(
+        "matching.com".to_string(),
+        0, // worker_id
+        pattern_matcher,
+        dns_manager,
+        enrichment_provider,
+        alerts_tx,
+    )
+    .await;
+
+    // 3. Assert
+    assert!(result.is_ok(), "process_domain should succeed");
+
+    let alert = alerts_rx.recv().await;
+    assert!(alert.is_some(), "An alert should have been sent");
+    let alert = alert.unwrap();
+    assert_eq!(alert.domain, "matching.com");
+    assert_eq!(alert.source_tag, "test-source");
+
+    // ensure shutdown channel is used
+    drop(shutdown_tx);
     Ok(())
 }

@@ -7,10 +7,12 @@ use anyhow::Result;
 use certwatch::{
     cli::Cli,
     config::{Config, OutputFormat},
+    core::Alert,
+    notification,
 };
 use clap::Parser;
+use tokio::sync::{broadcast, watch};
 use tracing::{error, info};
-use tokio::sync::watch;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,6 +77,18 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // =========================================================================
+    // Setup Notification Pipeline
+    // =========================================================================
+    let alert_tx = if config.notifications.enabled {
+        let (tx, rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
+        info!("Notification pipeline enabled.");
+        notification::logging_subscriber::spawn(rx, None);
+        Some(tx)
+    } else {
+        None
+    };
+
     // Run the main application logic
     if let Err(e) = certwatch::app::run(
         config,
@@ -83,6 +97,7 @@ async fn main() -> Result<()> {
         None,
         None,
         Some(enrichment_provider),
+        alert_tx,
     )
     .await
     {

@@ -24,6 +24,7 @@ async fn test_app_startup_succeeds_with_healthy_resolver() {
         None,
         Some(fake_resolver),
         Some(fake_enrichment),
+        None,
     ));
 
     // Signal shutdown and wait for the app to complete.
@@ -49,6 +50,7 @@ async fn test_app_startup_fails_with_unhealthy_resolver() {
         None,
         Some(fake_resolver),
         Some(fake_enrichment),
+        None,
     )
     .await;
 

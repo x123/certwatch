@@ -47,6 +47,7 @@ live-tests = []
 test-utils = []
 
 [dev-dependencies]
+tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 tokio-test = "0.4"
 certwatch = { path = ".", features = ["test-utils"] }
 tempfile = "3.8"
@@ -63,7 +64,6 @@ required-features = ["live-tests"]
 
 [[test]]
 name = "live_pattern_matching"
-required-features = ["live-tests"]
 
 [[test]]
 name = "live_hot_reload"

@@ -62,6 +62,10 @@ pub struct Cli {
     /// (For testing only) Exit immediately after successful startup.
     #[arg(long, hide = true)]
     pub test_mode: bool,
+
+    /// Enable the notification pipeline.
+    #[arg(long)]
+    pub enable_notifications: bool,
 }
 
 impl Provider for Cli {
@@ -120,6 +124,10 @@ impl Provider for Cli {
                 Value::from(path.to_string_lossy().into_owned()),
             );
             dict.insert("enrichment".into(), Value::from(enrichment_dict));
+        }
+
+        if self.enable_notifications {
+            dict.insert("notifications.enabled".into(), Value::from(true));
         }
 
         let mut map = Map::new();
