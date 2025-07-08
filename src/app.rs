@@ -349,7 +349,7 @@ async fn output_task_logic(
 
                     // Publish to notification pipeline if enabled
                     if let Some(tx) = &alert_tx {
-                        info!("Publishing alert to notification channel for domain: {}", &alert.domain);
+                        debug!("Publishing alert to notification channel for domain: {}", &alert.domain);
                         if let Err(e) = tx.send(alert.clone()) {
                             error!(domain = %alert.domain, error = %e, "Failed to publish alert to notification channel");
                         }
