@@ -52,7 +52,9 @@ async fn test_enrichment_failure_increments_failure_metric() -> Result<()> {
     mock_ws.add_domain_message("test.com");
 
     // 7. Give the app a moment to process the domain and fail
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    metrics_recorder
+        .wait_for_counter("cert_processing_failures", 1, Duration::from_secs(5))
+        .await;
 
     // 8. Assert that the failure counter was incremented
     assert_eq!(

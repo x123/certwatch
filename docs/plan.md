@@ -316,3 +316,49 @@ As a security analyst or operator, I want to define flexible "rules" that group 
     - [x] Implement a `startup_check(config: &Config) -> Result<Arc<dyn EnrichmentProvider>>` function in the new module.
     - [x] Refactor `main()` to call the new `startup_check` function.
     - [x] Refactor `app::run()` to accept the `EnrichmentProvider` as an argument, removing the internal creation logic.
+
+
+---
+
+### Epic #40: Refactor `dns` Module Architecture
+
+- **User Story:** As a developer, I want the `dns` module to follow the same clean, organized structure as the `enrichment` module, so that the codebase is more consistent, easier to navigate, and simpler to maintain.
+- **Acceptance Criteria:**
+  - The `src/dns` directory is created and populated with `mod.rs`, `health.rs`, `resolver.rs`, and `fake.rs`.
+  - The `DnsResolver` trait is defined in `src/dns/mod.rs`.
+  - The `startup_check` function is located in `src/dns/health.rs`.
+  - Production resolvers (`HickoryDnsResolver`, `NoOpDnsResolver`) are in `src/dns/resolver.rs`.
+  - The test-only `FakeDnsResolver` is in `src/dns/fake.rs` and conditionally compiled.
+  - The old `src/dns.rs` and `src/dns/health.rs` files are deleted.
+  - The application compiles and all tests pass after the refactoring.
+- **Tasks:**
+  - [ ] **#126 - Create new `dns` module structure**
+    - [ ] Create the directory `src/dns`.
+    - [ ] Create the files `src/dns/mod.rs`, `src/dns/health.rs`, `src/dns/resolver.rs`, and `src/dns/fake.rs`.
+  - [ ] **#127 - Migrate `DnsResolver` trait and implementations**
+    - [ ] Move `DnsResolver` trait to `src/dns/mod.rs`.
+    - [ ] Move `HickoryDnsResolver` and `NoOpDnsResolver` to `src/dns/resolver.rs`.
+    - [ ] Move `FakeDnsResolver` to `src/dns/fake.rs`.
+  - [ ] **#128 - Migrate `startup_check` function**
+    - [ ] Move the `startup_check` function to `src/dns/health.rs`.
+  - [ ] **#129 - Update codebase and remove old files**
+    - [ ] Update all module paths across the codebase to point to the new locations.
+    - [ ] Delete `src/dns.rs` and the old `src/dns/health.rs`.
+    - [ ] Run `cargo check` and `cargo test --all-features` to ensure everything works correctly.
+
+
+---
+
+### Epic #41: Harden Test Suite and Improve Error Propagation
+
+- **User Story:** As a developer, I want the test suite to be more robust and reliable, and I want to ensure that errors are correctly propagated throughout the application so that we can catch regressions more effectively.
+- **Acceptance Criteria:**
+  - The `dns_failure.rs` test is refactored to be a focused unit test that is no longer flaky.
+  - The `TestMetrics` helper is improved to support resetting counters between test scenarios.
+  - Errors from the `build_alert` function are correctly propagated and handled in `app::run`.
+  - The `enrichment_failure.rs` test correctly verifies that enrichment failures are recorded.
+- **Tasks:**
+  - [x] **#130 - Refactor `dns_failure.rs` to be a reliable unit test.**
+  - [x] **#131 - Add `reset()` method to `TestMetrics` helper.**
+  - [x] **#132 - Improve error propagation from `build_alert` function.**
+  - [ ] **#133 - Fix flaky `test_enrichment_failure_increments_failure_metric` test.**

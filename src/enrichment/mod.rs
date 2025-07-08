@@ -24,5 +24,5 @@ impl EnrichmentProvider for NoOpEnrichmentProvider {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "test-utils")]
 pub mod fake;

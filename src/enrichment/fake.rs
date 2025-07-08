@@ -1,10 +1,10 @@
 //! A fake enrichment provider for testing purposes.
 
-use crate::core::{AsnInfo, EnrichmentInfo, EnrichmentProvider};
+use crate::core::{EnrichmentInfo, EnrichmentProvider};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::sync::Mutex;
 
 /// Fake enrichment provider for testing.
@@ -46,69 +46,76 @@ impl EnrichmentProvider for FakeEnrichmentProvider {
     }
 }
 
-#[tokio::test]
-async fn test_fake_enrichment_provider_success() {
-    let provider = FakeEnrichmentProvider::new();
-    let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
-    let expected_info = EnrichmentInfo {
-        ip,
-        data: Some(AsnInfo {
-            as_number: 15169,
-            as_name: "Google LLC".to_string(),
-            country_code: Some("US".to_string()),
-        }),
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::AsnInfo;
+    use std::net::Ipv4Addr;
 
-    provider.add_response(ip, expected_info.clone());
+    #[tokio::test]
+    async fn test_fake_enrichment_provider_success() {
+        let provider = FakeEnrichmentProvider::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let expected_info = EnrichmentInfo {
+            ip,
+            data: Some(AsnInfo {
+                as_number: 15169,
+                as_name: "Google LLC".to_string(),
+                country_code: Some("US".to_string()),
+            }),
+        };
 
-    let result = provider.enrich(ip).await.unwrap();
-    assert_eq!(result.ip, expected_info.ip);
-    let data = result.data.unwrap();
-    assert_eq!(data.as_number, 15169);
-    assert_eq!(data.country_code.unwrap(), "US");
-}
+        provider.add_response(ip, expected_info.clone());
 
-#[tokio::test]
-async fn test_fake_enrichment_provider_partial_data() {
-    let provider = FakeEnrichmentProvider::new();
-    let ip = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
-    let expected_info = EnrichmentInfo {
-        ip,
-        data: Some(AsnInfo {
-            as_number: 13335,
-            as_name: "Cloudflare, Inc.".to_string(),
-            country_code: None,
-        }),
-    };
+        let result = provider.enrich(ip).await.unwrap();
+        assert_eq!(result.ip, expected_info.ip);
+        let data = result.data.unwrap();
+        assert_eq!(data.as_number, 15169);
+        assert_eq!(data.country_code.unwrap(), "US");
+    }
 
-    provider.add_response(ip, expected_info.clone());
+    #[tokio::test]
+    async fn test_fake_enrichment_provider_partial_data() {
+        let provider = FakeEnrichmentProvider::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1));
+        let expected_info = EnrichmentInfo {
+            ip,
+            data: Some(AsnInfo {
+                as_number: 13335,
+                as_name: "Cloudflare, Inc.".to_string(),
+                country_code: None,
+            }),
+        };
 
-    let result = provider.enrich(ip).await.unwrap();
-    assert_eq!(result.ip, expected_info.ip);
-    let data = result.data.unwrap();
-    assert!(data.country_code.is_none());
-}
+        provider.add_response(ip, expected_info.clone());
 
-#[tokio::test]
-async fn test_fake_enrichment_provider_error() {
-    let provider = FakeEnrichmentProvider::new();
-    let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
-    provider.add_error(ip, "Critical database failure");
+        let result = provider.enrich(ip).await.unwrap();
+        assert_eq!(result.ip, expected_info.ip);
+        let data = result.data.unwrap();
+        assert!(data.country_code.is_none());
+    }
 
-    let result = provider.enrich(ip).await;
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Critical database failure"));
-}
+    #[tokio::test]
+    async fn test_fake_enrichment_provider_error() {
+        let provider = FakeEnrichmentProvider::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
+        provider.add_error(ip, "Critical database failure");
 
-#[tokio::test]
-async fn test_fake_enrichment_provider_no_response_configured() {
-    let provider = FakeEnrichmentProvider::new();
-    let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let result = provider.enrich(ip).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Critical database failure"));
+    }
 
-    let result = provider.enrich(ip).await.unwrap();
-    assert_eq!(result.ip, ip);
-    assert!(result.data.is_none());
+    #[tokio::test]
+    async fn test_fake_enrichment_provider_no_response_configured() {
+        let provider = FakeEnrichmentProvider::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+        let result = provider.enrich(ip).await.unwrap();
+        assert_eq!(result.ip, ip);
+        assert!(result.data.is_none());
+    }
 }

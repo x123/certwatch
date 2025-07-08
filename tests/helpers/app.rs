@@ -8,6 +8,7 @@ use tokio::{task::JoinHandle, time::timeout};
 use tokio::sync::watch;
 
 /// Represents a running instance of the application for testing purposes.
+#[derive(Debug)]
 pub struct TestApp {
     pub shutdown_tx: watch::Sender<()>,
     pub app_handle: JoinHandle<Result<()>>,

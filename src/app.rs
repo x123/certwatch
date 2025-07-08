@@ -369,34 +369,50 @@ async fn process_domain(
         match result {
             Ok(dns_info) => {
                 debug!("Building alert for successful DNS resolution");
-                let alert = build_alert(
+                match build_alert(
                     domain,
                     source_tag.to_string(),
                     false,
                     dns_info,
                     enrichment_provider.clone(),
                 )
-                .await?;
-                if alerts_tx.send(alert).await.is_err() {
-                    anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
+                .await
+                {
+                    Ok(alert) => {
+                        if alerts_tx.send(alert).await.is_err() {
+                            anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to build alert: {}", e);
+                        anyhow::bail!("Failed to build alert: {}", e);
+                    }
                 }
             }
             Err(DnsError::Resolution(e)) => {
                 if e.to_string().contains("NXDOMAIN") {
                     debug!("Building alert for NXDOMAIN");
-                    let alert = build_alert(
+                    match build_alert(
                         domain,
                         source_tag.to_string(),
                         false,
                         DnsInfo::default(),
                         enrichment_provider.clone(),
                     )
-                    .await?;
-                    if alerts_tx.send(alert).await.is_err() {
-                        anyhow::bail!(
-                            "Alerts channel (NXDOMAIN) closed, worker {} exiting.",
-                            worker_id
-                        );
+                    .await
+                    {
+                        Ok(alert) => {
+                            if alerts_tx.send(alert).await.is_err() {
+                                anyhow::bail!(
+                                    "Alerts channel (NXDOMAIN) closed, worker {} exiting.",
+                                    worker_id
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to build alert for NXDOMAIN: {}", e);
+                            anyhow::bail!("Failed to build alert for NXDOMAIN: {}", e);
+                        }
                     }
                 } else {
                     debug!(error = %e, "DNS resolution failed");
@@ -414,10 +430,13 @@ async fn process_domain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{DnsInfo, DnsResolver, EnrichmentProvider, PatternMatcher};
-    use crate::dns::{DnsError, DnsResolutionManager};
+    use crate::{
+        core::{DnsInfo, DnsResolver, PatternMatcher},
+        dns::{DnsError, DnsResolutionManager},
+        enrichment::fake::FakeEnrichmentProvider,
+    };
     use std::sync::Arc;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, watch};
 
     // A mock pattern matcher for testing purposes.
     struct MockPatternMatcher {
@@ -448,16 +467,6 @@ mod tests {
         }
     }
 
-    // A fake enrichment provider for testing.
-    struct FakeEnrichmentProvider;
-
-    #[async_trait::async_trait]
-    impl EnrichmentProvider for FakeEnrichmentProvider {
-        async fn enrich(&self, ip: std::net::IpAddr) -> Result<crate::core::EnrichmentInfo> {
-            Ok(EnrichmentInfo { ip, data: None })
-        }
-    }
-
     #[tokio::test]
     async fn test_process_domain_dns_timeout_propagates_error() {
         // Arrange
@@ -465,9 +474,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let (_resolver, _health_monitor, _dns_manager) = {
             let resolver = Arc::new(MockDnsResolver {
-                resolve_to: Err(DnsError::Resolution(
-                    "timeout".to_string(),
-                )),
+                resolve_to: Err(DnsError::Resolution("timeout".to_string())),
             });
             let health_monitor = DnsHealthMonitor::new(
                 Default::default(),
@@ -484,7 +491,7 @@ mod tests {
         };
 
         let dns_manager = Arc::new(_dns_manager);
-        let enrichment_provider = Arc::new(FakeEnrichmentProvider);
+        let enrichment_provider = Arc::new(FakeEnrichmentProvider::new());
         let (alerts_tx, _alerts_rx) = mpsc::channel(1);
 
         // Act

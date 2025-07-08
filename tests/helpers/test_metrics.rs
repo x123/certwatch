@@ -24,6 +24,11 @@ impl TestMetrics {
             .unwrap_or(0)
     }
 
+    pub fn reset(&self) {
+        let mut counters = self.counters.lock().unwrap();
+        counters.clear();
+    }
+
     pub async fn wait_for_counter(&self, name: &str, value: u64, timeout: std::time::Duration) {
         let start = std::time::Instant::now();
         while start.elapsed() < timeout {

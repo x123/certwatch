@@ -3,6 +3,7 @@ use certwatch::{
     config::Config,
     core::DnsInfo,
     dns::test_utils::FakeDnsResolver,
+    enrichment::fake::FakeEnrichmentProvider,
 };
 use std::sync::Arc;
 use tokio::sync::watch;
@@ -14,6 +15,7 @@ async fn test_app_startup_succeeds_with_healthy_resolver() {
 
     let fake_resolver = Arc::new(FakeDnsResolver::new());
     fake_resolver.add_success_response("google.com", DnsInfo::default());
+    let fake_enrichment = Arc::new(FakeEnrichmentProvider::new());
 
     let app_handle = tokio::spawn(app::run(
         config,
@@ -21,7 +23,7 @@ async fn test_app_startup_succeeds_with_healthy_resolver() {
         Some(vec![]),
         None,
         Some(fake_resolver),
-        None,
+        Some(fake_enrichment),
     ));
 
     // Signal shutdown and wait for the app to complete.
@@ -38,6 +40,7 @@ async fn test_app_startup_fails_with_unhealthy_resolver() {
 
     let fake_resolver = Arc::new(FakeDnsResolver::new());
     fake_resolver.add_error_response("google.com", "Timeout");
+    let fake_enrichment = Arc::new(FakeEnrichmentProvider::new());
 
     let result = app::run(
         config,
@@ -45,7 +48,7 @@ async fn test_app_startup_fails_with_unhealthy_resolver() {
         Some(vec![]),
         None,
         Some(fake_resolver),
-        None,
+        Some(fake_enrichment),
     )
     .await;
 
