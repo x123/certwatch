@@ -182,6 +182,20 @@ pub struct OutputConfig {
 pub struct SlackConfig {
     /// The Slack incoming webhook URL.
     pub webhook_url: String,
+    /// The maximum number of alerts to batch together before sending.
+    #[serde(default = "default_slack_batch_size")]
+    pub batch_size: usize,
+    /// The maximum time in seconds to wait before sending a batch, even if it's not full.
+    #[serde(default = "default_slack_batch_timeout")]
+    pub batch_timeout_seconds: u64,
+}
+
+fn default_slack_batch_size() -> usize {
+    50
+}
+
+fn default_slack_batch_timeout() -> u64 {
+    300
 }
 
 /// Configuration for alert deduuplication.

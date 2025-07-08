@@ -83,7 +83,25 @@ async fn main() -> Result<()> {
     let alert_tx = if config.notifications.enabled {
         let (tx, rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
         info!("Notification pipeline enabled.");
+
+        // Always spawn the logging subscriber if notifications are on.
         notification::logging_subscriber::spawn(rx, None, None);
+
+        // Spawn the Slack notifier only if a webhook URL is provided.
+        if let Some(slack_config) = &config.output.slack {
+            info!("Slack notifications enabled.");
+            let slack_client =
+                std::sync::Arc::new(certwatch::notification::slack::SlackClient::new(
+                    slack_config.webhook_url.clone(),
+                ));
+            let slack_notifier = certwatch::notification::manager::NotificationManager::new(
+                slack_config.clone(),
+                tx.subscribe(),
+                slack_client,
+            );
+            tokio::spawn(slack_notifier.run());
+        }
+
         Some(tx)
     } else {
         None

@@ -66,6 +66,18 @@ pub struct Cli {
     /// Enable the notification pipeline.
     #[arg(long)]
     pub enable_notifications: bool,
+
+    /// The Slack incoming webhook URL.
+    #[arg(long, value_name = "URL")]
+    pub slack_webhook_url: Option<String>,
+
+    /// The maximum number of alerts to batch together before sending to Slack.
+    #[arg(long, value_name = "SIZE")]
+    pub slack_batch_size: Option<usize>,
+
+    /// The maximum time in seconds to wait before sending a Slack batch.
+    #[arg(long, value_name = "SECONDS")]
+    pub slack_batch_timeout: Option<u64>,
 }
 
 impl Provider for Cli {
@@ -128,6 +140,21 @@ impl Provider for Cli {
 
         if self.enable_notifications {
             dict.insert("notifications.enabled".into(), Value::from(true));
+        }
+
+        let mut slack_dict = Dict::new();
+        if let Some(url) = &self.slack_webhook_url {
+            slack_dict.insert("webhook_url".into(), Value::from(url.clone()));
+        }
+        if let Some(size) = self.slack_batch_size {
+            slack_dict.insert("batch_size".into(), Value::from(size as u64));
+        }
+        if let Some(timeout) = self.slack_batch_timeout {
+            slack_dict.insert("batch_timeout_seconds".into(), Value::from(timeout));
+        }
+
+        if !slack_dict.is_empty() {
+            dict.insert("output.slack".into(), Value::from(slack_dict));
         }
 
         let mut map = Map::new();

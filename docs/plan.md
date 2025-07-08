@@ -454,14 +454,14 @@ The implementation is broken down into two sequential epics:
     -   The entire feature is only active if a `--slack-webhook-url` is provided.
 
 -   **Tasks:**
-    -   [ ] **#140 - Add Dependencies:** Add `reqwest` and `serde_json` to `Cargo.toml`.
-    -   [ ] **#141 - Add Slack Configuration:** Add `--slack-webhook-url`, `--slack-batch-size`, and `--slack-batch-timeout` arguments and corresponding config entries.
-    -   [ ] **#142 - Implement `SlackMessage` Payload:** In a new `src/notification/slack.rs`, define the structs for the Slack message payload (`Attachment`, `Field`, etc.) and a function that serializes a `&[Alert]` into the correct JSON. Write unit tests for this serialization logic.
-    -   [ ] **#143 - Implement `SlackClient`:** Create a `SlackClient` struct that holds a `reqwest::Client` and the webhook URL. Give it a `send_batch(&self, alerts: &[Alert])` method.
-    -   [ ] **#144 - Test `SlackClient`:** Unit test the `SlackClient` using `wiremock-rs` (https://docs.rs/wiremock/latest/wiremock/ , latest version is 0.6.4). Test for successful posts, 500 errors, and network timeouts.
-    -   [ ] **#145 - Implement `NotificationManager`:** Create the `NotificationManager` task. Implement the core `select!` loop for batching by size and time.
-    -   [ ] **#146 - Test `NotificationManager` Batching:** Unit test the `NotificationManager`'s logic. Give it a `FakeSlackClient`. Test that it sends a batch when the size limit is hit. Use `tokio::time::pause/advance` to test that it sends a batch when the timeout is hit.
-    -   [ ] **#147 - Integrate into `main.rs`:** In `main.rs`, if the Slack webhook URL is provided, spawn the `NotificationManager` and pass it a receiver from the event bus.
+    -   [x] **#140 - Add Dependencies:** Add `reqwest` and `serde_json` to `Cargo.toml`.
+    -   [x] **#141 - Add Slack Configuration:** Add `--slack-webhook-url`, `--slack-batch-size`, and `--slack-batch-timeout` arguments and corresponding config entries.
+    -   [x] **#142 - Implement `SlackMessage` Payload:** In a new `src/notification/slack.rs`, define the structs for the Slack message payload (`Attachment`, `Field`, etc.) and a function that serializes a `&[Alert]` into the correct JSON. Write unit tests for this serialization logic.
+    -   [x] **#143 - Implement `SlackClient`:** Create a `SlackClient` struct that holds a `reqwest::Client` and the webhook URL. Give it a `send_batch(&self, alerts: &[Alert])` method.
+    -   [x] **#144 - Test `SlackClient`:** Unit test the `SlackClient` using `wiremock-rs` (https://docs.rs/wiremock/latest/wiremock/ , latest version is 0.6.4). Test for successful posts, 500 errors, and network timeouts.
+    -   [x] **#145 - Implement `NotificationManager`:** Create the `NotificationManager` task. Implement the core `select!` loop for batching by size and time.
+    -   [x] **#146 - Test `NotificationManager` Batching:** Unit test the `NotificationManager`'s logic. Give it a `FakeSlackClient`. Test that it sends a batch when the size limit is hit. Use `tokio::time::pause/advance` to test that it sends a batch when the timeout is hit.
+    -   [x] **#147 - Integrate into `main.rs`:** In `main.rs`, if the Slack webhook URL is provided, spawn the `NotificationManager` and pass it a receiver from the event bus.
 
 ---
 
