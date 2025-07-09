@@ -135,6 +135,16 @@ impl TestAppBuilder {
         self
     }
 
+    pub async fn with_rules(mut self, rules_content: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("rules.yml");
+        tokio::fs::write(&file_path, rules_content).await.unwrap();
+        self.config.rules.rule_files = vec![file_path];
+        // Intentionally leak the tempdir to keep the file alive for the test run.
+        std::mem::forget(dir);
+        self
+    }
+
     /// Builds the application components but does not spawn it.
     /// Returns the TestApp handle and a future that runs the app.
     pub async fn build(self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {

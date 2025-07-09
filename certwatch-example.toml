@@ -53,7 +53,10 @@ pattern_files = ["patterns.txt"]
 # =============================================================================
 [rules]
 # A list of file paths containing advanced filtering rules in YAML format.
-# This is the new, more powerful way to define detection logic.
+# This is the new, more powerful way to define detection logic, supporting
+# `all` (AND), `any` (OR), and nested boolean conditions.
+#
+# See `data/rules/advanced-examples.yml` for detailed examples.
 #
 # Example `rules/common.yml`:
 #
@@ -66,16 +69,16 @@ pattern_files = ["patterns.txt"]
 #
 # # The list of detection rules.
 # rules:
-#   - name: "Live Phishing Kit"
+#   - name: "Complex Bank Phish"
+#     # Looks for domains that contain a bank name AND either are on a non-corporate
+#     # network OR use a suspicious TLD.
 #     all:
-#       - domain_regex: 'com-[a-z]{1,4}\\.live$'
+#       - domain_regex: '(chase|wellsfargo|bankofamerica)'
+#       - any:
+#           - not_asns: [7843, 3589, 7132] # ASNs for Chase, Wells Fargo, Bank of America
+#           - domain_regex: '\\.(biz|info)$'
 #
-#   - name: "Apple ID Phish outside of Apple's Network"
-#     all:
-#       - domain_regex: '^.*appleid.*$'
-#       - not_asns: [714] # ASN 714 belongs to Apple Inc.
-#
-rule_files = []
+rule_files = ["data/rules/advanced-examples.yml"]
 
 
 # =============================================================================

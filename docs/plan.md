@@ -10,6 +10,15 @@
     - [x] Modified `src/app.rs` to handle the missing file gracefully by logging a warning and disabling the enrichment feature, rather than crashing.
     - [x] Verified the fix by running the application and confirming it no longer panics.
 
+- [x] **#208 - Fix `not_asns` Logic and Resulting Concurrency Failures**
+  - **Context:** A logic bug in the rule engine caused `not_asns` checks to incorrectly pass when ASN enrichment failed. The initial fix for this exposed a cascade of severe, latent concurrency issues.
+  - **Subtasks:**
+    - [x] Corrected the `not_asns` evaluation logic in `src/rules.rs`.
+    - [x] Diagnosed and fixed a worker-pool deadlock in `src/app.rs` by correcting the `Mutex` lock scope around the domain receiver channel.
+    - [x] Implemented an `InFlightDeduplicator` in `src/deduplication.rs` to prevent DNS query amplification that would have been caused by the deadlock fix.
+    - [x] Diagnosed and fixed a shutdown race condition in the `CertStreamClient` reconnection logic in `src/network.rs`.
+    - [x] Verified the complete fix with the `not_rules_integration` test.
+
 ---
 ### Epic 35: Observability and Error Handling
 **User Story:** As a developer, I want to have clear, top-level logs and metrics for domain processing, so that I can easily monitor the application's health and diagnose failures without digging through deep call stacks.
@@ -567,23 +576,6 @@ The implementation is broken down into two sequential epics:
     *   [x] **#180 - Validate Fix:** After the change was implemented, the application was run with the `debug-collector.toml` configuration, confirming that domains are processed by single workers and that the `worker lagged behind` errors are eliminated.
     *   [x] **#180a - Tame DNS Log Noise:** Refined the DNS resolution logic in `src/dns.rs` to handle partial successes (e.g., A record found but no AAAA) and common "not found" errors more gracefully. Benign failures are now logged at the `trace` level instead of `debug`, significantly reducing log verbosity during normal operation.
 
----
-
-### **Epic #47: Modernize Metrics System with Prometheus Exporter**
-
-*   **Goal:** Replace the current in-memory, log-based metrics system with a production-grade Prometheus exporter. This will provide real-time visibility into application performance and align with industry-standard observability practices.
-*   **Status:** In Progress
-*   **Tasks:**
-    *   [x] **#194 - Dependencies:** Add `metrics-exporter-prometheus` and `axum` to `Cargo.toml`.
-    *   [x] **#195 - Configuration:** Add a `metrics` section to `config.rs` to enable/disable the exporter and configure its listen address.
-    *   [ ] **#196 - Prometheus Recorder:** Create `src/internal_metrics/prometheus_recorder.rs` to initialize and manage the Prometheus exporter.
-    *   [ ] **#197 - Exporter Server:** Implement a function to run a lightweight `axum` server in a separate Tokio task, serving the rendered metrics at the `/metrics` endpoint.
-    *   [ ] **#198 - Application Integration:** In `main.rs`, conditionally initialize the `PrometheusRecorder` and start the server based on the new configuration.
-    *   [ ] **#199 - Preserve Test Integrity:** Update the `TestAppBuilder` to ensure all existing tests continue to use the `TestMetricsRecorder`, avoiding any disruption to our test suite.
-    *   [ ] **#200 - Documentation:** Update project documentation to explain the new metrics system.
-
----
-
 ### **Phase 5: Pre-emptive Filtering with `ignore` Rules**
 *   **Goal:** Implement a global `ignore` list to provide a highly-efficient, pre-emptive filter that discards noisy, unwanted domains (e.g., `*.vpn.azure.com`) *before* any other processing occurs. This provides the boolean `NOT` capability that is currently missing.
 *   **Architecture:** A new, decoupled `PreFilter` component will be created to encapsulate the filtering logic, making it independently testable and keeping the main application pipeline clean.
@@ -610,15 +602,28 @@ The implementation is broken down into two sequential epics:
 
 ### **Phase 6: Advanced Boolean Logic**
 *   **Goal:** Enhance the rule engine's expressiveness by adding support for `any` (OR) and nested conditions.
-*   **Status:** Not Started
+*   **Status:** Completed
 *   **Tasks:**
-    *   [ ] **#185 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures within the `rules` section.
-    *   [ ] **#186 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
-    *   - [ ] **#187 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   [x] **#201 - Update Schema & Parsing:** Extended the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures within the `rules` section.
+    *   [x] **#202 - Recursive Evaluator:** Refactored the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
+    *   [x] **#203 - Complex Logic Tests:** Added new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   [x] **#204 - Documentation & Verification:** Updated `README.md` and `certwatch-example.toml` to document the new `any` and nested logic capabilities. Created `data/rules/advanced-examples.yml` to showcase complex rule structures. Created a temporary `debug-collector.toml` and `debug-collector.yml` to successfully verify the engine's behavior with a live data stream.
 
 ---
 
-### **Phase 7: Formalize the Extensible Enrichment Framework**
+### **Phase 7: Resolve Concurrency Deadlock and DNS Amplification**
+*   **Goal:** Correct a critical concurrency deadlock that causes test hangs and simultaneously fix the underlying architectural flaw that leads to DNS query amplification under load.
+*   **Status:** Completed
+*   **Tasks:**
+    *   [x] **#205 - Implement In-Flight Deduplication:** In `src/deduplication.rs`, create a new `InFlightDeduplicator` using a `moka::sync::Cache` with a short TTL. This will prevent multiple workers from processing the same domain concurrently.
+    *   [x] **#206 - Refactor Worker Loop:** In `src/app.rs`, refactor the worker loop to:
+        *   Correctly scope the `Mutex` lock on the `mpsc::Receiver` to be held *only* during the `.recv()` call, not during the entire processing operation. This resolves the primary deadlock.
+        *   Integrate the new `InFlightDeduplicator` at the start of the loop to prevent redundant processing of identical domains.
+    *   [x] **#207 - Verify Fix:** Create a new integration test (`tests/concurrency_and_deduplication.rs`) that specifically asserts that (a) the application does not hang under load, and (b) identical domains are only processed once by the worker pool.
+
+---
+
+### **Phase 8: Formalize the Extensible Enrichment Framework**
 *   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
 *   **Status:** Not Started
 *   **Tasks:**
@@ -628,10 +633,28 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-### **Phase 8: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+### **Phase 9: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
 *   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
 *   **Status:** Not Started
 *   **Tasks:**
     *   [ ] **#191 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
     *   [ ] **#192 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
     *   [ ] **#193 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
+
+---
+
+### **Epic #47: Modernize Metrics System with Prometheus Exporter**
+
+*   **Goal:** Replace the current in-memory, log-based metrics system with a production-grade Prometheus exporter. This will provide real-time visibility into application performance and align with industry-standard observability practices.
+*   **Status:** In Progress
+*   **Tasks:**
+    *   [x] **#194 - Dependencies:** Add `metrics-exporter-prometheus` and `axum` to `Cargo.toml`.
+    *   [x] **#195 - Configuration:** Add a `metrics` section to `config.rs` to enable/disable the exporter and configure its listen address.
+    *   [ ] **#196 - Prometheus Recorder:** Create `src/internal_metrics/prometheus_recorder.rs` to initialize and manage the Prometheus exporter.
+    *   [ ] **#197 - Exporter Server:** Implement a function to run a lightweight `axum` server in a separate Tokio task, serving the rendered metrics at the `/metrics` endpoint.
+    *   [ ] **#198 - Application Integration:** In `main.rs`, conditionally initialize the `PrometheusRecorder` and start the server based on the new configuration.
+    *   [ ] **#199 - Preserve Test Integrity:** Update the `TestAppBuilder` to ensure all existing tests continue to use the `TestMetricsRecorder`, avoiding any disruption to our test suite.
+    *   [ ] **#200 - Documentation:** Update project documentation to explain the new metrics system.
+
+---
+

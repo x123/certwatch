@@ -4,7 +4,7 @@ use crate::{
     build_alert,
     config::Config,
     core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output, PatternMatcher},
-    deduplication::Deduplicator,
+    deduplication::{Deduplicator, InFlightDeduplicator},
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     internal_metrics::logging_recorder::LoggingRecorder,
     matching::PatternWatcher,
@@ -85,6 +85,10 @@ pub async fn run(
     let deduplicator = Arc::new(Deduplicator::new(
         Duration::from_secs(config.deduplication.cache_ttl_seconds),
         config.deduplication.cache_size as u64,
+    ));
+    let in_flight_deduplicator = Arc::new(InFlightDeduplicator::new(
+        Duration::from_secs(30), // Short TTL for in-flight checks
+        100_000,                 // Capacity
     ));
 
     // =========================================================================
@@ -172,22 +176,23 @@ pub async fn run(
         let enrichment_provider = enrichment_provider.clone();
         let alerts_tx = internal_alerts_tx.clone();
         let mut shutdown_rx = shutdown_rx.clone();
+        let in_flight_deduplicator = in_flight_deduplicator.clone();
 
         let handle = tokio::spawn(async move {
             debug!("Worker {} started", i);
             loop {
-                // Acquire the lock before the select to ensure the MutexGuard's lifetime is long enough.
-                let mut guard = domains_rx.lock().await;
-
+                // This `select!` block is the new, correct way to handle this.
+                // It ensures the Mutex lock on the receiver is held for the shortest
+                // possible time (only during the `recv()` await).
                 let domain_to_process = tokio::select! {
                     biased;
                     _ = shutdown_rx.changed() => {
-                        // Drop the guard to release the lock before exiting the loop.
-                        drop(guard);
                         debug!("Worker {} received shutdown signal, exiting.", i);
-                        break;
+                        None // This will cause the loop to break.
                     }
-                    domain_opt = guard.recv() => {
+                    // This async block creates a future that `select!` can own.
+                    // The lock is acquired and dropped entirely within this block.
+                    domain_opt = async { domains_rx.lock().await.recv().await } => {
                         domain_opt
                     }
                 };
@@ -195,15 +200,30 @@ pub async fn run(
                 let domain = match domain_to_process {
                     Some(domain) => domain,
                     None => {
-                        // The channel is closed, which means the sender (CertStream client) has shut down.
-                        debug!("Domain channel closed, worker {} shutting down.", i);
+                        // The channel is closed or shutdown was triggered.
+                        debug!(
+                            "Domain channel closed or shutdown triggered, worker {} shutting down.",
+                            i
+                        );
                         break;
                     }
                 };
 
-                debug!(worker_id = i, domain = %domain, "Worker processing domain");
+                debug!(worker_id = i, domain = %domain, "Worker picked up domain");
+
+                // In-flight deduplication check to prevent a stampede of workers
+                // processing the same domain from a burst on the CertStream.
+                if in_flight_deduplicator.is_duplicate(&domain) {
+                    debug!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
+                    metrics::counter!("domains_skipped_inflight", "worker_id" => i.to_string())
+                        .increment(1);
+                    continue;
+                }
+
+                debug!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
 
                 if rule_matcher.is_ignored(&domain) {
+                    debug!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
                     continue;
                 }
 
@@ -223,6 +243,7 @@ pub async fn run(
                         debug!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
                     }
                     result = process_fut => {
+                        debug!(worker_id = i, domain = %domain, "Worker finished processing domain");
                         match result {
                             Ok(_) => {
                                 metrics::counter!("cert_processing_successes").increment(1);
@@ -373,6 +394,7 @@ pub async fn process_domain(
     enrichment_provider: Arc<dyn EnrichmentProvider>,
     alerts_tx: AlertSender,
 ) -> Result<()> {
+    debug!("process_domain: Starting Stage 1 (pre-enrichment) filtering");
     // STAGE 1: Pre-enrichment filtering (legacy patterns and Stage 1 rules)
     let legacy_match = pattern_matcher.match_domain(&domain).await;
     let stage_1_rule_matches = {
@@ -380,6 +402,7 @@ pub async fn process_domain(
         let base_alert = Alert::new_minimal(&domain);
         rule_matcher.matches(&base_alert, EnrichmentLevel::None)
     };
+    debug!(?legacy_match, ?stage_1_rule_matches, "process_domain: Stage 1 results");
 
     // If there's no match from either legacy patterns or Stage 1 rules, we can stop.
     if legacy_match.is_none() && stage_1_rule_matches.is_empty() {
@@ -389,10 +412,11 @@ pub async fn process_domain(
     debug!("Domain matched pre-enrichment checks. Proceeding to enrichment.");
 
     // STAGE 2: Enrichment and Post-enrichment filtering
+    debug!("process_domain: Starting DNS resolution");
     let result = dns_manager
         .resolve_with_retry(&domain, "enrichment_candidate")
         .await;
-    debug!(?result, "DNS resolution result");
+    debug!(?result, "process_domain: DNS resolution result");
 
     let dns_info = match result {
         Ok(ref info) => info.clone(),
@@ -410,6 +434,8 @@ pub async fn process_domain(
     };
 
     let resolved_after_nxdomain = result.is_ok() && dns_info.is_empty();
+
+    debug!("process_domain: Building alert and performing enrichment");
     let mut alert = build_alert(
         domain,
         "placeholder".to_string(), // Source will be replaced with combined rule names
@@ -419,11 +445,13 @@ pub async fn process_domain(
     )
     .await
     .context("Failed to build alert")?;
+    debug!("process_domain: Alert built. Starting Stage 2 (post-enrichment) filtering");
 
     let stage_2_rule_matches = {
         let _span = tracing::info_span!("stage_2_rule_matching").entered();
         rule_matcher.matches(&alert, EnrichmentLevel::Standard)
     };
+    debug!(?stage_2_rule_matches, "process_domain: Stage 2 results");
 
     // FINAL DECISION: Combine all matches to determine if we should alert.
     let mut all_matches_set: HashSet<String> = stage_1_rule_matches.into_iter().collect();
@@ -448,9 +476,10 @@ pub async fn process_domain(
     alert.source_tag = all_matches.join(", ");
 
     debug!(source = %alert.source_tag, "Domain passed all checks. Sending alert.");
-    if alerts_tx.send(alert).is_err() {
+    if alerts_tx.send(alert.clone()).is_err() {
         anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
     }
+    debug!(source = %alert.source_tag, "process_domain: Alert sent to output channel");
 
     Ok(())
 }

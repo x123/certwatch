@@ -141,9 +141,18 @@ impl CertStreamClient {
                 }
             }
 
-            tracing::info!("Reconnecting in {} ms", backoff_ms);
-            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+            // Wait for the backoff period, but also listen for shutdown.
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)) => {
+                    // Continue to the next iteration to retry connection.
+                }
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("Shutdown signal received during backoff. CertStream client shutting down.");
+                    return Ok(());
+                }
+            }
 
+            tracing::info!("Reconnecting...");
             // Exponential backoff with jitter
             backoff_ms = std::cmp::min(backoff_ms * 2, MAX_BACKOFF_MS);
         }

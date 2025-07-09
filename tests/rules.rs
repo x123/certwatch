@@ -1,7 +1,7 @@
 use certwatch::{
     config::RulesConfig,
     core::{Alert, DnsInfo},
-    rules::{EnrichmentLevel, Rule, RuleMatcher},
+    rules::{EnrichmentLevel, RuleMatcher},
 };
 use std::{fs::File, io::Write, path::PathBuf};
 use tempfile::tempdir;
@@ -27,59 +27,14 @@ fn create_test_alert(domain: &str) -> Alert {
 }
 
 #[test]
-fn test_rule_grouping_and_compilation_to_regex_set() {
-    let rule_content = r#"
-rules:
-  - name: "Combined Rule"
-    all:
-      - domain_regex: "^test1\\.com$"
-  - name: "Single Rule"
-    all:
-      - domain_regex: "^single\\.com$"
-  - name: "Combined Rule"
-    all:
-      - domain_regex: "^test2\\.net$"
-"#;
-    let rule_file = create_rule_file(rule_content);
-    let config = RulesConfig {
-        rule_files: vec![rule_file],
-    };
-
-    let (rules, _) = Rule::load_from_files(&config).unwrap();
-    assert_eq!(rules.len(), 2, "Rules with the same name should be grouped");
-
-    let combined_rule = rules
-        .iter()
-        .find(|r| r.name == "Combined Rule")
-        .expect("Combined Rule not found");
-    let single_rule = rules
-        .iter()
-        .find(|r| r.name == "Single Rule")
-        .expect("Single Rule not found");
-
-    // Check that the combined regex set matches both original patterns
-    let regex_set = combined_rule.domain_regex_set.as_ref().unwrap();
-    assert!(regex_set.is_match("test1.com"));
-    assert!(regex_set.is_match("test2.net"));
-    assert!(!regex_set.is_match("test3.org"));
-
-    // Check the single rule
-    let regex_set = single_rule.domain_regex_set.as_ref().unwrap();
-    assert!(regex_set.is_match("single.com"));
-    assert!(!regex_set.is_match("notsingle.com"));
-}
-
-#[test]
 fn test_rule_classification() {
-    // TODO: Re-enable this test once ASN/IP conditions are re-implemented
-    // in the new rule structure.
     let rule_content = r#"
 rules:
   - name: "Stage 1 Rule"
     all:
       - domain_regex: "stage1"
   - name: "Stage 2 Rule"
-    all:
+    any:
       - asns: [123]
 "#;
     let rule_file = create_rule_file(rule_content);
@@ -95,37 +50,55 @@ rules:
 }
 
 #[test]
-fn test_combined_domain_regex_condition() {
-    let alert1 = create_test_alert("www.example.com");
-    let alert2 = create_test_alert("app.example.org");
-    let alert3 = create_test_alert("other.net");
-
+fn test_boolean_logic_evaluation() {
     let rule_content = r#"
 rules:
-  - name: "Match Example"
+  - name: "Simple ALL Match"
     all:
-      - domain_regex: "\\.example\\.com$"
-  - name: "Match Example"
+      - domain_regex: "^test\\.com$"
+      - domain_regex: "test"
+  - name: "Simple ALL Fail"
     all:
-      - domain_regex: "\\.example\\.org$"
+      - domain_regex: "^test\\.com$"
+      - domain_regex: "fail"
+  - name: "Simple ANY Match"
+    any:
+      - domain_regex: "^test\\.com$"
+      - domain_regex: "fail"
+  - name: "Nested Match"
+    all:
+      - domain_regex: "test"
+      - any:
+        - domain_regex: "fail"
+        - asns: [123]
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
         rule_files: vec![rule_file],
     };
     let matcher = RuleMatcher::load(&config).unwrap();
-    let matches1 = matcher.matches(&alert1, EnrichmentLevel::None);
-    assert_eq!(matches1, vec!["Match Example"]);
 
-    let matches2 = matcher.matches(&alert2, EnrichmentLevel::None);
-    assert_eq!(matches2, vec!["Match Example"]);
+    let mut alert = create_test_alert("test.com");
+    alert.enrichment.push(certwatch::core::EnrichmentInfo {
+        ip: "1.1.1.1".parse().unwrap(),
+        asn_info: Some(certwatch::core::AsnInfo {
+            as_number: 123,
+            as_name: "Test ASN".to_string(),
+            country_code: Some("US".to_string()),
+        }),
+    });
 
-    let matches3 = matcher.matches(&alert3, EnrichmentLevel::None);
-    assert!(matches3.is_empty());
+    // Test Stage 1 rules (no enrichment needed)
+    let matches_s1 = matcher.matches(&alert, EnrichmentLevel::None);
+    assert_eq!(matches_s1.len(), 2);
+    assert!(matches_s1.contains(&"Simple ALL Match".to_string()));
+    assert!(matches_s1.contains(&"Simple ANY Match".to_string()));
+
+    // Test Stage 2 rules (enrichment needed)
+    let matches_s2 = matcher.matches(&alert, EnrichmentLevel::Standard);
+    assert_eq!(matches_s2.len(), 1);
+    assert!(matches_s2.contains(&"Nested Match".to_string()));
 }
-
-// TODO: Add back tests for ASN, IP Network, and their 'not' variants
-// once they are supported by the new compiled Rule struct.
 
 #[test]
 fn test_prefilter_ignore_integration() {

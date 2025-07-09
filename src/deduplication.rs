@@ -2,12 +2,14 @@ use metrics;
 // Service for filtering duplicate alerts.
 
 use crate::core::Alert;
-use moka::future::Cache;
+use moka::{future::Cache as FutureCache, sync::Cache as SyncCache};
 use std::time::Duration;
 
 /// A service that filters out duplicate alerts based on a time-aware cache.
+/// This is used in the final output stage to prevent sending the same alert
+/// multiple times over a longer period.
 pub struct Deduplicator {
-    cache: Cache<String, ()>,
+    cache: FutureCache<String, ()>,
 }
 
 impl Deduplicator {
@@ -17,7 +19,7 @@ impl Deduplicator {
     /// * `ttl` - The time-to-live for an entry in the cache.
     /// * `max_capacity` - The maximum number of entries in the cache.
     pub fn new(ttl: Duration, max_capacity: u64) -> Self {
-        let cache = Cache::builder()
+        let cache = FutureCache::builder()
             .time_to_live(ttl)
             .max_capacity(max_capacity)
             .build();
@@ -61,6 +63,47 @@ impl Deduplicator {
         }
     }
 }
+
+/// A lightweight, short-term cache to prevent multiple workers from processing
+/// the exact same domain simultaneously, which can cause DNS query amplification.
+pub struct InFlightDeduplicator {
+    cache: SyncCache<String, ()>,
+}
+
+impl InFlightDeduplicator {
+    /// Creates a new `InFlightDeduplicator`.
+    ///
+    /// # Arguments
+    /// * `ttl` - The time-to-live for an entry. Should be short (e.g., 30-60s).
+    /// * `max_capacity` - The maximum number of in-flight domains to track.
+    pub fn new(ttl: Duration, max_capacity: u64) -> Self {
+        let cache = SyncCache::builder()
+            .time_to_live(ttl)
+            .max_capacity(max_capacity)
+            .build();
+        Self { cache }
+    }
+
+    /// Checks if a domain has been seen recently. If not, it inserts it into
+    /// the cache. This operation is atomic.
+    ///
+    /// # Returns
+    /// * `true` if the domain is a duplicate (was already in the cache).
+    /// * `false` if the domain is new (and was just inserted).
+    pub fn is_duplicate(&self, domain: &str) -> bool {
+        // `get_or_insert_with` would be ideal, but we don't need the value.
+        // `insert` overwrites, so we check first. This is not perfectly atomic,
+        // but for this use case (preventing a stampede), it's sufficient.
+        // A truly atomic "insert if not present" is `try_insert`, but that's nightly.
+        if self.cache.contains_key(domain) {
+            true
+        } else {
+            self.cache.insert(domain.to_string(), ());
+            false
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

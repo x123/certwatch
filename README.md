@@ -158,10 +158,11 @@ line. For example, a file named `phishing.txt` might contain:
 **d. (Optional) Create Advanced Rule Files:**
 
 For more complex logic, you can use advanced rule files. These YAML files
-support combining conditions and, crucially, allow for a global `ignore` list
-for high-performance pre-filtering.
+support combining conditions using `all` (AND), `any` (OR), and nested boolean
+logic, providing a powerful way to define precise detection rules. They also
+support a global `ignore` list for high-performance pre-filtering.
 
-**Example `rules/common.yml`:**
+**Example `rules/advanced-logic.yml`:**
 
 ```yaml
 # A list of regex patterns to ignore before any processing.
@@ -173,10 +174,27 @@ ignore:
 
 # The list of detection rules.
 rules:
-  - name: "Apple ID Phish outside of Apple's Network"
+  - name: "Generic Phishing Domain"
+    # This rule triggers if a domain contains 'login' AND is NOT on a major cloud provider's network.
     all:
-      - domain_regex: '^.*appleid.*$'
-      - not_asns: [714] # ASN 714 belongs to Apple Inc.
+      - domain_regex: '(login|signin|account|secure)'
+      - not_asns: [15169, 16509, 14618, 396982] # Google, Amazon, Microsoft, Oracle Cloud
+
+  - name: "Suspicious TLD or High-Risk ASN"
+    # This rule triggers if a domain uses a suspicious TLD OR originates from a specific ASN.
+    any:
+      - domain_regex: '\.(xyz|top|online|club)$'
+      - asns: [20473] # AS20473 (CHOOPA) is often associated with bulletproof hosting.
+
+  - name: "Complex Bank Phish"
+    # This rule demonstrates nested logic.
+    # It looks for domains that contain a bank name AND either are on a non-corporate
+    # network OR use a suspicious TLD.
+    all:
+      - domain_regex: '(chase|wellsfargo|bankofamerica)'
+      - any:
+          - not_asns: [7843, 3589, 7132] # ASNs for Chase, Wells Fargo, Bank of America
+          - domain_regex: '\.(biz|info)$'
 ```
 
 #### Performance Benefits of Pre-emptive Filtering

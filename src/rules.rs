@@ -6,7 +6,6 @@
 use crate::{config::RulesConfig, core::Alert};
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
-use itertools::Itertools;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -124,29 +123,68 @@ pub enum EnrichmentLevel {
 pub struct Rule {
     /// The name of the rule, for logging and identification.
     pub name: String,
-    /// A compiled set of regexes for all domain-based conditions.
-    pub domain_regex_set: Option<RegexSet>,
-    // Other compiled conditions will go here in the future.
+    /// The compiled expression tree for this rule.
+    pub expression: RuleExpression,
     /// The enrichment level required for this rule.
     pub required_level: EnrichmentLevel,
 }
 
 impl Rule {
-    /// Evaluates the rule against an alert.
+    /// Recursively evaluates the rule's expression tree against an alert.
     pub fn is_match(&self, alert: &Alert) -> bool {
-        if let Some(regex_set) = &self.domain_regex_set {
-            if !regex_set.is_match(&alert.domain) {
-                return false;
-            }
-        }
-        // In the future, we'll check other conditions here.
-        true
+        Self::evaluate_expression(&self.expression, alert)
     }
 
-    /// Loads all rules from the file paths specified in the configuration,
-    /// grouping and compiling them for efficiency.
+    /// The core recursive evaluation logic.
+    fn evaluate_expression(expression: &RuleExpression, alert: &Alert) -> bool {
+        match expression {
+            RuleExpression::All(expressions) => expressions
+                .iter()
+                .all(|expr| Self::evaluate_expression(expr, alert)),
+            RuleExpression::Any(expressions) => expressions
+                .iter()
+                .any(|expr| Self::evaluate_expression(expr, alert)),
+            RuleExpression::DomainRegex(pattern) => {
+                // This is inefficient as it recompiles regex on every check.
+                // A future optimization will be to pre-compile these.
+                match regex::Regex::new(pattern) {
+                    Ok(re) => re.is_match(&alert.domain),
+                    Err(_) => false, // Invalid patterns were already filtered during loading.
+                }
+            }
+            RuleExpression::Asns(asns) => alert
+                .enrichment
+                .iter()
+                .filter_map(|e| e.asn_info.as_ref())
+                .any(|info| asns.contains(&info.as_number)),
+            RuleExpression::NotAsns(asns) => {
+                let has_enrichment = alert.enrichment.iter().any(|e| e.asn_info.is_some());
+                if !has_enrichment {
+                    return false; // Cannot satisfy a 'not' if there's nothing to check.
+                }
+                !alert
+                    .enrichment
+                    .iter()
+                    .filter_map(|e| e.asn_info.as_ref())
+                    .any(|info| asns.contains(&info.as_number))
+            }
+            RuleExpression::IpNetworks(networks) => {
+                let all_ips = alert.all_ips();
+                networks.iter().any(|net| all_ips.iter().any(|ip| net.contains(*ip)))
+            }
+            RuleExpression::NotIpNetworks(networks) => {
+                let all_ips = alert.all_ips();
+                if all_ips.is_empty() {
+                    return false; // Cannot satisfy a 'not' if there's nothing to check.
+                }
+                !networks.iter().any(|net| all_ips.iter().any(|ip| net.contains(*ip)))
+            }
+        }
+    }
+
+    /// Loads all rules from the file paths specified in the configuration.
     pub fn load_from_files(config: &RulesConfig) -> Result<(Vec<Rule>, Vec<String>)> {
-        let mut raw_rules = Vec::new();
+        let mut compiled_rules = Vec::new();
         let mut ignore_patterns = Vec::new();
 
         for file_path in &config.rule_files {
@@ -163,42 +201,17 @@ impl Rule {
             if let Some(patterns) = rules_file.ignore {
                 ignore_patterns.extend(patterns);
             }
-            raw_rules.extend(rules_file.rules);
-        }
 
-        // Group rules by name and compile their regexes into RegexSets
-        let mut compiled_rules = Vec::new();
-        raw_rules.sort_by(|a, b| a.name.cmp(&b.name));
-
-        for (name, group) in &raw_rules.into_iter().chunk_by(|r| r.name.clone()) {
-            let mut domain_patterns = Vec::new();
-            let mut required_level = EnrichmentLevel::None;
-
-            for item in group {
-                if let Some(cond) = item.expression.all.first() {
-                    if let Some(pattern) = &cond.domain_regex {
-                        domain_patterns.push(pattern.clone());
-                    }
-                    if cond.required_level() > required_level {
-                        required_level = cond.required_level();
-                    }
-                }
+            for file_rule in rules_file.rules {
+                // Basic validation for now. A more robust validation step can be added.
+                // For example, ensuring regexes are valid.
+                let required_level = file_rule.expression.required_level();
+                compiled_rules.push(Rule {
+                    name: file_rule.name,
+                    expression: file_rule.expression,
+                    required_level,
+                });
             }
-
-            let domain_regex_set = if !domain_patterns.is_empty() {
-                let set = RegexSet::new(&domain_patterns).with_context(|| {
-                    format!("Failed to compile regex set for rule '{}'", name)
-                })?;
-                Some(set)
-            } else {
-                None
-            };
-
-            compiled_rules.push(Rule {
-                name,
-                domain_regex_set,
-                required_level,
-            });
         }
 
         Ok((compiled_rules, ignore_patterns))
@@ -217,46 +230,41 @@ struct RulesFile {
 }
 
 /// A temporary struct that represents a rule as defined in the YAML file.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileRule {
     name: String,
     #[serde(flatten)]
-    expression: FileRuleExpression,
+    expression: RuleExpression,
 }
 
-/// A temporary struct for deserializing the `all` block.
-#[derive(Debug, Serialize, Deserialize)]
-struct FileRuleExpression {
-    all: Vec<FileCondition>,
-}
-
-/// A temporary struct for deserializing a single condition.
-#[derive(Debug, Serialize, Deserialize)]
+/// A recursive enum representing the boolean logic of a rule.
+/// This is used for deserializing from the YAML files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-struct FileCondition {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    domain_regex: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    asns: Option<Vec<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ip_networks: Option<Vec<IpNetwork>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    not_asns: Option<Vec<u32>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    not_ip_networks: Option<Vec<IpNetwork>>,
+pub enum RuleExpression {
+    All(Vec<RuleExpression>),
+    Any(Vec<RuleExpression>),
+    DomainRegex(String),
+    Asns(Vec<u32>),
+    IpNetworks(Vec<IpNetwork>),
+    NotAsns(Vec<u32>),
+    NotIpNetworks(Vec<IpNetwork>),
 }
 
-impl FileCondition {
-    /// Determines the minimum enrichment level required to evaluate this condition.
+impl RuleExpression {
+    /// Determines the minimum enrichment level required to evaluate this expression.
     fn required_level(&self) -> EnrichmentLevel {
-        if self.asns.is_some()
-            || self.ip_networks.is_some()
-            || self.not_asns.is_some()
-            || self.not_ip_networks.is_some()
-        {
-            EnrichmentLevel::Standard
-        } else {
-            EnrichmentLevel::None
+        match self {
+            RuleExpression::All(exprs) | RuleExpression::Any(exprs) => exprs
+                .iter()
+                .map(|e| e.required_level())
+                .max()
+                .unwrap_or(EnrichmentLevel::None),
+            RuleExpression::Asns(_)
+            | RuleExpression::IpNetworks(_)
+            | RuleExpression::NotAsns(_)
+            | RuleExpression::NotIpNetworks(_) => EnrichmentLevel::Standard,
+            RuleExpression::DomainRegex(_) => EnrichmentLevel::None,
         }
     }
 }
