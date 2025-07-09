@@ -135,6 +135,8 @@ batch_timeout_seconds = 300
 # Deduplication Configuration
 # =============================================================================
 [deduplication]
+# Enables or disables alert deduplication.
+enabled = true
 # The size of the deduplication cache.
 cache_size = 100000
 # The time-to-live for cache entries in seconds.

@@ -226,6 +226,7 @@ pub struct SlackConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct DeduplicationConfig {
+    pub enabled: bool,
     pub cache_size: usize,
     pub cache_ttl_seconds: u64,
 }
@@ -233,6 +234,7 @@ pub struct DeduplicationConfig {
 impl Default for DeduplicationConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             cache_size: 100_000,
             cache_ttl_seconds: 3600,
         }

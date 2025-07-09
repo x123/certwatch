@@ -3,6 +3,7 @@ use metrics;
 
 use crate::core::Alert;
 use moka::{future::Cache as FutureCache, sync::Cache as SyncCache};
+use psl;
 use std::time::Duration;
 
 /// A service that filters out duplicate alerts based on a time-aware cache.
@@ -49,16 +50,20 @@ impl Deduplicator {
 
     /// Generates a unique key for an alert.
     fn generate_key(&self, alert: &Alert) -> String {
+        // Extract the base domain, falling back to the original domain if parsing fails.
+        let base_domain = psl::domain_str(&alert.domain).unwrap_or(&alert.domain);
+
         if alert.resolved_after_nxdomain {
-            // Key for "First Resolution" alerts includes the source tag to ensure
-            // they are unique per source.
+            // Key for "First Resolution" alerts includes the FQDN and source tag
+            // to ensure they are unique and not deduplicated against the base domain.
             let data = format!(
                 "{}::{}::FIRST_RESOLUTION",
                 alert.domain, alert.source_tag
             );
             blake3::hash(data.as_bytes()).to_hex().to_string()
         } else {
-            let data = format!("{}{}", alert.domain, alert.source_tag);
+            // Standard alerts are deduplicated by base domain and source tag.
+            let data = format!("{}{}", base_domain, alert.source_tag);
             blake3::hash(data.as_bytes()).to_hex().to_string()
         }
     }
@@ -173,5 +178,25 @@ mod tests {
 
         deduplicator.is_duplicate(&alert1).await;
         assert!(!deduplicator.is_duplicate(&alert2).await, "Second alert with a different source tag should not be a duplicate");
+    }
+
+    #[tokio::test]
+    async fn test_subdomain_alert_is_duplicate() {
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let alert1 = create_test_alert("example.com", "phishing", false);
+        let alert2 = create_test_alert("sub.example.com", "phishing", false); // Same base domain
+
+        deduplicator.is_duplicate(&alert1).await; // First time
+        assert!(deduplicator.is_duplicate(&alert2).await, "Alert for a subdomain of a recently seen domain should be a duplicate");
+    }
+
+    #[tokio::test]
+    async fn test_different_base_domain_is_not_duplicate() {
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let alert1 = create_test_alert("example.com", "phishing", false);
+        let alert2 = create_test_alert("example.org", "phishing", false); // Different base domain
+
+        deduplicator.is_duplicate(&alert1).await;
+        assert!(!deduplicator.is_duplicate(&alert2).await, "Alert for a different base domain should not be a duplicate");
     }
 }

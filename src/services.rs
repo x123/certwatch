@@ -33,8 +33,12 @@ pub fn setup_notification_pipeline(config: &Config) -> Result<Option<broadcast::
             let slack_formatter = Box::new(crate::formatting::SlackTextFormatter);
             let slack_client =
                 std::sync::Arc::new(SlackClient::new(webhook_url, slack_formatter));
-            let slack_notifier =
-                NotificationManager::new(slack_config, tx.subscribe(), slack_client);
+            let slack_notifier = NotificationManager::new(
+                slack_config,
+                &config.deduplication,
+                tx.subscribe(),
+                slack_client,
+            );
             tokio::spawn(slack_notifier.run());
             return Ok(Some(tx));
         }

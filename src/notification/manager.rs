@@ -1,8 +1,9 @@
 //! The notification manager is a stateful actor responsible for batching
 //! alerts and sending them to a notification service like Slack.
 
-use crate::config::SlackConfig;
+use crate::config::{DeduplicationConfig, SlackConfig};
 use crate::core::Alert;
+use crate::deduplication::Deduplicator;
 use crate::notification::slack::SlackClientTrait;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -14,19 +15,31 @@ pub struct NotificationManager<S: SlackClientTrait> {
     config: SlackConfig,
     alert_rx: broadcast::Receiver<Alert>,
     slack_client: Arc<S>,
+    deduplicator: Option<Deduplicator>,
 }
 
 impl<S: SlackClientTrait> NotificationManager<S> {
     /// Creates a new `NotificationManager`.
     pub fn new(
-        config: SlackConfig,
+        slack_config: SlackConfig,
+        deduplication_config: &DeduplicationConfig,
         alert_rx: broadcast::Receiver<Alert>,
         slack_client: Arc<S>,
     ) -> Self {
+        let deduplicator = if deduplication_config.enabled {
+            Some(Deduplicator::new(
+                Duration::from_secs(deduplication_config.cache_ttl_seconds),
+                deduplication_config.cache_size as u64,
+            ))
+        } else {
+            None
+        };
+
         Self {
-            config,
+            config: slack_config,
             alert_rx,
             slack_client,
+            deduplicator,
         }
     }
 
@@ -57,6 +70,12 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                     match result {
                         Ok(alert) => {
                             debug!(domain = %alert.domain, "Received alert in NotificationManager.");
+                            if let Some(deduplicator) = &self.deduplicator {
+                                if deduplicator.is_duplicate(&alert).await {
+                                    debug!(domain = %alert.domain, "Skipping duplicate alert.");
+                                    continue;
+                                }
+                            }
                             batch.push(alert);
                             if batch.len() >= batch_size {
                                 info!("Batch size limit reached, sending {} alerts to Slack.", batch.len());
@@ -95,7 +114,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::SlackConfig;
+    use crate::config::{DeduplicationConfig, SlackConfig};
     use crate::core::Alert;
     use crate::notification::slack::SlackClientTrait;
     use async_trait::async_trait;
@@ -144,12 +163,18 @@ mod tests {
             batch_timeout_seconds: Some(10),
         };
 
-        let manager = NotificationManager::new(config, alert_rx, fake_client.clone());
+        let deduplication_config = DeduplicationConfig::default();
+        let manager = NotificationManager::new(config, &deduplication_config, alert_rx, fake_client.clone());
         let manager_handle = tokio::spawn(manager.run());
 
         // Act
-        alert_tx.send(Alert::default()).unwrap();
-        alert_tx.send(Alert::default()).unwrap();
+        let mut alert1 = Alert::default();
+        alert1.domain = "example.com".to_string();
+        let mut alert2 = Alert::default();
+        alert2.domain = "example.org".to_string();
+
+        alert_tx.send(alert1).unwrap();
+        alert_tx.send(alert2).unwrap();
 
         // Allow some time for the manager to process the alerts
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -176,7 +201,8 @@ mod tests {
             batch_timeout_seconds: Some(5),
         };
 
-        let manager = NotificationManager::new(config, alert_rx, fake_client.clone());
+        let deduplication_config = DeduplicationConfig::default();
+        let manager = NotificationManager::new(config, &deduplication_config, alert_rx, fake_client.clone());
         let manager_handle = tokio::spawn(manager.run());
 
         // Act
