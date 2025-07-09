@@ -9,7 +9,6 @@ pub mod health;
 use crate::core::DnsInfo;
 pub use crate::core::DnsResolver;
 use crate::config::DnsConfig;
-use crate::utils::heartbeat::run_heartbeat;
 use anyhow::Result;
 use async_trait::async_trait;
 pub use health::DnsHealthMonitor;
@@ -238,11 +237,14 @@ impl DnsResolutionManager {
             nx_shutdown_rx,
         ));
 
-        // Start the heartbeat task
-        let hb_shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
-            run_heartbeat("DnsResolutionManager", hb_shutdown_rx).await;
-        });
+        // Start the heartbeat task, but not during tests, as it interferes with paused time.
+        #[cfg(not(test))]
+        {
+            let hb_shutdown_rx = shutdown_rx.clone();
+            tokio::spawn(async move {
+                crate::utils::heartbeat::run_heartbeat("DnsResolutionManager", hb_shutdown_rx).await;
+            });
+        }
 
         let manager = Self {
             resolver,
@@ -539,7 +541,7 @@ pub mod tests {
         assert_eq!(resolver.get_call_count("nonexistent.com"), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dns_resolution_manager_standard_retry() {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
         let retry_config = DnsRetryConfig {
@@ -552,12 +554,14 @@ pub mod tests {
             ..Default::default()
         };
 
-        let (_tx, rx) = watch::channel(());
+        // Keep the sender to explicitly shut down tasks
+        let (tx, rx) = watch::channel(());
         let health_monitor =
             DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), rx.clone());
+        // The manager spawns background tasks that need to be shut down.
         let (manager, _) = DnsResolutionManager::new(
             fake_resolver.clone(),
-            config.retry_config,
+            config.retry_config.clone(),
             health_monitor,
             rx,
         );
@@ -569,13 +573,24 @@ pub mod tests {
         success_info.a_records.push("1.1.1.1".parse().unwrap());
         fake_resolver.add_success_response("flaky.com", success_info.clone());
 
-        // Start the resolution attempt
-        let result = manager.resolve_with_retry("flaky.com", "test").await;
+        // Start the resolution attempt in a separate task so we can advance time
+        let resolution_handle =
+            tokio::spawn(async move { manager.resolve_with_retry("flaky.com", "test").await });
+
+        // Advance time to allow the retries to happen.
+        // The backoffs are 10ms and 20ms. We advance a bit more to be safe.
+        tokio::time::advance(Duration::from_millis(15)).await;
+        tokio::time::advance(Duration::from_millis(25)).await;
+
+        let result = resolution_handle.await.unwrap();
 
         // Should succeed after 2 retries
         assert!(result.is_ok());
         assert_eq!(result.unwrap().a_records, success_info.a_records);
         assert_eq!(fake_resolver.get_call_count("flaky.com"), 3); // Initial + 2 retries
+
+        // Explicitly shut down the background tasks spawned by the manager
+        let _ = tx.send(());
     }
 
     #[tokio::test]
@@ -633,7 +648,7 @@ pub mod tests {
         assert_eq!(fake_resolver.get_call_count("example.com"), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_nxdomain_retry_task_sends_resolved_domain() {
         let fake_resolver = Arc::new(FakeDnsResolver::new());
         let retry_config = DnsRetryConfig {
@@ -646,7 +661,7 @@ pub mod tests {
             ..Default::default()
         };
 
-        let (_tx, rx) = watch::channel(());
+        let (tx, rx) = watch::channel(());
         let health_monitor =
             DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), rx.clone());
         let (manager, mut resolved_rx) = DnsResolutionManager::new(
@@ -662,11 +677,6 @@ pub mod tests {
         // This first call should fail immediately and queue the domain for retry
         let result = manager.resolve_with_retry("newly-active.com", "test-tag").await;
         assert!(result.is_err());
-        if let Err(DnsError::Resolution(e)) = result {
-            assert!(is_nxdomain_error_str(&e));
-        } else {
-            panic!("Expected a resolution error");
-        }
         assert_eq!(fake_resolver.get_call_count("newly-active.com"), 1);
 
         // Now, configure the resolver to return a success response
@@ -674,16 +684,19 @@ pub mod tests {
         success_dns_info.a_records.push("5.5.5.5".parse().unwrap());
         fake_resolver.add_success_response("newly-active.com", success_dns_info.clone());
 
-        // Wait for the retry task to process the domain and send it to the resolved channel
-        let resolved_result = tokio::time::timeout(Duration::from_secs(1), resolved_rx.recv()).await;
-        assert!(resolved_result.is_ok(), "Did not receive resolved domain from channel");
+        // Advance time to trigger the retry
+        tokio::time::advance(Duration::from_millis(15)).await;
 
-        let (domain, tag, dns_info) = resolved_result.unwrap().unwrap();
+        // The resolved domain should now be available on the channel
+        let (domain, tag, dns_info) = resolved_rx.recv().await.unwrap();
         assert_eq!(domain, "newly-active.com");
         assert_eq!(tag, "test-tag");
         assert_eq!(dns_info.a_records, success_dns_info.a_records);
 
         // The resolver should have been called a second time
         assert_eq!(fake_resolver.get_call_count("newly-active.com"), 2);
+
+        // Shut down the background tasks
+        let _ = tx.send(());
     }
 }

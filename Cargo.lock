@@ -444,6 +444,7 @@ dependencies = [
  "native-tls",
  "notify",
  "num_cpus",
+ "once_cell",
  "predicates",
  "psl",
  "rand",
