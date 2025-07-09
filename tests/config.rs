@@ -12,6 +12,8 @@ fn test_load_full_valid_config() {
         [metrics]
         log_metrics = true
         log_aggregation_seconds = 30
+        prometheus_enabled = true
+        prometheus_listen_address = "0.0.0.0:9999"
         [performance]
         queue_capacity = 50000
         [network]
@@ -20,11 +22,15 @@ fn test_load_full_valid_config() {
         allow_invalid_certs = true
         [matching]
         pattern_files = ["/etc/certwatch/patterns.txt"]
+        [rules]
+        rule_files = ["/etc/certwatch/rules.yml"]
         [dns]
         resolver = "1.1.1.1:53"
         timeout_ms = 2000
         standard_retries = 5
         standard_initial_backoff_ms = 100
+        nxdomain_retries = 10
+        nxdomain_initial_backoff_ms = 10000
         [dns.health]
         failure_threshold = 0.8
         window_seconds = 60
@@ -35,7 +41,10 @@ fn test_load_full_valid_config() {
         [output]
         format = "Json"
         [output.slack]
+        enabled = true
         webhook_url = "https://hooks.slack.com/services/..."
+        batch_size = 50
+        batch_timeout_seconds = 30
         [deduplication]
         cache_size = 5000
         cache_ttl_seconds = 1800
@@ -55,6 +64,11 @@ fn test_load_full_valid_config() {
     assert_eq!(config.concurrency, 4);
     assert!(config.metrics.log_metrics);
     assert_eq!(config.metrics.log_aggregation_seconds, 30);
+    assert!(config.metrics.prometheus_enabled);
+    assert_eq!(
+        config.metrics.prometheus_listen_address,
+        "0.0.0.0:9999"
+    );
     assert_eq!(config.performance.queue_capacity, 50000);
     assert_eq!(config.network.certstream_url, "ws://example.com/certstream");
     assert_eq!(config.network.sample_rate, 0.5);
@@ -63,25 +77,33 @@ fn test_load_full_valid_config() {
         config.matching.pattern_files,
         vec![PathBuf::from("/etc/certwatch/patterns.txt")]
     );
+    assert_eq!(
+        config.rules.rule_files,
+        vec![PathBuf::from("/etc/certwatch/rules.yml")]
+    );
     assert_eq!(config.dns.resolver, Some("1.1.1.1:53".to_string()));
     assert_eq!(config.dns.timeout_ms, Some(2000));
     assert_eq!(config.dns.retry_config.standard_retries, 5);
     assert_eq!(config.dns.retry_config.standard_initial_backoff_ms, 100);
-    assert_eq!(config.dns.retry_config.nxdomain_retries, 5); // This is not in the toml, so it should be the default value
+    assert_eq!(config.dns.retry_config.nxdomain_retries, 10);
     assert_eq!(
         config.dns.retry_config.nxdomain_initial_backoff_ms,
         10000
-    ); // This is not in the toml, so it should be the default value
+    );
     assert_eq!(config.dns.health.failure_threshold, 0.8);
     assert_eq!(
         config.enrichment.asn_tsv_path,
         Some(PathBuf::from("/var/db/ip-to-asn.tsv"))
     );
     assert!(matches!(config.output.format, OutputFormat::Json));
+    let slack_config = config.output.slack.unwrap();
+    assert!(slack_config.enabled);
     assert_eq!(
-        config.output.slack.unwrap().webhook_url,
+        slack_config.webhook_url,
         "https://hooks.slack.com/services/..."
     );
+    assert_eq!(slack_config.batch_size, 50);
+    assert_eq!(slack_config.batch_timeout_seconds, 30);
     assert_eq!(config.deduplication.cache_size, 5000);
     assert_eq!(config.deduplication.cache_ttl_seconds, 1800);
 }

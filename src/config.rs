@@ -142,6 +142,11 @@ pub struct MetricsConfig {
     pub log_metrics: bool,
     /// The interval in seconds for logging aggregated metrics.
     pub log_aggregation_seconds: u64,
+    /// Enable the Prometheus exporter endpoint.
+    #[serde(default)]
+    pub prometheus_enabled: bool,
+    /// The listen address for the Prometheus exporter (e.g., "127.0.0.1:9090").
+    pub prometheus_listen_address: String,
 }
 
 impl Default for MetricsConfig {
@@ -149,6 +154,8 @@ impl Default for MetricsConfig {
         Self {
             log_metrics: false,
             log_aggregation_seconds: 10,
+            prometheus_enabled: false,
+            prometheus_listen_address: "127.0.0.1:9090".to_string(),
         }
     }
 }

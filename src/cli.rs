@@ -51,6 +51,14 @@ pub struct Cli {
     #[arg(long, value_name = "SECONDS")]
     pub log_aggregation_seconds: Option<u64>,
 
+    /// Enable the Prometheus exporter endpoint.
+    #[arg(long)]
+    pub prometheus_enabled: Option<bool>,
+
+    /// The listen address for the Prometheus exporter.
+    #[arg(long, value_name = "ADDRESS")]
+    pub prometheus_listen_address: Option<String>,
+
     /// Output alerts in JSON format to stdout, overriding the config file setting.
     #[arg(short, long, action = clap::ArgAction::SetTrue)]
     pub json: bool,
@@ -126,6 +134,17 @@ impl Provider for Cli {
             dict.insert(
                 "metrics.log_aggregation_seconds".into(),
                 Value::from(seconds),
+            );
+        }
+
+        if let Some(enabled) = self.prometheus_enabled {
+            dict.insert("metrics.prometheus_enabled".into(), Value::from(enabled));
+        }
+
+        if let Some(address) = self.prometheus_listen_address.as_ref() {
+            dict.insert(
+                "metrics.prometheus_listen_address".into(),
+                Value::from(address.clone()),
             );
         }
 

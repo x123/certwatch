@@ -83,7 +83,7 @@
     - [ ] Move the `build_alert` helper function to be an associated function `Alert::new()`.
 
 - [ ] **#95 - Refactor Duplicated Logic**
-  - **Context:** Repetitive code blocks should be extracted into shared helper functions to reduce duplication and improve maintainability.
+  - **Context:** Repetitive code blocks should be extracted into a shared helper functions to reduce duplication and improve maintainability.
   - **Dependencies:** #24
   - **Subtasks:**
     - [ ] The heartbeat spawning logic is duplicated for the `QueueMonitor` and `OutputManager`. Extract this into a `utils::spawn_heartbeat_task` helper function.
@@ -569,6 +569,21 @@ The implementation is broken down into two sequential epics:
 
 ---
 
+### **Epic #47: Modernize Metrics System with Prometheus Exporter**
+
+*   **Goal:** Replace the current in-memory, log-based metrics system with a production-grade Prometheus exporter. This will provide real-time visibility into application performance and align with industry-standard observability practices.
+*   **Status:** Not Started
+*   **Tasks:**
+    *   [x] **#194 - Dependencies:** Add `metrics-exporter-prometheus` and `axum` to `Cargo.toml`.
+    *   [x] **#195 - Configuration:** Add a `metrics` section to `config.rs` to enable/disable the exporter and configure its listen address.
+    *   [ ] **#196 - Prometheus Recorder:** Create `src/internal_metrics/prometheus_recorder.rs` to initialize and manage the Prometheus exporter.
+    *   [ ] **#197 - Exporter Server:** Implement a function to run a lightweight `axum` server in a separate Tokio task, serving the rendered metrics at the `/metrics` endpoint.
+    *   [ ] **#198 - Application Integration:** In `main.rs`, conditionally initialize the `PrometheusRecorder` and start the server based on the new configuration.
+    *   [ ] **#199 - Preserve Test Integrity:** Update the `TestAppBuilder` to ensure all existing tests continue to use the `TestMetricsRecorder`, avoiding any disruption to our test suite.
+    *   [ ] **#200 - Documentation:** Update project documentation to explain the new metrics system.
+
+---
+
 ### **Phase 5: Pre-emptive Filtering with `ignore` Rules**
 *   **Goal:** Implement a global `ignore` list to provide a highly-efficient, pre-emptive filter that discards noisy, unwanted domains (e.g., `*.vpn.azure.com`) *before* any other processing occurs. This provides the boolean `NOT` capability that is currently missing.
 *   **Status:** Not Started
@@ -586,7 +601,7 @@ The implementation is broken down into two sequential epics:
 *   **Tasks:**
     *   [ ] **#185 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures within the `rules` section.
     *   [ ] **#186 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
-    - [ ] **#187 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   - [ ] **#187 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
 
 ---
 

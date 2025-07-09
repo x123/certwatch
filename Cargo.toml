@@ -45,6 +45,8 @@ psl = "2.1.123"
 serde_with = { version = "3.14.0", features = ["macros"] }
 serde_yml = "0.0.12"
 itertools = "0.14.0"
+metrics-exporter-prometheus = "0.17.2"
+axum = "0.8.4"
 
 [features]
 live-tests = []
