@@ -4,6 +4,23 @@ This document outlines the guiding principles, workflows, and coding standards
 for the Cert-Watch project. Adhering to these rules ensures consistency,
 quality, and maintainability.
 
+---
+## **IMPORTANT**: The Golden Rule of Integration Testing
+
+**All integration tests that interact with the core application logic MUST use the `TestAppBuilder` pattern.**
+
+After analyzing `tests/helpers/app.rs`, `tests/certstream_client.rs`, and `tests/shutdown_integration.rs`, a clear, idiomatic testing pattern has emerged that MUST be followed to ensure tests are robust, deterministic, and easy to maintain.
+
+-   **`TestAppBuilder` is the Key:** The `TestAppBuilder` in `tests/helpers/app.rs` is the standard way to construct the application for integration tests. It is designed to run the core application logic while allowing critical components (like the network client, DNS resolver, etc.) to be replaced with mocks. **DO NOT** attempt to re-implement this functionality with bespoke mocks.
+
+-   **Direct Input via MPSC Channel:** Crucially, the `TestAppBuilder`'s `build()` method returns a `TestApp` struct which contains a `domains_tx: mpsc::Sender<String>`. This channel is plumbed directly into the application's worker distribution logic, completely bypassing the `CertStreamClient` and the `WebSocketConnection`. This is the **ONLY** approved "backdoor" for injecting test data directly into the system.
+
+-   **Signal-Based Completion:** Tests like `certstream_client.rs` use `tokio::sync::oneshot` channels to signal when a task has completed its work. This is a robust, explicit way to synchronize the test with the application state, avoiding unreliable `sleep` calls.
+
+**Failure to adhere to this pattern will result in flaky, unreliable tests that are difficult to debug.**
+
+---
+
 ## 1. Guiding Principles & Workflow
 
 This section covers the high-level philosophy and processes that govern the
