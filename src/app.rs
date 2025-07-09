@@ -32,7 +32,7 @@ pub async fn run(
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
     pattern_matcher_override: Option<Arc<dyn PatternMatcher>>,
-    alert_tx: Option<broadcast::Sender<Alert>>,
+    notification_tx: Option<broadcast::Sender<Alert>>,
 ) -> Result<()> {
     // =========================================================================
     // 1. Initialize Metrics Recorder (and logging)
@@ -102,16 +102,10 @@ pub async fn run(
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    // If an alert channel is provided from main (for notifications), we use it.
-    // Otherwise (e.g., in tests), we create a new one and crucially keep the
-    // receiver in scope (`_alerts_rx`) so the channel remains open.
-    let (alerts_tx, _alerts_rx) = match alert_tx {
-        Some(tx) => (tx, None),
-        None => {
-            let (tx, rx) = broadcast::channel(1000);
-            (tx, Some(rx))
-        }
-    };
+    // This is the primary, internal channel for alerts flowing from workers to the
+    // output task. The output task will then publish to the optional `notification_tx`
+    // for external subscribers like Slack.
+    let (internal_alerts_tx, _) = broadcast::channel::<Alert>(1000);
     let (domains_tx, domains_rx) = if let Some(rx_override) = domains_rx_override {
         // This path is for testing. The test harness provides the receiver.
         // We still need a sender to give to the CertStreamClient, but it will be
@@ -176,7 +170,7 @@ pub async fn run(
         let rule_matcher = rule_matcher.clone();
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
-        let alerts_tx = alerts_tx.clone();
+        let alerts_tx = internal_alerts_tx.clone();
         let mut shutdown_rx = shutdown_rx.clone();
 
         let handle = tokio::spawn(async move {
@@ -249,7 +243,7 @@ pub async fn run(
     // 7. NXDOMAIN Resolution Feedback Loop
     // =========================================================================
     let nxdomain_feedback_task = {
-        let alerts_tx = alerts_tx.clone();
+        let alerts_tx = internal_alerts_tx.clone();
         let enrichment_provider = enrichment_provider.clone();
         tokio::spawn(async move {
             while let Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv().await {
@@ -285,10 +279,10 @@ pub async fn run(
     // =========================================================================
     let output_task = tokio::spawn(output_task_logic(
         shutdown_rx.clone(),
-        alerts_tx.subscribe(),
+        internal_alerts_tx.subscribe(),
         deduplicator,
         output_manager,
-        Some(alerts_tx.clone()),
+        notification_tx,
     ));
 
     info!("CertWatch initialized successfully. Monitoring for domains...");
@@ -328,7 +322,7 @@ async fn output_task_logic(
     mut alerts_rx: broadcast::Receiver<Alert>,
     deduplicator: Arc<Deduplicator>,
     output_manager: Arc<OutputManager>,
-    alert_tx: Option<broadcast::Sender<Alert>>,
+    notification_tx: Option<broadcast::Sender<Alert>>,
 ) {
     let hb_shutdown_rx = shutdown_rx.clone();
     tokio::spawn(async move { run_heartbeat("OutputManager", hb_shutdown_rx).await });
@@ -347,7 +341,7 @@ async fn output_task_logic(
                     metrics::counter!("agg.alerts_sent").increment(1);
 
                     // Publish to notification pipeline if enabled
-                    if let Some(tx) = &alert_tx {
+                    if let Some(tx) = &notification_tx {
                         debug!("Publishing alert to notification channel for domain: {}", &alert.domain);
                         if let Err(e) = tx.send(alert.clone()) {
                             error!(domain = %alert.domain, error = %e, "Failed to publish alert to notification channel");

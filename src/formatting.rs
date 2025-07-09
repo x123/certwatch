@@ -25,6 +25,9 @@ impl SlackTextFormatter {
     fn format_line(&self, alert: &Alert) -> String {
         let base_domain = self.get_base_domain(&alert.domain);
 
+        // Tag part
+        let tag_part = format!("[{}] ", alert.source_tag);
+
         // Domain part
         let domain_urlscan_link = format!(
             "<https://urlscan.io/search/#page.domain%3A{}|{}>",
@@ -82,7 +85,7 @@ impl SlackTextFormatter {
             "".to_string()
         };
 
-        format!("{}{}{}", domain_part, ip_part, enrichment_part)
+        format!("{}{}{}{}", tag_part, domain_part, ip_part, enrichment_part)
     }
 }
 
@@ -211,7 +214,7 @@ mod tests {
         Alert {
             timestamp: "2025-07-08T21:03:52+0200".to_string(),
             domain: domain.to_string(),
-            source_tag: "phishing".to_string(), // Source tag is no longer displayed, but still part of the alert
+            source_tag: "phishing".to_string(),
             resolved_after_nxdomain: false,
             dns,
             enrichment,
@@ -229,7 +232,7 @@ mod tests {
         let formatter = SlackTextFormatter;
         let line = formatter.format_line(&alert);
 
-        let expected = "<https://urlscan.io/search/#page.domain%3Acom-etcapo.vip|com-etcapo.vip> (<https://www.shodan.io/search?query=hostname%3Acom-etcapo.vip|shodan>|<https://www.virustotal.com/gui/domain/com-etcapo.vip|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22%20OR%20%222.2.2.2%22%20OR%20%223.3.3.3%22)|1.1.1.1 (+3 others)> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ CLOUDFLARENET, US";
+        let expected = "[phishing] <https://urlscan.io/search/#page.domain%3Acom-etcapo.vip|com-etcapo.vip> (<https://www.shodan.io/search?query=hostname%3Acom-etcapo.vip|shodan>|<https://www.virustotal.com/gui/domain/com-etcapo.vip|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22%20OR%20%222.2.2.2%22%20OR%20%223.3.3.3%22)|1.1.1.1 (+3 others)> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ CLOUDFLARENET, US";
         assert_eq!(line, expected);
     }
 
@@ -244,7 +247,7 @@ mod tests {
         let formatter = SlackTextFormatter;
         let line = formatter.format_line(&alert);
 
-        let expected = "<https://urlscan.io/search/#page.domain%3Acom-xxtfr.vip|com-xxtfr.vip> (<https://www.shodan.io/search?query=hostname%3Acom-xxtfr.vip|shodan>|<https://www.virustotal.com/gui/domain/com-xxtfr.vip|vt>)";
+        let expected = "[phishing] <https://urlscan.io/search/#page.domain%3Acom-xxtfr.vip|com-xxtfr.vip> (<https://www.shodan.io/search?query=hostname%3Acom-xxtfr.vip|shodan>|<https://www.virustotal.com/gui/domain/com-xxtfr.vip|vt>)";
         assert_eq!(line, expected);
     }
 
@@ -261,7 +264,7 @@ mod tests {
 
         let expected_domain_link = "<https://urlscan.io/search/#page.domain%3Acom-locateiphone.us|ww25.hostmaster.hostmaster.icloud.com-locateiphone.us>";
         let expected_other_links = "(<https://www.shodan.io/search?query=hostname%3Acom-locateiphone.us|shodan>|<https://www.virustotal.com/gui/domain/com-locateiphone.us|vt>)";
-        assert!(line.starts_with(expected_domain_link));
+        assert!(line.starts_with(&format!("[phishing] {}", expected_domain_link)));
         assert!(line.contains(expected_other_links));
     }
 
@@ -273,8 +276,8 @@ mod tests {
         let batch = formatter.format_batch(&[alert1, alert2]);
 
         // With sorting, site1 should come before site2.
-        let expected_line1 = "<https://urlscan.io/search/#page.domain%3Asite1.com|site1.com> (<https://www.shodan.io/search?query=hostname%3Asite1.com|shodan>|<https://www.virustotal.com/gui/domain/site1.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22)|1.1.1.1> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ APNIC, AU";
-        let expected_line2 = "<https://urlscan.io/search/#page.domain%3Asite2.com|site2.com> (<https://www.shodan.io/search?query=hostname%3Asite2.com|shodan>|<https://www.virustotal.com/gui/domain/site2.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%228.8.8.8%22)|8.8.8.8> (<https://www.shodan.io/search?query=ip%3A8.8.8.8|shodan>|<https://www.virustotal.com/gui/ip-address/8.8.8.8|vt>)";
+        let expected_line1 = "[phishing] <https://urlscan.io/search/#page.domain%3Asite1.com|site1.com> (<https://www.shodan.io/search?query=hostname%3Asite1.com|shodan>|<https://www.virustotal.com/gui/domain/site1.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22)|1.1.1.1> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ APNIC, AU";
+        let expected_line2 = "[phishing] <https://urlscan.io/search/#page.domain%3Asite2.com|site2.com> (<https://www.shodan.io/search?query=hostname%3Asite2.com|shodan>|<https://www.virustotal.com/gui/domain/site2.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%228.8.8.8%22)|8.8.8.8> (<https://www.shodan.io/search?query=ip%3A8.8.8.8|shodan>|<https://www.virustotal.com/gui/ip-address/8.8.8.8|vt>)";
         let expected = format!("```\n{}\n{}\n```", expected_line1, expected_line2);
 
         assert_eq!(batch, expected);
