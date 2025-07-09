@@ -1,5 +1,57 @@
+### Epic #46: Implement Advanced, Staged Rule-Based Filtering Engine
+**Goal:** Implemented a multi-stage, YAML-based rule engine with advanced boolean logic, significantly improving detection capabilities and replacing the legacy pattern matcher.
+
+---
+### Epic #45: Enhance Slack Notification Scannability
+**Goal:** Implemented a multi-level sorting pipeline for Slack alert batches, improving readability by grouping related domains and networks.
+
+---
+### Epic #44: Retroactive - Improve Test Suite Robustness
+**Goal:** Systematically replaced flaky, timeout-prone integration tests with focused, reliable unit tests, codifying a new, more robust testing philosophy.
+
+---
+### Epic #43: Slack Batching and Delivery
+**Goal:** Built a dedicated Slack notification service that subscribes to the event bus and handles the complex logic of batching and sending alerts.
+
+---
+### Epic #42: Core Notification Pipeline
+**Goal:** Built the fundamental pub/sub architecture using a broadcast channel, creating the backbone of the notification system.
+
+---
+### Epic 39: Improve Startup Resilience for Enrichment Data
+**Goal:** Implemented a pre-flight check to validate the TSV enrichment data source at application startup, preventing silent failures.
+
+---
+### Epic 38: Improve Startup Resilience and Diagnostics
+**Goal:** Hardened the startup sequence by adding a pre-flight health check for the DNS resolver and ensuring early visibility of startup logs.
+
+---
+### Epic: Architectural Enhancements
+**Goal:** Improved code quality by integrating the `tracing` ecosystem for structured logs and using strategic type aliases for better readability.
+
+---
+### Epic: Improve Unit Test Coverage
+**Goal:** Added comprehensive unit tests for core logic, including pattern matching, TSV enrichment, and configuration parsing.
+
+---
+### Epic: Eliminate Lock Contention in DNS Health Monitor
+**Goal:** Refactored the `DnsHealthMonitor` to use a message-passing model, eliminating lock contention on the hot path.
+
+---
+### Epic 36: Enhance Test Suite with Failure Injection
+**Goal:** Enhanced the test suite by implementing mockable components for the alert sink, enrichment provider, and DNS resolver, allowing for robust failure injection testing.
+
+---
+### Epic 35: Observability and Error Handling
+**Goal:** Improved observability by introducing explicit error handling, logging, and metrics for the core domain processing loop.
+
+---
+### Epic 37: Unplanned Maintenance & Bug Fixes
+**Goal:** Addressed critical bugs, including a startup crash and a cascade of concurrency failures, to ensure application stability.
+
+---
 ### Epic 33: GitHub Documentation Best Practices
-**Goal:** Enhanced the project's `README.md` to align with GitHub best practices, creating a more welcoming and informative entry point for new contributors and users. The updated documentation clarifies the project's purpose, features, and setup, making it easier for the community to get involved.
+**Goal:** Enhanced the project's `README.md` to align with GitHub best practices, creating a more welcoming and informative entry point for new contributors and users.
 
 ---
 ### Epic 29: Resolve Metrics Crate Name Collision
