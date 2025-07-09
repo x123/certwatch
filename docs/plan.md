@@ -569,27 +569,41 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-### **Phase 5: Advanced Boolean Logic**
+### **Phase 5: Pre-emptive Filtering with `ignore` Rules**
+*   **Goal:** Implement a global `ignore` list to provide a highly-efficient, pre-emptive filter that discards noisy, unwanted domains (e.g., `*.vpn.azure.com`) *before* any other processing occurs. This provides the boolean `NOT` capability that is currently missing.
+*   **Status:** Not Started
+*   **Tasks:**
+    *   [ ] **#181 - Update Schema & Parsing:** Extend the `rules.yml` schema to support a top-level `ignore` key, which will be a list of named `domain_regex` patterns. Update the rule-loading logic to parse these into a separate collection.
+    *   [ ] **#182 - Compile to `RegexSet`:** Compile all `ignore` patterns into a single, highly-efficient `regex::RegexSet` for fast matching.
+    *   [ ] **#183 - Integrate into Pipeline:** In `app::run`, before any other logic, check incoming domains against the `ignore` `RegexSet`. If a match is found, immediately drop the domain and increment a new `domains_ignored` metric.
+    *   [ ] **#184 - Add Tests:** Add unit tests to verify that the `ignore` rules are loaded correctly and that the `RegexSet` is built. Add an integration test to confirm that a domain matching an `ignore` rule is dropped and does not trigger any further processing (e.g., no DNS lookups, no positive rule matching).
+
+---
+
+### **Phase 6: Advanced Boolean Logic**
 *   **Goal:** Enhance the rule engine's expressiveness by adding support for `any` (OR) and nested conditions.
+*   **Status:** Not Started
 *   **Tasks:**
-    *   [ ] **#181 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
-    *   [ ] **#182 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
-    *   [ ] **#183 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   [ ] **#185 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures within the `rules` section.
+    *   [ ] **#186 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
+    - [ ] **#187 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
 
 ---
 
-### **Phase 6: Formalize the Extensible Enrichment Framework**
+### **Phase 7: Formalize the Extensible Enrichment Framework**
 *   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
+*   **Status:** Not Started
 *   **Tasks:**
-    *   [ ] **#184 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
-    *   [ ] **#185 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
-    *   [ ] **#186 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
+    *   [ ] **#188 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
+    *   [ ] **#189 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
+    *   [ ] **#190 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
 
 ---
 
-### **Phase 7: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+### **Phase 8: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
 *   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
+*   **Status:** Not Started
 *   **Tasks:**
-    *   [ ] **#187 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
-    *   [ ] **#188 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
-    *   [ ] **#189 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
+    *   [ ] **#191 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
+    *   [ ] **#192 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
+    *   [ ] **#193 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
