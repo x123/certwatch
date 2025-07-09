@@ -549,27 +549,36 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-### **Phase 3: Advanced Boolean Logic**
+### **Phase 3: Optimized Regex Compilation**
+*   **Goal:** Drastically improve startup performance and matching efficiency by grouping regex patterns by rule name and compiling them into a single, optimized regex per rule.
+*   **Tasks:**
+    *   [ ] **#176 - Group and Compile Regexes:** Refactor the rule loading logic to group individual `domain_regex` patterns by their `name`. Combine the patterns for each name into a single regex using the `|` (OR) operator.
+    *   [ ] **#177 - Update Rule Structs:** Modify the internal `Rule` representation to store the single, compiled `Regex` per name, rather than individual patterns.
+    *   [ ] **#178 - Verify Performance:** Add a test or benchmark to confirm that the startup time with a large number of regex-based rules is significantly reduced.
+
+---
+
+### **Phase 4: Advanced Boolean Logic**
 *   **Goal:** Enhance the rule engine's expressiveness by adding support for `any` (OR) and nested conditions.
 *   **Tasks:**
-    *   [ ] **#176 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
-    *   [ ] **#177 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
-    *   [ ] **#178 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   [ ] **#179 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
+    *   [ ] **#180 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
+    *   [ ] **#181 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
 
 ---
 
-### **Phase 4: Formalize the Extensible Enrichment Framework**
+### **Phase 5: Formalize the Extensible Enrichment Framework**
 *   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
 *   **Tasks:**
-    *   [ ] **#179 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
-    *   [ ] **#180 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
-    *   [ ] **#181 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
+    *   [ ] **#182 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
+    *   [ ] **#183 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
+    *   [ ] **#184 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
 
 ---
 
-### **Phase 5: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+### **Phase 6: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
 *   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
 *   **Tasks:**
-    *   [ ] **#182 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
-    *   [ ] **#183 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
-    *   [ ] **#184 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
+    *   [ ] **#185 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
+    *   [ ] **#186 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
+    *   [ ] **#187 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
