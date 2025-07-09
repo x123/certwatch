@@ -32,7 +32,7 @@ async fn test_domain_is_processed_by_one_worker() {
         .with_dns_resolver(resolver.clone())
         .with_outputs(vec![counting_output.clone()])
         .with_config_modifier(|c| {
-            c.concurrency = Some(4); // Use multiple workers
+            c.core.concurrency = 4; // Use multiple workers
             c.rules.rule_files = Some(vec![create_rule_file(
                 r#"
 rules:

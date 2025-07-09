@@ -75,8 +75,9 @@ sources.
 the example configuration file from [certwatch-example.toml](./certwatch-example.toml)
 
 ```toml
-# example certwatch.toml configuration 
+# example certwatch.toml configuration
 
+[core]
 # Valid levels: debug, info, warn, error
 log_level = "info"
 

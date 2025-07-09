@@ -3,6 +3,10 @@
 # This file provides an example of all available configuration options.
 # Copy this file to 'certwatch.toml' and adjust the settings to your needs.
 
+# =============================================================================
+# Core Application Configuration
+# =============================================================================
+[core]
 # The logging level for the application.
 # Options: "trace", "debug", "info", "warn", "error"
 log_level = "info"

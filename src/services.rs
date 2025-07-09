@@ -24,7 +24,7 @@ pub fn setup_notification_pipeline(config: &Config) -> Result<Option<broadcast::
                 }
             };
 
-            let queue_capacity = config.performance.queue_capacity.unwrap_or(1000);
+            let queue_capacity = config.performance.queue_capacity;
             let (tx, _rx) = broadcast::channel::<Alert>(queue_capacity);
             info!("Slack notification pipeline enabled.");
 

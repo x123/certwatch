@@ -57,9 +57,7 @@ impl HickoryDnsResolver {
         resolver_opts.ndots = 1;
 
         // Override the timeout if specified in our application config.
-        if let Some(timeout_ms) = config.timeout_ms {
-            resolver_opts.timeout = Duration::from_millis(timeout_ms);
-        }
+        resolver_opts.timeout = Duration::from_millis(config.timeout_ms);
 
         let resolver = hickory_resolver::Resolver::builder_with_config(
             resolver_config_with_no_search,

@@ -56,9 +56,9 @@ impl TestAppBuilder {
     pub fn new() -> Self {
         let mut config = Config::default();
         // Disable network-dependent features for default tests
-        config.network.certstream_url = Some("ws://127.0.0.1:12345".to_string()); // Mock URL
+        config.network.certstream_url = "ws://127.0.0.1:12345".to_string(); // Mock URL
         config.output.slack = None;
-        config.metrics.log_metrics = Some(false);
+        config.metrics.log_metrics = false;
         // Set a path for the ASN database, even if it's empty, to satisfy the check
         config.enrichment.asn_tsv_path = Some("/tmp/empty.tsv".into());
 
@@ -144,7 +144,7 @@ impl TestAppBuilder {
 
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let (domains_tx, domains_rx) =
-            mpsc::channel(self.config.performance.queue_capacity.unwrap_or(1024));
+            mpsc::channel(self.config.performance.queue_capacity);
         let domains_rx_mutex = Arc::new(Mutex::new(domains_rx));
 
         let app_future = async move {

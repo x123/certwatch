@@ -21,11 +21,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env().add_directive(
-                config
-                    .log_level
-                    .clone()
-                    .unwrap_or_else(|| "info".to_string())
-                    .parse()
+                config.core.log_level.parse()
                     .unwrap(),
             ),
         )
@@ -96,22 +92,20 @@ async fn main() -> Result<()> {
 /// Logs the final, merged configuration settings to the console.
 fn log_config_settings(config: &Config) {
     info!("-------------------- Configuration --------------------");
-    info!("Log Level: {}", config.log_level.as_deref().unwrap_or("info"));
-    info!("Log Metrics: {}", config.metrics.log_metrics.unwrap_or(false));
-    info!("Log Aggregation Interval: {}s", config.metrics.log_aggregation_seconds.unwrap_or(10));
-    info!("Concurrency: {}", config.concurrency.unwrap_or_else(num_cpus::get));
-    info!("Domain Queue Capacity: {}", config.performance.queue_capacity.unwrap_or(100_000));
-    info!("CertStream URL: {}", config.network.certstream_url.as_deref().unwrap_or("wss://certstream.calidog.io"));
-    let sample_rate = config.network.sample_rate.unwrap_or(1.0);
+    info!("Log Level: {}", config.core.log_level);
+    info!("Log Metrics: {}", config.metrics.log_metrics);
+    info!("Log Aggregation Interval: {}s", config.metrics.log_aggregation_seconds);
+    info!("Concurrency: {}", config.core.concurrency);
+    info!("Domain Queue Capacity: {}", config.performance.queue_capacity);
+    info!("CertStream URL: {}", config.network.certstream_url);
+    let sample_rate = config.network.sample_rate;
     info!("Sample Rate: {}% (sample_rate:{})", (sample_rate * 100.0) as u64, sample_rate);
     if let Some(resolver) = &config.dns.resolver {
         info!("DNS Resolver: {}", resolver);
     } else {
         info!("DNS Resolver: System Default");
     }
-    if let Some(timeout) = config.dns.timeout_ms {
-        info!("DNS Timeout: {}ms", timeout);
-    }
+    info!("DNS Timeout: {}ms", config.dns.timeout_ms);
     info!("DNS Standard Retries: {}", config.dns.retry_config.retries.unwrap_or(3));
     info!("DNS Standard Backoff: {}ms", config.dns.retry_config.backoff_ms.unwrap_or(500));
     info!("DNS NXDOMAIN Retries: {}", config.dns.retry_config.nxdomain_retries.unwrap_or(1));
@@ -126,7 +120,7 @@ fn log_config_settings(config: &Config) {
     let slack_enabled = config.output.slack.as_ref().and_then(|s| s.enabled).unwrap_or(false);
     let slack_webhook_set = config.output.slack.as_ref().and_then(|s| s.webhook_url.as_ref()).is_some();
     info!("Slack Output: {}", if slack_enabled && slack_webhook_set { "Enabled" } else { "Disabled" });
-    info!("Deduplication Cache Size: {}", config.deduplication.cache_size.unwrap_or(100_000));
-    info!("Deduplication Cache TTL: {}s", config.deduplication.cache_ttl_seconds.unwrap_or(3600));
+    info!("Deduplication Cache Size: {}", config.deduplication.cache_size);
+    info!("Deduplication Cache TTL: {}s", config.deduplication.cache_ttl_seconds);
     info!("-------------------------------------------------------");
 }

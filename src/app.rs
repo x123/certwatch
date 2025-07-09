@@ -144,8 +144,8 @@ impl AppBuilder {
         // 1. Initialize Metrics Recorder (and logging)
         // =========================================================================
         let mut metrics_task: Option<JoinHandle<()>> = None;
-        if config.metrics.log_metrics.unwrap_or(false) {
-            let aggregation_seconds = config.metrics.log_aggregation_seconds.unwrap_or(60);
+        if config.metrics.log_metrics {
+            let aggregation_seconds = config.metrics.log_aggregation_seconds;
             info!(
                 "Logging recorder enabled. Metrics will be printed every {} seconds.",
                 aggregation_seconds
@@ -179,8 +179,8 @@ impl AppBuilder {
         let enrichment_provider = self
             .enrichment_provider_override
             .expect("Enrichment provider is now required to be passed into app::run");
-        let cache_ttl_seconds = config.deduplication.cache_ttl_seconds.unwrap_or(3600);
-        let cache_size = config.deduplication.cache_size.unwrap_or(100_000);
+        let cache_ttl_seconds = config.deduplication.cache_ttl_seconds;
+        let cache_size = config.deduplication.cache_size;
         debug!(cache_ttl_seconds, cache_size, "Initializing deduplicator");
         let deduplicator = Arc::new(Deduplicator::new(
             Duration::from_secs(cache_ttl_seconds),
@@ -236,13 +236,9 @@ impl AppBuilder {
         // =========================================================================
         // 7. Start the CertStream Client
         // =========================================================================
-        let certstream_url = config
-            .network
-            .certstream_url
-            .clone()
-            .unwrap_or_else(|| "wss://certstream.calidog.io".to_string());
-        let sample_rate = config.network.sample_rate.unwrap_or(1.0);
-        let allow_invalid_certs = config.network.allow_invalid_certs.unwrap_or(false);
+        let certstream_url = config.network.certstream_url.clone();
+        let sample_rate = config.network.sample_rate;
+        let allow_invalid_certs = config.network.allow_invalid_certs;
         debug!(
             certstream_url,
             sample_rate,
@@ -274,7 +270,7 @@ impl AppBuilder {
         // 8. Main Processing Loop (Worker Pool)
         // =========================================================================
         let mut worker_handles = Vec::new();
-        let concurrency = config.concurrency.unwrap_or_else(num_cpus::get);
+        let concurrency = config.core.concurrency;
         info!("Spawning {} worker tasks...", concurrency);
 
         for i in 0..concurrency {

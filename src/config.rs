@@ -28,58 +28,87 @@ pub struct Cli {
 }
 
 /// The main configuration struct for the application.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct Config {
     #[serde(skip)] // test_mode is a runtime flag, not a config value.
     pub test_mode: bool,
-    pub log_level: Option<String>,
-    pub concurrency: Option<usize>,
     #[serde(default)]
+    pub core: CoreConfig,
     pub metrics: MetricsConfig,
-    #[serde(default)]
     pub performance: PerformanceConfig,
-    #[serde(default)]
     pub network: NetworkConfig,
-    #[serde(default)]
     pub rules: RulesConfig,
-    #[serde(default)]
     pub dns: DnsConfig,
-    #[serde(default)]
     pub enrichment: EnrichmentConfig,
-    #[serde(default)]
     pub output: OutputConfig,
-    #[serde(default)]
     pub deduplication: DeduplicationConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            test_mode: false,
+            core: CoreConfig::default(),
+            metrics: MetricsConfig::default(),
+            performance: PerformanceConfig::default(),
+            network: NetworkConfig::default(),
+            rules: RulesConfig::default(),
+            dns: DnsConfig::default(),
+            enrichment: EnrichmentConfig::default(),
+            output: OutputConfig::default(),
+            deduplication: DeduplicationConfig::default(),
+        }
+    }
+}
+
+/// Configuration for core application settings.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct CoreConfig {
+    pub log_level: String,
+    pub concurrency: usize,
+}
+
+impl Default for CoreConfig {
+    fn default() -> Self {
+        Self {
+            log_level: "info".to_string(),
+            concurrency: num_cpus::get(),
+        }
+    }
 }
 
 /// Configuration for performance tuning.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct PerformanceConfig {
-    pub queue_capacity: Option<usize>,
+    pub queue_capacity: usize,
 }
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
-            queue_capacity: Some(100_000),
+            queue_capacity: 100_000,
         }
     }
 }
 
 /// Configuration for the CertStream network client.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct NetworkConfig {
-    pub certstream_url: Option<String>,
-    pub sample_rate: Option<f64>,
-    pub allow_invalid_certs: Option<bool>,
+    pub certstream_url: String,
+    pub sample_rate: f64,
+    pub allow_invalid_certs: bool,
 }
 
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            certstream_url: Some("wss://certstream.calidog.io".to_string()),
-            sample_rate: Some(1.0),
-            allow_invalid_certs: Some(false),
+            certstream_url: "wss://certstream.calidog.io".to_string(),
+            sample_rate: 1.0,
+            allow_invalid_certs: false,
         }
     }
 }
@@ -92,9 +121,10 @@ pub struct RulesConfig {
 
 /// Configuration for DNS resolution.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct DnsConfig {
     pub resolver: Option<String>,
-    pub timeout_ms: Option<u64>,
+    pub timeout_ms: u64,
     #[serde(flatten)]
     pub retry_config: DnsRetryConfig,
     pub health: DnsHealthConfig,
@@ -104,7 +134,7 @@ impl Default for DnsConfig {
     fn default() -> Self {
         Self {
             resolver: None,
-            timeout_ms: Some(5000),
+            timeout_ms: 5000,
             retry_config: DnsRetryConfig::default(),
             health: DnsHealthConfig::default(),
         }
@@ -113,40 +143,42 @@ impl Default for DnsConfig {
 
 /// Configuration for the DNS health monitor.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct DnsHealthConfig {
-    pub failure_threshold: Option<f64>,
-    pub window_seconds: Option<u64>,
-    pub recovery_check_domain: Option<String>,
-    pub recovery_check_interval_seconds: Option<u64>,
+    pub failure_threshold: f64,
+    pub window_seconds: u64,
+    pub recovery_check_domain: String,
+    pub recovery_check_interval_seconds: u64,
 }
 
 impl Default for DnsHealthConfig {
     fn default() -> Self {
         Self {
-            failure_threshold: Some(0.95),
-            window_seconds: Some(120),
-            recovery_check_domain: Some("google.com".to_string()),
-            recovery_check_interval_seconds: Some(10),
+            failure_threshold: 0.95,
+            window_seconds: 120,
+            recovery_check_domain: "google.com".to_string(),
+            recovery_check_interval_seconds: 10,
         }
     }
 }
 
 /// Configuration for metrics.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct MetricsConfig {
-    pub log_metrics: Option<bool>,
-    pub log_aggregation_seconds: Option<u64>,
-    pub prometheus_enabled: Option<bool>,
-    pub prometheus_listen_address: Option<String>,
+    pub log_metrics: bool,
+    pub log_aggregation_seconds: u64,
+    pub prometheus_enabled: bool,
+    pub prometheus_listen_address: String,
 }
 
 impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
-            log_metrics: Some(false),
-            log_aggregation_seconds: Some(10),
-            prometheus_enabled: Some(false),
-            prometheus_listen_address: Some("127.0.0.1:9090".to_string()),
+            log_metrics: false,
+            log_aggregation_seconds: 10,
+            prometheus_enabled: false,
+            prometheus_listen_address: "127.0.0.1:9090".to_string(),
         }
     }
 }
@@ -192,16 +224,17 @@ pub struct SlackConfig {
 
 /// Configuration for alert deduplication.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
 pub struct DeduplicationConfig {
-    pub cache_size: Option<usize>,
-    pub cache_ttl_seconds: Option<u64>,
+    pub cache_size: usize,
+    pub cache_ttl_seconds: u64,
 }
 
 impl Default for DeduplicationConfig {
     fn default() -> Self {
         Self {
-            cache_size: Some(100_000),
-            cache_ttl_seconds: Some(3600),
+            cache_size: 100_000,
+            cache_ttl_seconds: 3600,
         }
     }
 }

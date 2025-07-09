@@ -18,6 +18,7 @@ where
 #[test]
 fn test_load_full_valid_config() {
     let toml_content = r#"
+        [core]
         log_level = "debug"
         concurrency = 4
         [metrics]
@@ -63,28 +64,28 @@ fn test_load_full_valid_config() {
         let cli = Cli::try_parse_from(&["certwatch", "--config-file", path.to_str().unwrap()]).unwrap();
         let config = Config::load_from_cli(cli).unwrap();
 
-        assert_eq!(config.log_level, Some("debug".to_string()));
-        assert_eq!(config.concurrency, Some(4));
-        assert_eq!(config.metrics.log_metrics, Some(true));
-        assert_eq!(config.metrics.log_aggregation_seconds, Some(30));
-        assert_eq!(config.metrics.prometheus_enabled, Some(true));
+        assert_eq!(config.core.log_level, "debug".to_string());
+        assert_eq!(config.core.concurrency, 4);
+        assert_eq!(config.metrics.log_metrics, true);
+        assert_eq!(config.metrics.log_aggregation_seconds, 30);
+        assert_eq!(config.metrics.prometheus_enabled, true);
         assert_eq!(
             config.metrics.prometheus_listen_address,
-            Some("0.0.0.0:9999".to_string())
+            "0.0.0.0:9999".to_string()
         );
-        assert_eq!(config.performance.queue_capacity, Some(50000));
+        assert_eq!(config.performance.queue_capacity, 50000);
         assert_eq!(
             config.network.certstream_url,
-            Some("ws://example.com/certstream".to_string())
+            "ws://example.com/certstream".to_string()
         );
-        assert_eq!(config.network.sample_rate, Some(0.5));
-        assert_eq!(config.network.allow_invalid_certs, Some(true));
+        assert_eq!(config.network.sample_rate, 0.5);
+        assert_eq!(config.network.allow_invalid_certs, true);
         assert_eq!(
             config.rules.rule_files,
             Some(vec![PathBuf::from("/etc/certwatch/rules.yml")])
         );
-        assert_eq!(config.dns.resolver, Some("1.1.1.1:53".to_string()));
-        assert_eq!(config.dns.timeout_ms, Some(2000));
+        assert_eq!(config.dns.resolver, Some("1.1.1.1:53".to_string())); // resolver is still optional
+        assert_eq!(config.dns.timeout_ms, 2000);
         assert_eq!(config.dns.retry_config.retries, Some(5));
         assert_eq!(config.dns.retry_config.backoff_ms, Some(100));
         assert_eq!(config.dns.retry_config.nxdomain_retries, Some(10));
@@ -92,15 +93,15 @@ fn test_load_full_valid_config() {
             config.dns.retry_config.nxdomain_backoff_ms,
             Some(10000)
         );
-        assert_eq!(config.dns.health.failure_threshold, Some(0.8));
-        assert_eq!(config.dns.health.window_seconds, Some(60));
+        assert_eq!(config.dns.health.failure_threshold, 0.8);
+        assert_eq!(config.dns.health.window_seconds, 60);
         assert_eq!(
             config.dns.health.recovery_check_domain,
-            Some("test.com".to_string())
+            "test.com".to_string()
         );
         assert_eq!(
             config.dns.health.recovery_check_interval_seconds,
-            Some(5)
+            5
         );
         assert_eq!(
             config.enrichment.asn_tsv_path,
@@ -116,14 +117,15 @@ fn test_load_full_valid_config() {
         );
         assert_eq!(slack_config.batch_size, Some(50));
         assert_eq!(slack_config.batch_timeout_seconds, Some(30));
-        assert_eq!(config.deduplication.cache_size, Some(5000));
-        assert_eq!(config.deduplication.cache_ttl_seconds, Some(1800));
+        assert_eq!(config.deduplication.cache_size, 5000);
+        assert_eq!(config.deduplication.cache_ttl_seconds, 1800);
     });
 }
 
 #[test]
 fn test_load_partial_config_uses_defaults() {
     let toml_content = r#"
+        [core]
         log_level = "warn"
         [dns]
         resolver = "8.8.8.8:53"
@@ -134,16 +136,16 @@ fn test_load_partial_config_uses_defaults() {
         let config = Config::load_from_cli(cli).unwrap();
 
         // Values from file
-        assert_eq!(config.log_level, Some("warn".to_string()));
+        assert_eq!(config.core.log_level, "warn".to_string());
         assert_eq!(config.dns.resolver, Some("8.8.8.8:53".to_string()));
 
         // Values from Default
-        assert_eq!(config.concurrency, Some(num_cpus::get()));
-        assert_eq!(config.metrics.log_metrics, Some(false));
-        assert_eq!(config.performance.queue_capacity, Some(100_000));
+        assert_eq!(config.core.concurrency, num_cpus::get());
+        assert_eq!(config.metrics.log_metrics, false);
+        assert_eq!(config.performance.queue_capacity, 100_000);
         assert_eq!(
             config.network.certstream_url,
-            Some("wss://certstream.calidog.io".to_string())
+            "wss://certstream.calidog.io".to_string()
         );
         assert_eq!(config.dns.retry_config.retries, Some(3));
         assert!(config.output.slack.is_none());
@@ -153,6 +155,7 @@ fn test_load_partial_config_uses_defaults() {
 #[test]
 fn test_invalid_value_type() {
     let toml_content = r#"
+        [core]
         concurrency = "four" # Invalid type
     "#;
 
@@ -161,7 +164,7 @@ fn test_invalid_value_type() {
         let config_result = Config::load_from_cli(cli);
         assert!(config_result.is_err());
         let error_string = config_result.unwrap_err().to_string();
-        assert!(error_string.contains("invalid type: found string \"four\", expected usize for key \"default.concurrency\""));
+        assert!(error_string.contains("invalid type: found string \"four\", expected usize for key \"default.core.concurrency\""));
     });
 }
 
