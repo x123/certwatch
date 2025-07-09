@@ -7,9 +7,9 @@ use crate::{config::RulesConfig, core::Alert};
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use itertools::Itertools;
-use regex::Regex;
+use regex::RegexSet;
 use serde::{Deserialize, Serialize};
-use std::{fs};
+use std::fs;
 
 /// A container for the staged rule sets.
 #[derive(Debug, Clone)]
@@ -66,8 +66,8 @@ pub enum EnrichmentLevel {
 pub struct Rule {
     /// The name of the rule, for logging and identification.
     pub name: String,
-    /// The compiled regular expression for all domain-based conditions.
-    pub domain_regex: Option<Regex>,
+    /// A compiled set of regexes for all domain-based conditions.
+    pub domain_regex_set: Option<RegexSet>,
     // Other compiled conditions will go here in the future.
     /// The enrichment level required for this rule.
     pub required_level: EnrichmentLevel,
@@ -76,8 +76,8 @@ pub struct Rule {
 impl Rule {
     /// Evaluates the rule against an alert.
     pub fn is_match(&self, alert: &Alert) -> bool {
-        if let Some(regex) = &self.domain_regex {
-            if !regex.is_match(&alert.domain) {
+        if let Some(regex_set) = &self.domain_regex_set {
+            if !regex_set.is_match(&alert.domain) {
                 return false;
             }
         }
@@ -102,7 +102,7 @@ impl Rule {
             raw_rules.extend(rules);
         }
 
-        // Group rules by name and compile their regexes
+        // Group rules by name and compile their regexes into RegexSets
         let mut compiled_rules = Vec::new();
         raw_rules.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -121,23 +121,18 @@ impl Rule {
                 }
             }
 
-            let domain_regex = if !domain_patterns.is_empty() {
-                // Combine all patterns into a single regex: (p1)|(p2)|...
-                let combined = domain_patterns
-                    .into_iter()
-                    .map(|p| format!("({})", p))
-                    .join("|");
-                let regex = Regex::new(&combined).with_context(|| {
-                    format!("Failed to compile combined regex for rule '{}'", name)
+            let domain_regex_set = if !domain_patterns.is_empty() {
+                let set = RegexSet::new(&domain_patterns).with_context(|| {
+                    format!("Failed to compile regex set for rule '{}'", name)
                 })?;
-                Some(regex)
+                Some(set)
             } else {
                 None
             };
 
             compiled_rules.push(Rule {
                 name,
-                domain_regex,
+                domain_regex_set,
                 required_level,
             });
         }

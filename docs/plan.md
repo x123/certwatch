@@ -549,12 +549,12 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-### **Phase 3: Optimized Regex Compilation**
-*   **Goal:** Drastically improve startup performance and matching efficiency by grouping regex patterns by rule name and compiling them into a single, optimized regex per rule.
+### **Phase 3: Memory-Efficient Regex Matching**
+*   **Goal:** Resolve high memory usage and runtime lag by switching from a single, giant compiled `Regex` to the more memory-efficient `regex::RegexSet` for pattern matching.
 *   **Tasks:**
-    *   [x] **#176 - Group and Compile Regexes:** Refactor the rule loading logic to group individual `domain_regex` patterns by their `name`. Combine the patterns for each name into a single regex using the `|` (OR) operator.
-    *   [x] **#177 - Update Rule Structs:** Modify the internal `Rule` representation to store the single, compiled `Regex` per name, rather than individual patterns.
-    *   [x] **#178 - Verify Performance:** Add a test or benchmark to confirm that the startup time with a large number of regex-based rules is significantly reduced.
+    *   [x] **#176 - Refactor to Use RegexSet:** Refactor the rule loading logic. For each rule name, compile its associated list of patterns into a `regex::RegexSet` instead of a single `Regex`.
+    *   [x] **#177 - Update Rule Structs:** Modify the internal `Rule` representation to store a compiled `RegexSet` for each rule name.
+    *   [x] **#178 - Verify Performance and Memory:** Add tests to confirm that the new implementation has significantly lower memory usage and resolves the worker lag issues.
 
 ---
 

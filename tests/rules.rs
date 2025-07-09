@@ -27,7 +27,7 @@ fn create_test_alert(domain: &str) -> Alert {
 }
 
 #[test]
-fn test_rule_grouping_and_compilation() {
+fn test_rule_grouping_and_compilation_to_regex_set() {
     let rule_content = r#"
 - name: "Combined Rule"
   all:
@@ -56,22 +56,22 @@ fn test_rule_grouping_and_compilation() {
         .find(|r| r.name == "Single Rule")
         .expect("Single Rule not found");
 
-    // Check that the combined regex matches both original patterns
-    let regex = combined_rule.domain_regex.as_ref().unwrap();
-    assert!(regex.is_match("test1.com"));
-    assert!(regex.is_match("test2.net"));
-    assert!(!regex.is_match("test3.org"));
+    // Check that the combined regex set matches both original patterns
+    let regex_set = combined_rule.domain_regex_set.as_ref().unwrap();
+    assert!(regex_set.is_match("test1.com"));
+    assert!(regex_set.is_match("test2.net"));
+    assert!(!regex_set.is_match("test3.org"));
 
     // Check the single rule
-    let regex = single_rule.domain_regex.as_ref().unwrap();
-    assert!(regex.is_match("single.com"));
-    assert!(!regex.is_match("notsingle.com"));
+    let regex_set = single_rule.domain_regex_set.as_ref().unwrap();
+    assert!(regex_set.is_match("single.com"));
+    assert!(!regex_set.is_match("notsingle.com"));
 }
 
 #[test]
 fn test_rule_classification() {
     // TODO: Re-enable this test once ASN/IP conditions are re-implemented
-    // in the new rule structure. For now, all rules are Stage 1.
+    // in the new rule structure.
     let rule_content = r#"
 - name: "Stage 1 Rule"
   all:
