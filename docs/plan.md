@@ -512,3 +512,42 @@ The implementation is broken down into two sequential epics:
     - [x] **#154 - Implement `Ord` for `SortableAlert`:** Implement the `Ord` trait for `SortableAlert` to define the multi-level comparison logic, correctly handling `None` values for optional keys.
     - [x] **#155 - Refactor `format_batch`:** Update `SlackTextFormatter::format_batch` to use the Decorate-Sort-Undecorate pattern: map to `Vec<SortableAlert>`, sort the vector, then map back to the original alerts for formatting.
     - [x] **#156 - Add Sorting Unit Test:** Create a new unit test `test_format_batch_is_correctly_sorted` that verifies the complete sorting logic, including all sorting levels and edge cases for missing data.
+
+
+---
+
+## Epic #46: Implement Advanced Rule-Based Filtering Engine
+
+**As a** Security Analyst,
+**I want to** define complex filtering rules that combine domain name patterns, ASN details, and resolved IP networks using boolean logic,
+**So that** I can create highly specific and targeted alerts, reduce false positives, and identify sophisticated threats more effectively.
+
+### User Story 1: Foundational Rule Engine & Data Model
+
+- **Title:** Implement Rule Engine with Multi-Condition Support
+- **Description:** As a Developer, I want to create a new rule evaluation engine and a flexible data model in the configuration, so that the system can parse and process rules that combine multiple criteria (domain, ASN, IP) with `AND` logic.
+- **Tasks:**
+    - [ ] **#157 - Define Rule Schema:** Design and document the YAML schema for `advanced_rules` in `config.yml`. It should support `name`, `domain_regex`, `asns`, and `ip_networks`.
+    - [ ] **#158 - Implement Rule Deserialization:** Create the Rust structs that correspond to the new schema and implement `serde::Deserialize`.
+    - [ ] **#159 - Implement Rule Validation:** Add logic at startup to validate all rules (valid regex, ASN integers, CIDR notation).
+    - [ ] **#160 - Create Rule Evaluation Logic:** Implement the core `AND` logic that checks an `Alert` against all conditions of a rule.
+    - [ ] **#161 - Integrate Rule Engine:** Modify the notification pipeline to pass alerts through the new rule engine.
+    - [ ] **#162 - Add Unit Tests:** Write unit tests for the rule validation and evaluation logic.
+
+### User Story 2: Implement Negation and Set Logic
+
+- **Title:** Add Support for Negation (`NOT IN`) to Rule Conditions
+- **Description:** As a Security Analyst, I want to be able to negate conditions, such as excluding specific ASNs or IP ranges, so that I can filter out known-good infrastructure and focus on anomalous activity.
+- **Tasks:**
+    - [ ] **#163 - Update Rule Schema for Negation:** Extend the YAML schema and Rust structs to include `not_asns` and `not_ip_networks`.
+    - [ ] **#164 - Enhance Rule Engine for Negation:** Update the evaluation logic to correctly process the `not_` conditions.
+    - [ ] **#165 - Add Unit Tests for Negation:** Write specific unit tests to verify that negated conditions work as expected.
+
+### User Story 3: Implement Complex Boolean Logic (Future)
+
+- **Title:** Allow Complex Boolean Expressions (`OR`, Grouping)
+- **Description:** As a Threat Hunter, I want to combine multiple rule groups with `OR` logic and create nested conditions, so that I can build highly sophisticated detection logic that covers multiple, distinct attack patterns in a single, organized rule.
+- **Tasks:**
+    - [ ] **#166 - Design Nested Schema:** Design a schema that supports `any` (OR) and `all` (AND) blocks for nesting conditions.
+    - [ ] **#167 - Implement Recursive Evaluation:** Refactor the rule engine to recursively evaluate a nested rule tree.
+    - [ ] **#168 - Add Complex Unit Tests:** Write unit tests for various nested boolean logic scenarios.
