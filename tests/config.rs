@@ -20,8 +20,6 @@ fn test_load_full_valid_config() {
         certstream_url = "ws://example.com/certstream"
         sample_rate = 0.5
         allow_invalid_certs = true
-        [matching]
-        pattern_files = ["/etc/certwatch/patterns.txt"]
         [rules]
         rule_files = ["/etc/certwatch/rules.yml"]
         [dns]
@@ -73,10 +71,6 @@ fn test_load_full_valid_config() {
     assert_eq!(config.network.certstream_url, "ws://example.com/certstream");
     assert_eq!(config.network.sample_rate, 0.5);
     assert!(config.network.allow_invalid_certs);
-    assert_eq!(
-        config.matching.pattern_files,
-        vec![PathBuf::from("/etc/certwatch/patterns.txt")]
-    );
     assert_eq!(
         config.rules.rule_files,
         vec![PathBuf::from("/etc/certwatch/rules.yml")]

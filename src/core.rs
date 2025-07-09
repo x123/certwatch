@@ -16,7 +16,7 @@ pub struct Alert {
     pub timestamp: String,
     /// The suspicious domain name
     pub domain: String,
-    /// Tag identifying the pattern source (e.g., "phishing", "typosquatting")
+    /// Tag identifying the rule source (e.g., "phishing", "typosquatting")
     pub source_tag: String,
     /// Flag indicating if this domain was previously NXDOMAIN but now resolves
     pub resolved_after_nxdomain: bool,
@@ -99,20 +99,6 @@ pub struct AsnInfo {
 // =============================================================================
 // Service Traits
 // =============================================================================
-
-/// Matches domains against a set of patterns to detect suspicious registrations
-#[async_trait]
-pub trait PatternMatcher: Send + Sync {
-    /// Attempts to match a domain against loaded patterns
-    ///
-    /// # Arguments
-    /// * `domain` - The domain name to check
-    ///
-    /// # Returns
-    /// * `Some(source_tag)` if the domain matches a pattern
-    /// * `None` if no patterns match
-    async fn match_domain(&self, domain: &str) -> Option<String>;
-}
 
 /// Resolves domain names to their DNS records
 #[async_trait]

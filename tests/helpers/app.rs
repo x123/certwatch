@@ -49,7 +49,6 @@ pub struct TestAppBuilder {
     websocket: Option<Box<dyn certwatch::network::WebSocketConnection>>,
     dns_resolver: Option<std::sync::Arc<dyn certwatch::core::DnsResolver>>,
     enrichment_provider: Option<std::sync::Arc<dyn certwatch::core::EnrichmentProvider>>,
-    pattern_matcher: Option<std::sync::Arc<dyn certwatch::core::PatternMatcher>>,
     alert_tx: Option<broadcast::Sender<Alert>>,
 }
 
@@ -60,8 +59,6 @@ impl TestAppBuilder {
         config.network.certstream_url = "ws://127.0.0.1:12345".to_string(); // Mock URL
         config.output.slack = None;
         config.metrics.log_metrics = false;
-        // Use a minimal pattern file that won't exist, so no matching occurs
-        config.matching.pattern_files = vec!["/tmp/nonexistent-patterns.txt".into()];
         // Set a path for the ASN database, even if it's empty, to satisfy the check
         config.enrichment.asn_tsv_path = Some("/tmp/empty.tsv".into());
 
@@ -75,7 +72,6 @@ impl TestAppBuilder {
             enrichment_provider: Some(Arc::new(
                 crate::helpers::fake_enrichment::FakeEnrichmentProvider::new(),
             )),
-            pattern_matcher: None,
             alert_tx: None,
         }
     }
@@ -101,10 +97,6 @@ impl TestAppBuilder {
         self
     }
 
-    pub fn with_pattern_files(mut self, files: Vec<std::path::PathBuf>) -> Self {
-        self.config.matching.pattern_files = files;
-        self
-    }
 
     pub fn with_dns_resolver(
         mut self,
@@ -122,13 +114,6 @@ impl TestAppBuilder {
         self
     }
 
-    pub fn with_pattern_matcher(
-        mut self,
-        matcher: std::sync::Arc<dyn certwatch::core::PatternMatcher>,
-    ) -> Self {
-        self.pattern_matcher = Some(matcher);
-        self
-    }
 
     pub fn with_config_modifier(mut self, modifier: impl FnOnce(&mut Config)) -> Self {
         modifier(&mut self.config);
@@ -170,7 +155,6 @@ impl TestAppBuilder {
                 self.websocket,
                 self.dns_resolver,
                 self.enrichment_provider,
-                self.pattern_matcher,
                 self.alert_tx,
             )
             .await

@@ -107,6 +107,19 @@ impl RuleMatcher {
             .map(|rule| rule.name.clone())
             .collect()
     }
+
+    #[cfg(test)]
+    pub fn new_for_test(rules: Vec<Rule>) -> Self {
+        let (stage_2_rules, stage_1_rules) = rules
+            .into_iter()
+            .partition(|rule| rule.required_level == EnrichmentLevel::Standard);
+
+        Self {
+            stage_1_rules,
+            stage_2_rules,
+            pre_filter: PreFilter::new(None).unwrap(),
+        }
+    }
 }
 
 /// The level of data enrichment required to evaluate a rule or condition.

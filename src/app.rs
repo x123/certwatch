@@ -3,11 +3,10 @@
 use crate::{
     build_alert,
     config::Config,
-    core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output, PatternMatcher},
+    core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output},
     deduplication::{Deduplicator, InFlightDeduplicator},
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     internal_metrics::logging_recorder::LoggingRecorder,
-    matching::PatternWatcher,
     network::{CertStreamClient, WebSocketConnection},
     outputs::{OutputManager, StdoutOutput},
     rules::{EnrichmentLevel, RuleMatcher},
@@ -31,7 +30,6 @@ pub async fn run(
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
-    pattern_matcher_override: Option<Arc<dyn PatternMatcher>>,
     notification_tx: Option<broadcast::Sender<Alert>>,
 ) -> Result<()> {
     // =========================================================================
@@ -72,12 +70,6 @@ pub async fn run(
     // =========================================================================
     // 3. Instantiate Remaining Services
     // =========================================================================
-    let pattern_matcher = match pattern_matcher_override {
-        Some(matcher) => matcher,
-        None => Arc::new(
-            PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
-        ),
-    };
     let rule_matcher = Arc::new(RuleMatcher::load(&config.rules)?);
 
     let enrichment_provider = enrichment_provider_override
@@ -170,7 +162,6 @@ pub async fn run(
 
     for i in 0..config.concurrency {
         let domains_rx = domains_rx.clone();
-        let pattern_matcher = pattern_matcher.clone();
         let rule_matcher = rule_matcher.clone();
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
@@ -230,7 +221,6 @@ pub async fn run(
                 let process_fut = process_domain(
                     domain.clone(),
                     i,
-                    pattern_matcher.clone(),
                     rule_matcher.clone(),
                     dns_manager.clone(),
                     enrichment_provider.clone(),
@@ -388,25 +378,23 @@ async fn output_task_logic(
 pub async fn process_domain(
     domain: String,
     worker_id: usize,
-    pattern_matcher: Arc<dyn PatternMatcher>,
     rule_matcher: Arc<RuleMatcher>,
     dns_manager: Arc<DnsResolutionManager>,
     enrichment_provider: Arc<dyn EnrichmentProvider>,
     alerts_tx: AlertSender,
 ) -> Result<()> {
     debug!("process_domain: Starting Stage 1 (pre-enrichment) filtering");
-    // STAGE 1: Pre-enrichment filtering (legacy patterns and Stage 1 rules)
-    let legacy_match = pattern_matcher.match_domain(&domain).await;
+    // STAGE 1: Pre-enrichment filtering (rules only)
     let stage_1_rule_matches = {
         let _span = tracing::info_span!("stage_1_rule_matching").entered();
         let base_alert = Alert::new_minimal(&domain);
         rule_matcher.matches(&base_alert, EnrichmentLevel::None)
     };
-    debug!(?legacy_match, ?stage_1_rule_matches, "process_domain: Stage 1 results");
+    debug!(?stage_1_rule_matches, "process_domain: Stage 1 results");
 
-    // If there's no match from either legacy patterns or Stage 1 rules, we can stop.
-    if legacy_match.is_none() && stage_1_rule_matches.is_empty() {
-        debug!("Domain did not match any pre-enrichment patterns or rules.");
+    // If there's no match from Stage 1 rules, we can stop.
+    if stage_1_rule_matches.is_empty() {
+        debug!("Domain did not match any pre-enrichment rules.");
         return Ok(());
     }
     debug!("Domain matched pre-enrichment checks. Proceeding to enrichment.");
@@ -456,9 +444,6 @@ pub async fn process_domain(
     // FINAL DECISION: Combine all matches to determine if we should alert.
     let mut all_matches_set: HashSet<String> = stage_1_rule_matches.into_iter().collect();
     all_matches_set.extend(stage_2_rule_matches);
-    if let Some(tag) = legacy_match {
-        all_matches_set.insert(tag);
-    }
 
     if all_matches_set.is_empty() {
         // This can happen if a domain matched a legacy pattern, but the rules engine
@@ -488,30 +473,13 @@ pub async fn process_domain(
 mod tests {
     use super::*;
     use crate::{
-        config::RulesConfig,
-        core::{DnsInfo, DnsResolver, PatternMatcher},
+        core::{DnsInfo, DnsResolver},
         dns::{DnsError, DnsResolutionManager},
         enrichment::fake::FakeEnrichmentProvider,
-        rules::RuleMatcher,
+        rules::{EnrichmentLevel, Rule, RuleExpression, RuleMatcher},
     };
     use std::sync::Arc;
     use tokio::sync::{broadcast, watch};
-
-    // A mock pattern matcher for testing purposes.
-    struct MockPatternMatcher {
-        match_domain: bool,
-    }
-
-    #[async_trait::async_trait]
-    impl PatternMatcher for MockPatternMatcher {
-        async fn match_domain(&self, _domain: &str) -> Option<String> {
-            if self.match_domain {
-                Some("test-source".to_string())
-            } else {
-                None
-            }
-        }
-    }
 
     // A mock DNS resolver for testing purposes.
     #[derive(Clone)]
@@ -529,7 +497,6 @@ mod tests {
     #[tokio::test]
     async fn test_process_domain_dns_timeout_propagates_error() {
         // Arrange
-        let pattern_matcher = Arc::new(MockPatternMatcher { match_domain: true });
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let (_resolver, _health_monitor, _dns_manager) = {
             let resolver = Arc::new(MockDnsResolver {
@@ -553,12 +520,18 @@ mod tests {
         let enrichment_provider = Arc::new(FakeEnrichmentProvider::new());
         let (alerts_tx, _alerts_rx) = broadcast::channel(1);
 
+        let rule = Rule {
+            name: "Test Rule".to_string(),
+            expression: RuleExpression::DomainRegex(".*".to_string()),
+            required_level: EnrichmentLevel::None,
+        };
+        let rule_matcher = Arc::new(RuleMatcher::new_for_test(vec![rule]));
+
         // Act
         let result = process_domain(
             "timeout.com".to_string(),
             0,
-            pattern_matcher,
-            Arc::new(RuleMatcher::load(&RulesConfig { rule_files: vec![] }).unwrap()),
+            rule_matcher,
             dns_manager,
             enrichment_provider,
             alerts_tx.clone(),

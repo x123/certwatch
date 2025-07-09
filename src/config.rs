@@ -28,8 +28,6 @@ pub struct Config {
     pub performance: PerformanceConfig,
     /// Configuration for the CertStream network client.
     pub network: NetworkConfig,
-    /// Configuration for pattern matching.
-    pub matching: MatchingConfig,
     /// Configuration for advanced rule-based filtering.
     pub rules: RulesConfig,
     /// Configuration for DNS resolution.
@@ -68,13 +66,6 @@ pub struct NetworkConfig {
     pub sample_rate: f64,
     /// Whether to accept invalid TLS certificates (for testing).
     pub allow_invalid_certs: bool,
-}
-
-/// Configuration for pattern matching.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-pub struct MatchingConfig {
-    /// A list of file paths containing regex patterns.
-    pub pattern_files: Vec<PathBuf>,
 }
 
 /// Configuration for advanced rule-based filtering.
@@ -264,9 +255,6 @@ impl Default for Config {
                 certstream_url: "wss://certstream.calidog.io".to_string(),
                 sample_rate: 1.0,
                 allow_invalid_certs: false,
-            },
-            matching: MatchingConfig {
-                pattern_files: vec![],
             },
             rules: RulesConfig {
                 rule_files: vec![],

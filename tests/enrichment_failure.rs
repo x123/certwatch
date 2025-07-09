@@ -4,27 +4,29 @@ use anyhow::Result;
 use certwatch::{
     app::process_domain,
     config::RulesConfig,
-    core::{DnsInfo, PatternMatcher},
+    core::DnsInfo,
     dns::{test_utils::FakeDnsResolver, DnsHealthMonitor, DnsResolutionManager},
     enrichment::fake::FakeEnrichmentProvider,
     rules::RuleMatcher,
 };
-use std::sync::Arc;
+use std::{fs::File, io::Write, path::PathBuf, sync::Arc};
+use tempfile::tempdir;
 use tokio::sync::{broadcast, watch};
 
-// A mock pattern matcher for testing purposes.
-struct MockPatternMatcher;
-#[async_trait::async_trait]
-impl PatternMatcher for MockPatternMatcher {
-    async fn match_domain(&self, _domain: &str) -> Option<String> {
-        Some("test-source".to_string())
-    }
+/// Creates a temporary YAML rule file and returns its path.
+fn create_rule_file(content: &str) -> PathBuf {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("rules.yml");
+    let mut file = File::create(&file_path).unwrap();
+    writeln!(file, "{}", content).unwrap();
+    // The tempdir is intentionally leaked here to prevent the file from being deleted.
+    std::mem::forget(dir);
+    file_path
 }
 
 #[tokio::test]
 async fn test_process_domain_propagates_enrichment_error() -> Result<()> {
     // 1. Arrange
-    let pattern_matcher = Arc::new(MockPatternMatcher);
     let (shutdown_tx, shutdown_rx) = watch::channel(());
 
     let dns_resolver = Arc::new(FakeDnsResolver::new());
@@ -52,9 +54,18 @@ async fn test_process_domain_propagates_enrichment_error() -> Result<()> {
     let result = process_domain(
         "example.com".to_string(),
         0, // worker_id
-        pattern_matcher,
         Arc::new(
-            RuleMatcher::load(&RulesConfig { rule_files: vec![] }).unwrap(),
+            RuleMatcher::load(&RulesConfig {
+                rule_files: vec![create_rule_file(
+                    r#"
+rules:
+  - name: "Always Match"
+    all:
+      - domain_regex: ".*"
+"#,
+                )],
+            })
+            .unwrap(),
         ),
         dns_manager,
         enrichment_provider,

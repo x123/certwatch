@@ -7,6 +7,9 @@ quality, and maintainability.
 ---
 ## **IMPORTANT**: The Golden Rules of Integration Testing
 
+***Any failing tests must be addressed one by one, ALWAYS adding
+instrumentation with `debug!` and tracing***
+
 **All integration tests that interact with the core application logic MUST use
 the `TestAppBuilder` pattern.**
 

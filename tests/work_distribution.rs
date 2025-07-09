@@ -1,8 +1,13 @@
 use async_trait::async_trait;
-use certwatch::core::{DnsInfo, DnsResolver, PatternMatcher};
+use certwatch::core::{DnsInfo, DnsResolver};
 use certwatch::dns::DnsError;
-use std::collections::HashMap;
-use std::sync::{atomic::Ordering, Arc, Mutex};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::Write,
+    path::PathBuf,
+    sync::{atomic::Ordering, Arc, Mutex},
+};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -27,33 +32,33 @@ impl DnsResolver for SpyingDnsResolver {
     }
 }
 
-/// A mock pattern matcher that always returns a match for our test domains.
-#[derive(Clone)]
-struct MockPatternMatcher;
-
-#[async_trait]
-impl PatternMatcher for MockPatternMatcher {
-    async fn match_domain(&self, domain: &str) -> Option<String> {
-        if domain.starts_with("test-domain-") {
-            Some("test-match".to_string())
-        } else {
-            None
-        }
-    }
+fn create_rule_file(content: &str) -> PathBuf {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("rules.yml");
+    let mut file = File::create(&file_path).unwrap();
+    writeln!(file, "{}", content).unwrap();
+    std::mem::forget(dir);
+    file_path
 }
 
 #[tokio::test]
 async fn test_domain_is_processed_by_one_worker() {
     let resolver = SpyingDnsResolver::default();
     let counting_output = Arc::new(CountingOutput::new());
-    let pattern_matcher = Arc::new(MockPatternMatcher);
 
     let (mut test_app, app_future) = TestAppBuilder::new()
         .with_dns_resolver(Arc::new(resolver.clone()))
         .with_outputs(vec![counting_output.clone()])
-        .with_pattern_matcher(pattern_matcher)
         .with_config_modifier(|c| {
             c.concurrency = 4; // Use multiple workers
+            c.rules.rule_files = vec![create_rule_file(
+                r#"
+rules:
+  - name: "Test Domain Matcher"
+    all:
+      - domain_regex: "^test-domain-.*\\.com$"
+"#,
+            )];
         })
         .build()
         .await

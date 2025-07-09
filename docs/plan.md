@@ -578,7 +578,7 @@ The implementation is broken down into two sequential epics:
 
 ### **Phase 5: Pre-emptive Filtering with `ignore` Rules**
 *   **Goal:** Implement a global `ignore` list to provide a highly-efficient, pre-emptive filter that discards noisy, unwanted domains (e.g., `*.vpn.azure.com`) *before* any other processing occurs. This provides the boolean `NOT` capability that is currently missing.
-*   **Architecture:** A new, decoupled `PreFilter` component will be created to encapsulate the filtering logic, making it independently testable and keeping the main application pipeline clean.
+*   **Architecture:** A new `PreFilter` component was created to encapsulate the filtering logic. Initially implemented in a separate `filtering` module, this was refactored and consolidated directly into the `rules` module for better code cohesion.
     ```mermaid
     graph TD
         A[CertStream] --> B{Receive Domain};
@@ -589,14 +589,14 @@ The implementation is broken down into two sequential epics:
         F --> G[Rule Matching];
         G --> H[Notification];
     ```
-*   **Status:** Completed
+*   **Status:** Completed & Refactored
 *   **Tasks:**
     *   [x] **#181 - Schema:** In `src/rules.rs`, add `ignore: Option<Vec<String>>` to the `Rules` struct.
-    *   [x] **#182 - Component:** Create a new module `src/filtering.rs` with a `PreFilter` struct. This struct will hold the compiled `regex::RegexSet` and a metric counter.
+    *   [x] **#182 - Component:** Implement the `PreFilter` struct directly within `src/rules.rs` to hold the compiled `regex::RegexSet` and a metric counter.
     *   [x] **#183 - Compiler:** In `src/rules.rs`, modify `Rules::load` to create and return a `PreFilter` instance from the `ignore` patterns.
     *   [x] **#184 - Integration:** In `src/app.rs`, add the `PreFilter` to the `App` struct and use it to check incoming domains at the very beginning of the processing pipeline.
-    *   [x] **#185 - Metrics:** In `src/filtering.rs`, add the `certwatch_domains_ignored_total` counter and increment it within the filtering logic.
-    *   [x] **#186 - Testing:** Create `tests/filtering.rs` to unit-test the `PreFilter` component. Add integration tests to verify the end-to-end ignore functionality.
+    *   [x] **#185 - Metrics:** In `src/rules.rs`, add the `certwatch_domains_ignored_total` counter and increment it within the `PreFilter` logic.
+    *   [x] **#186 - Testing:** Add unit tests for the `PreFilter` component to `tests/rules.rs` and verify the end-to-end ignore functionality.
 
 ---
 
@@ -623,7 +623,19 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-### **Phase 8: Formalize the Extensible Enrichment Framework**
+### **Phase 8: Deprecate Legacy Pattern Matching System**
+*   **Goal:** Remove the redundant `[matching]` configuration and the associated `PatternWatcher` logic, simplifying the application and relying solely on the advanced rules engine for all detection.
+*   **Status:** Completed
+*   **Tasks:**
+    *   [x] **#208 - Remove `MatchingConfig`:** Delete the `MatchingConfig` struct and its usage from `src/config.rs`.
+    *   [x] **#209 - Remove `PatternMatcher` Trait:** Delete the `PatternMatcher` trait from `src/core.rs` and remove its usage from `src/app.rs`.
+    *   [x] **#210 - Delete `matching.rs` Module:** Remove the `src/matching.rs` file and its module declaration in `src/lib.rs`.
+    *   [x] **#211 - Delete Obsolete Tests:** Remove `tests/pattern_hot_reload.rs`, `tests/live_pattern_matching.rs`, and `tests/helpers/mock_matcher.rs`.
+    *   [x] **#212 - Update Documentation:** Remove the `[matching]` section from `certwatch-example.toml`.
+
+---
+
+### **Phase 9: Formalize the Extensible Enrichment Framework**
 *   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
 *   **Status:** Not Started
 *   **Tasks:**
@@ -633,7 +645,7 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-### **Phase 9: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+### **Phase 10: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
 *   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
 *   **Status:** Not Started
 *   **Tasks:**

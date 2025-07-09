@@ -41,14 +41,6 @@ sample_rate = 1.0
 allow_invalid_certs = false
 
 # =============================================================================
-# Matching Configuration
-# =============================================================================
-[matching]
-# A list of file paths containing regex patterns.
-# These are simple, one-per-line regex files.
-pattern_files = ["patterns.txt"]
-
-# =============================================================================
 # Advanced Rules Configuration
 # =============================================================================
 [rules]

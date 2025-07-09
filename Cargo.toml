@@ -69,8 +69,6 @@ once_cell = "1.21.3"
 [[test]]
 name = "live_certstream_client"
 required-features = ["live-tests"]
-[[test]]
-name = "live_pattern_matching"
 
 [[test]]
 name = "rules"
