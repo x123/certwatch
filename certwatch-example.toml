@@ -1,41 +1,89 @@
-# example certwatch.toml configuration 
+# Cert-Watch Example Configuration
+#
+# This file provides an example of all available configuration options.
+# Copy this file to 'certwatch.toml' and adjust the settings to your needs.
 
-# Valid levels: debug, info, warn, error
+# The logging level for the application.
+# Options: "trace", "debug", "info", "warn", "error"
 log_level = "info"
 
 # The number of concurrent domain processing tasks.
-# If commented out, defaults to (number of CPU cores).
-# concurrency = 16
+# Defaults to the number of logical CPU cores.
+# concurrency = 8
 
+# =============================================================================
+# Metrics Configuration
+# =============================================================================
 [metrics]
+# Log metrics to the console periodically.
 log_metrics = true
+# The interval in seconds for logging aggregated metrics.
 log_aggregation_seconds = 10
 
+# =============================================================================
+# Performance Configuration
+# =============================================================================
 [performance]
+# The capacity of the central domain queue.
+# A larger queue can handle bursts of domains but uses more memory.
 queue_capacity = 100000
 
+# =============================================================================
+# Network Configuration
+# =============================================================================
 [network]
-# REQUIRED: A running certstream-server certstream_url. Use
-# https://github.com/CaliDog/certstream-server or similar.
-certstream_url = "wss://127.0.0.1:8181/domains-only"
-sample_rate = 0.01 # 1.0 = 100% sampling, 0.01 = 1% sampling
-allow_invalid_certs = true
+# The URL of the CertStream WebSocket server.
+certstream_url = "wss://certstream.calidog.io"
+# The percentage of domains to process (0.0 to 1.0).
+# 1.0 means all domains will be processed.
+sample_rate = 1.0
+# Whether to accept invalid TLS certificates (for testing with local servers).
+allow_invalid_certs = false
 
+# =============================================================================
+# Matching Configuration
+# =============================================================================
 [matching]
-# REQUIRED: A list of file paths containing regex patterns. For example:
-pattern_files = ["data/patterns/match-all.txt"]
+# A list of file paths containing regex patterns.
+# These are simple, one-per-line regex files.
+pattern_files = ["patterns.txt"]
 
+# =============================================================================
+# Advanced Rules Configuration
+# =============================================================================
+[rules]
+# A list of file paths containing advanced filtering rules in YAML format.
+# This is the new, more powerful way to define detection logic.
+#
+# Example `rules/phishing.yml`:
+#
+# - name: "Live Phishing Kit"
+#   all:
+#     - domain_regex: 'com-[a-z]{1,4}\\.live$'
+#
+# - name: "Apple ID Phish outside of Apple's Network"
+#   all:
+#     - domain_regex: '^.*appleid.*$'
+#     - not_asns: [714] # ASN 714 belongs to Apple Inc.
+#
+rule_files = []
+
+
+# =============================================================================
+# DNS Configuration
+# =============================================================================
 [dns]
-# Optional: Specify a custom DNS resolver. If commented out, uses the system default.
-resolver = "8.8.8.8:53"
+# The IP address of the DNS resolver to use (e.g., "8.8.8.8:53").
+# If not set, the system's default resolver will be used.
+# resolver = "8.8.8.8:53"
 
-# Optional: Specify the timeout for a single DNS query in milliseconds.
-# timeout_ms = 5000
+# The timeout in milliseconds for a single DNS query.
+timeout_ms = 5000
 
 # DNS retry and backoff settings.
 standard_retries = 3
 standard_initial_backoff_ms = 500
-nxdomain_retries = 5
+nxdomain_retries = 10
 nxdomain_initial_backoff_ms = 10000
 
 [dns.health]
@@ -45,33 +93,41 @@ failure_threshold = 0.95
 window_seconds = 120
 # A known-good domain to resolve to check for recovery.
 recovery_check_domain = "google.com"
+# The interval in seconds between recovery checks when the system is unhealthy.
+recovery_check_interval_seconds = 10
 
+# =============================================================================
+# Enrichment Configuration
+# =============================================================================
 [enrichment]
-# REQUIRED: Path to the TSV ASN database file.
-# The file must be tab-separated with 5 columns:
-# CIDR, AS_Number, AS_Name, Country_Code, Description
-# The https://iptoasn.com/data/ip2asn-combined.tsv.gz from https://iptoasn.com is a
-# compatible dataset for enrichment
-asn_tsv_path = "enrichment/ip2asn-combined.tsv"
+# Path to the TSV ASN database file.
+# The file should be in the format: START_IP<TAB>END_IP<TAB>ASN<TAB>COUNTRY<TAB>NAME
+# Download from: https://iptoasn.com/
+# asn_tsv_path = "data/ip2asn-v4.tsv"
 
+# =============================================================================
+# Output Configuration
+# =============================================================================
 [output]
-# The format to use for stdout output. Can be "Json" or "PlainText".
+# The format to use for stdout output. Options: "Json", "PlainText"
 format = "PlainText"
 
-# Optional: webhooks
-# [output.slack]
-# # To enable Slack notifications, set enabled to true and provide a webhook URL.
-# enabled = false
-# webhook_url = "https://hooks.slack.com/services/..."
-#
-# # The maximum number of alerts to batch together before sending.
-# # Defaults to 50.
-# # batch_size = 50
-#
-# # The maximum time in seconds to wait before sending a batch, even if it's not full.
-# # Defaults to 300.
-# # batch_timeout_seconds = 300
+# Configuration for Slack alerts.
+[output.slack]
+# Enables or disables Slack notifications.
+enabled = false
+# The Slack incoming webhook URL.
+webhook_url = ""
+# The maximum number of alerts to batch together before sending.
+batch_size = 50
+# The maximum time in seconds to wait before sending a batch, even if it's not full.
+batch_timeout_seconds = 300
 
+# =============================================================================
+# Deduplication Configuration
+# =============================================================================
 [deduplication]
+# The size of the deduplication cache.
 cache_size = 100000
+# The time-to-live for cache entries in seconds.
 cache_ttl_seconds = 3600

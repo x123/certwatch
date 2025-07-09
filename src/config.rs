@@ -30,6 +30,8 @@ pub struct Config {
     pub network: NetworkConfig,
     /// Configuration for pattern matching.
     pub matching: MatchingConfig,
+    /// Configuration for advanced rule-based filtering.
+    pub rules: RulesConfig,
     /// Configuration for DNS resolution.
     pub dns: DnsConfig,
     /// Configuration for IP address enrichment.
@@ -73,6 +75,13 @@ pub struct NetworkConfig {
 pub struct MatchingConfig {
     /// A list of file paths containing regex patterns.
     pub pattern_files: Vec<PathBuf>,
+}
+
+/// Configuration for advanced rule-based filtering.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct RulesConfig {
+    /// A list of file paths containing advanced filtering rules.
+    pub rule_files: Vec<PathBuf>,
 }
 
 /// Configuration for DNS resolution.
@@ -251,6 +260,9 @@ impl Default for Config {
             },
             matching: MatchingConfig {
                 pattern_files: vec![],
+            },
+            rules: RulesConfig {
+                rule_files: vec![],
             },
             dns: DnsConfig::default(),
             enrichment: EnrichmentConfig {

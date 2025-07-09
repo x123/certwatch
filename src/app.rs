@@ -10,17 +10,15 @@ use crate::{
     matching::PatternWatcher,
     network::{CertStreamClient, WebSocketConnection},
     outputs::{OutputManager, StdoutOutput},
-    types::{AlertSender, DomainReceiver},
+    rules::{EnrichmentLevel, RuleMatcher},
+    types::AlertSender,
     utils::heartbeat::run_heartbeat,
 };
-use anyhow::Result;
-use tokio::sync::broadcast;
+use anyhow::{Context, Result};
+use tokio::sync::{broadcast, watch};
 use tracing::{debug, error, info, instrument, warn};
 use std::{sync::Arc, time::Duration};
-use tokio::{
-    sync::{mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::task::JoinHandle;
 
 
 /// Runs the main application logic.
@@ -28,13 +26,12 @@ use tokio::{
 pub async fn run(
     config: Config,
     mut shutdown_rx: watch::Receiver<()>,
-    domains_tx: mpsc::Sender<String>,
-    domains_rx: DomainReceiver,
+    domains_tx: broadcast::Sender<String>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
-    alert_tx: Option<broadcast::Sender<Alert>>,
+    _alert_tx: Option<broadcast::Sender<Alert>>,
 ) -> Result<()> {
     // =========================================================================
     // 1. Initialize Metrics Recorder (and logging)
@@ -77,6 +74,7 @@ pub async fn run(
     let pattern_matcher = Arc::new(
         PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
     );
+    let rule_matcher = Arc::new(RuleMatcher::new(&config.rules)?);
     let enrichment_provider = enrichment_provider_override
         .expect("Enrichment provider is now required to be passed into app::run");
     let deduplicator = Arc::new(Deduplicator::new(
@@ -99,42 +97,34 @@ pub async fn run(
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    let (alerts_tx, alerts_rx): (AlertSender, mpsc::Receiver<Alert>) =
-        mpsc::channel::<Alert>(1000);
+    let (alerts_tx, _alerts_rx) = broadcast::channel::<Alert>(1000);
 
     // =========================================================================
-    // 3.5 Start Domain Queue Monitoring Task
+    // 5. Start the DNS Resolution Manager
     // =========================================================================
-    let queue_monitor_task = {
-        let domains_tx_clone = domains_tx.clone();
-        let mut shutdown_rx = shutdown_rx.clone();
-        let capacity = config.performance.queue_capacity as f64;
+    let dns_health_monitor = DnsHealthMonitor::new(
+        config.dns.health.clone(),
+        dns_resolver.clone(),
+        shutdown_rx.clone(),
+    );
+    let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
+        dns_resolver.clone(),
+        config.dns.retry_config.clone(),
+        dns_health_monitor.clone(),
+        shutdown_rx.clone(),
+    );
+    let dns_manager = Arc::new(dns_manager);
 
-        tokio::spawn(async move {
-            let hb_shutdown_rx = shutdown_rx.clone();
-            tokio::spawn(async move {
-                run_heartbeat("QueueMonitor", hb_shutdown_rx).await;
-            });
+    // =========================================================================
+    // 6. Main Processing Loop (Worker Pool)
+    // =========================================================================
+    let mut worker_handles = Vec::new();
+    info!("Spawning {} worker tasks...", config.concurrency);
 
-            info!("Domain queue monitor started.");
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = shutdown_rx.changed() => {
-                        info!("Queue monitor received shutdown signal.");
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        let used = capacity - domains_tx_clone.capacity() as f64;
-                        let fill_ratio = if capacity > 0.0 { used / capacity } else { 0.0 };
-                        metrics::gauge!("domain_queue_fill_ratio").set(fill_ratio);
-                    }
-                }
-            }
-            info!("Domain queue monitor finished.");
-        })
-    };
+    let mut domains_rxs = Vec::new();
+    for _ in 0..config.concurrency {
+        domains_rxs.push(domains_tx.subscribe());
+    }
 
     // =========================================================================
     // 4. Start the CertStream Client
@@ -160,31 +150,9 @@ pub async fn run(
         })
     };
 
-    // =========================================================================
-    // 5. Start the DNS Resolution Manager
-    // =========================================================================
-    let dns_health_monitor = DnsHealthMonitor::new(
-        config.dns.health.clone(),
-        dns_resolver.clone(),
-        shutdown_rx.clone(),
-    );
-    let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
-        dns_resolver.clone(),
-        config.dns.retry_config.clone(),
-        dns_health_monitor.clone(),
-        shutdown_rx.clone(),
-    );
-    let dns_manager = Arc::new(dns_manager);
-
-    // =========================================================================
-    // 6. Main Processing Loop (Worker Pool)
-    // =========================================================================
-    let mut worker_handles = Vec::new();
-    info!("Spawning {} worker tasks...", config.concurrency);
-
-    for i in 0..config.concurrency {
-        let domains_rx: DomainReceiver = domains_rx.clone();
+    for (i, mut domains_rx) in domains_rxs.into_iter().enumerate() {
         let pattern_matcher = pattern_matcher.clone();
+        let rule_matcher = rule_matcher.clone();
         let dns_manager = dns_manager.clone();
         let enrichment_provider = enrichment_provider.clone();
         let alerts_tx = alerts_tx.clone();
@@ -199,14 +167,18 @@ pub async fn run(
                         debug!("Worker {} received shutdown signal, exiting.", i);
                         break;
                     }
-                    domain_option = async { domains_rx.lock().await.recv().await } => {
-                        domain_option
+                    domain_result = domains_rx.recv() => {
+                        domain_result
                     }
                 };
 
                 let domain = match domain_to_process {
-                    Some(domain) => domain,
-                    None => {
+                    Ok(domain) => domain,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("Worker {} lagged behind, skipping {} domains.", i, n);
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
                         debug!("Domain channel closed, worker {} shutting down.", i);
                         break;
                     }
@@ -216,6 +188,7 @@ pub async fn run(
                     domain.clone(),
                     i,
                     pattern_matcher.clone(),
+                    rule_matcher.clone(),
                     dns_manager.clone(),
                     enrichment_provider.clone(),
                     alerts_tx.clone(),
@@ -265,7 +238,7 @@ pub async fn run(
                 .await
                 {
                     Ok(alert) => {
-                        if let Err(e) = alerts_tx.send(alert).await {
+                        if let Err(e) = alerts_tx.send(alert) {
                             error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
                         }
                     }
@@ -283,10 +256,10 @@ pub async fn run(
     // =========================================================================
     let output_task = tokio::spawn(output_task_logic(
         shutdown_rx.clone(),
-        alerts_rx,
+        alerts_tx.subscribe(),
         deduplicator,
         output_manager,
-        alert_tx,
+        Some(alerts_tx),
     ));
 
     info!("CertWatch initialized successfully. Monitoring for domains...");
@@ -307,9 +280,6 @@ pub async fn run(
     if let Err(e) = nxdomain_feedback_task.await {
         error!("NXDOMAIN feedback task panicked: {:?}", e);
     }
-    if let Err(e) = queue_monitor_task.await {
-        error!("Queue monitor task panicked: {:?}", e);
-    }
     if let Err(e) = output_task.await {
         error!("Output task panicked: {:?}", e);
     }
@@ -326,7 +296,7 @@ pub async fn run(
 #[instrument(skip_all)]
 async fn output_task_logic(
     mut shutdown_rx: watch::Receiver<()>,
-    mut alerts_rx: mpsc::Receiver<Alert>,
+    mut alerts_rx: broadcast::Receiver<Alert>,
     deduplicator: Arc<Deduplicator>,
     output_manager: Arc<OutputManager>,
     alert_tx: Option<broadcast::Sender<Alert>>,
@@ -341,7 +311,7 @@ async fn output_task_logic(
                 info!("Output task received shutdown signal.");
                 break;
             }
-            Some(alert) = alerts_rx.recv() => {
+            Ok(alert) = alerts_rx.recv() => {
                 debug!("Output task received alert for domain: {}", &alert.domain);
                 if !deduplicator.is_duplicate(&alert).await {
                     debug!("Domain {} is not a duplicate. Processing.", &alert.domain);
@@ -375,72 +345,84 @@ pub async fn process_domain(
     domain: String,
     worker_id: usize,
     pattern_matcher: Arc<dyn PatternMatcher>,
+    rule_matcher: Arc<RuleMatcher>,
     dns_manager: Arc<DnsResolutionManager>,
     enrichment_provider: Arc<dyn EnrichmentProvider>,
     alerts_tx: AlertSender,
 ) -> Result<()> {
-    if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {
-        debug!(source_tag, "Domain matched pattern");
-        let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
-        debug!(?result, "DNS resolution result");
-        match result {
-            Ok(dns_info) => {
-                debug!("Building alert for successful DNS resolution");
-                match build_alert(
-                    domain,
-                    source_tag.to_string(),
-                    false,
-                    dns_info,
-                    enrichment_provider.clone(),
-                )
-                .await
-                {
-                    Ok(alert) => {
-                        if alerts_tx.send(alert).await.is_err() {
-                            anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to build alert: {}", e);
-                        anyhow::bail!("Failed to build alert: {}", e);
-                    }
-                }
-            }
-            Err(DnsError::Resolution(e)) => {
-                if e.to_string().contains("NXDOMAIN") {
-                    debug!("Building alert for NXDOMAIN");
-                    match build_alert(
-                        domain,
-                        source_tag.to_string(),
-                        false,
-                        DnsInfo::default(),
-                        enrichment_provider.clone(),
-                    )
-                    .await
-                    {
-                        Ok(alert) => {
-                            if alerts_tx.send(alert).await.is_err() {
-                                anyhow::bail!(
-                                    "Alerts channel (NXDOMAIN) closed, worker {} exiting.",
-                                    worker_id
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to build alert for NXDOMAIN: {}", e);
-                            anyhow::bail!("Failed to build alert for NXDOMAIN: {}", e);
-                        }
-                    }
-                } else {
-                    debug!(error = %e, "DNS resolution failed");
-                    anyhow::bail!("DNS resolution failed: {}", e);
-                }
-            }
-            Err(DnsError::Shutdown) => {
-                debug!("DNS resolution cancelled by shutdown.");
-            }
+    // STAGE 1: Pre-enrichment filtering (Regex only)
+    let stage_1_matches = {
+        let _span = tracing::info_span!("stage_1_rule_matching").entered();
+        let base_alert = Alert::new_minimal(&domain);
+        rule_matcher.matches(&base_alert, EnrichmentLevel::None)
+    };
+
+    let source_tag = if !stage_1_matches.is_empty() {
+        // If advanced rules match, use their names as the source tag
+        stage_1_matches.join(", ")
+    } else {
+        // Fallback to legacy pattern matcher
+        let legacy_match = pattern_matcher.match_domain(&domain).await;
+        if let Some(tag) = legacy_match {
+            tag
+        } else {
+            // No match in either system, stop processing.
+            debug!(domain = %domain, "Domain did not match any rules or patterns");
+            return Ok(());
+        }
+    };
+
+    debug!(domain = %domain, source_tag, "Domain matched stage 1 rules or patterns");
+
+    let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
+    debug!(?result, "DNS resolution result");
+
+    let dns_info = match result {
+        Ok(ref info) => info.clone(),
+        Err(DnsError::Resolution(ref e)) if e.to_string().contains("NXDOMAIN") => {
+            DnsInfo::default()
+        }
+        Err(DnsError::Resolution(e)) => {
+            debug!(error = %e, "DNS resolution failed");
+            anyhow::bail!("DNS resolution failed: {}", e);
+        }
+        Err(DnsError::Shutdown) => {
+            debug!("DNS resolution cancelled by shutdown.");
+            return Ok(());
+        }
+    };
+
+    let resolved_after_nxdomain = result.is_ok() && dns_info.is_empty();
+    let alert = build_alert(
+        domain,
+        source_tag,
+        resolved_after_nxdomain,
+        dns_info,
+        enrichment_provider.clone(),
+    )
+    .await
+    .context("Failed to build alert")?;
+
+    // STAGE 2: Post-enrichment filtering (ASN, IP, etc.)
+    let stage_2_matches = {
+        let _span = tracing::info_span!("stage_2_rule_matching").entered();
+        rule_matcher.matches(&alert, EnrichmentLevel::Standard)
+    };
+    if stage_2_matches.is_empty() {
+        // If no Stage 2 rules are defined or none match, we assume the Stage 1 match was sufficient.
+        // This allows for regex-only rules to pass through without requiring a second-stage rule.
+        // However, if there ARE stage 2 rules, an alert MUST match one to proceed.
+        let has_stage_2_rules = !rule_matcher.stage_2_rules.is_empty();
+        if has_stage_2_rules {
+            debug!("Domain matched stage 1 but failed to match any stage 2 rules. Discarding.");
+            return Ok(());
         }
     }
+
+    if alerts_tx.send(alert).is_err() {
+        anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
+    }
+
     Ok(())
 }
 
@@ -448,12 +430,14 @@ pub async fn process_domain(
 mod tests {
     use super::*;
     use crate::{
+        config::RulesConfig,
         core::{DnsInfo, DnsResolver, PatternMatcher},
         dns::{DnsError, DnsResolutionManager},
         enrichment::fake::FakeEnrichmentProvider,
+        rules::RuleMatcher,
     };
     use std::sync::Arc;
-    use tokio::sync::{mpsc, watch};
+    use tokio::sync::{broadcast, watch};
 
     // A mock pattern matcher for testing purposes.
     struct MockPatternMatcher {
@@ -509,13 +493,14 @@ mod tests {
 
         let dns_manager = Arc::new(_dns_manager);
         let enrichment_provider = Arc::new(FakeEnrichmentProvider::new());
-        let (alerts_tx, _alerts_rx) = mpsc::channel(1);
+        let (alerts_tx, _alerts_rx) = broadcast::channel(1);
 
         // Act
         let result = process_domain(
             "timeout.com".to_string(),
             0,
             pattern_matcher,
+            Arc::new(RuleMatcher::new(&RulesConfig { rule_files: vec![] }).unwrap()),
             dns_manager,
             enrichment_provider,
             alerts_tx.clone(),

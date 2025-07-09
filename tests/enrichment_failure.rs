@@ -3,12 +3,14 @@
 use anyhow::Result;
 use certwatch::{
     app::process_domain,
+    config::RulesConfig,
     core::{DnsInfo, PatternMatcher},
     dns::{test_utils::FakeDnsResolver, DnsHealthMonitor, DnsResolutionManager},
     enrichment::fake::FakeEnrichmentProvider,
+    rules::RuleMatcher,
 };
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, watch};
 
 // A mock pattern matcher for testing purposes.
 struct MockPatternMatcher;
@@ -44,13 +46,14 @@ async fn test_process_domain_propagates_enrichment_error() -> Result<()> {
     enrichment_provider.add_error(error_ip, "Enrichment database offline");
     let enrichment_provider = Arc::new(enrichment_provider);
 
-    let (alerts_tx, _) = mpsc::channel(1);
+    let (alerts_tx, _) = broadcast::channel(1);
 
     // 2. Act
     let result = process_domain(
         "example.com".to_string(),
         0, // worker_id
         pattern_matcher,
+        Arc::new(RuleMatcher::new(&RulesConfig { rule_files: vec![] }).unwrap()),
         dns_manager,
         enrichment_provider,
         alerts_tx,

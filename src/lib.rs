@@ -19,6 +19,7 @@ pub mod matching;
 pub mod internal_metrics;
 pub mod network;
 pub mod outputs;
+pub mod rules;
 pub mod types;
 
 // Re-export core types for convenience

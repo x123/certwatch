@@ -2,12 +2,14 @@
 use anyhow::Result;
 use certwatch::{
     app::process_domain,
+    config::RulesConfig,
     core::{DnsInfo, PatternMatcher},
     dns::{test_utils::FakeDnsResolver, DnsHealthMonitor, DnsResolutionManager},
     enrichment::fake::FakeEnrichmentProvider,
+    rules::RuleMatcher,
 };
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, watch};
 
 // A mock pattern matcher for testing purposes.
 struct MockPatternMatcher;
@@ -36,13 +38,14 @@ async fn test_process_domain_sends_alert_on_match() -> Result<()> {
     let dns_manager = Arc::new(dns_manager);
 
     let enrichment_provider = Arc::new(FakeEnrichmentProvider::new());
-    let (alerts_tx, mut alerts_rx) = mpsc::channel(1);
+    let (alerts_tx, mut alerts_rx) = broadcast::channel(1);
 
     // 2. Act
     let result = process_domain(
         "matching.com".to_string(),
         0, // worker_id
         pattern_matcher,
+        Arc::new(RuleMatcher::new(&RulesConfig { rule_files: vec![] }).unwrap()),
         dns_manager,
         enrichment_provider,
         alerts_tx,
@@ -52,9 +55,7 @@ async fn test_process_domain_sends_alert_on_match() -> Result<()> {
     // 3. Assert
     assert!(result.is_ok(), "process_domain should succeed");
 
-    let alert = alerts_rx.recv().await;
-    assert!(alert.is_some(), "An alert should have been sent");
-    let alert = alert.unwrap();
+    let alert = alerts_rx.recv().await.unwrap();
     assert_eq!(alert.domain, "matching.com");
     assert_eq!(alert.source_tag, "test-source");
 

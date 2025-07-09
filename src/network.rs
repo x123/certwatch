@@ -9,7 +9,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rand::Rng;
 use serde::Deserialize;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio_tungstenite::tungstenite::Message;
 
 /// Parses a raw certstream JSON message and extracts domain names
@@ -47,7 +47,7 @@ pub trait WebSocketConnection: Send + Sync {
 /// and processes incoming certificate transparency log entries
 pub struct CertStreamClient {
     url: String,
-    output_tx: tokio::sync::mpsc::Sender<String>,
+    output_tx: broadcast::Sender<String>,
     sample_rate: f64,
     allow_invalid_certs: bool,
 }
@@ -62,7 +62,7 @@ impl CertStreamClient {
     /// * `allow_invalid_certs` - Whether to allow self-signed TLS certificates
     pub fn new(
         url: String,
-        output_tx: tokio::sync::mpsc::Sender<String>,
+        output_tx: broadcast::Sender<String>,
         sample_rate: f64,
         allow_invalid_certs: bool,
     ) -> Self {
@@ -221,13 +221,10 @@ impl CertStreamClient {
                             metrics::counter!("agg.domains_sent_to_queue")
                                 .increment(sampled_domains.len() as u64);
                             for domain in sampled_domains {
-                                // Use a non-blocking send to avoid backpressure on the client.
-                                // If the queue is full, we drop the domain and record it.
-                                if self.output_tx.send(domain).await.is_err() {
-                                    // The receiver has been dropped, which is a critical error.
-                                    tracing::error!("Domain channel receiver dropped.");
-                                    return Err(anyhow::anyhow!("Domain channel closed."));
-                                }
+                                // We don't care if the send fails. If there are no receivers,
+                                // it's not the client's job to handle it. It just means no
+                                // workers are listening, which is fine.
+                                let _ = self.output_tx.send(domain);
                             }
                         }
                     }
@@ -308,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_sample_domains() {
-        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let (tx, _) = broadcast::channel(1);
         let domains: Vec<String> = (0..10000).map(|i| format!("domain{}.com", i)).collect();
 
         // Test case 1: sample_rate = 0.5 (50%)

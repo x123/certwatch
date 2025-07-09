@@ -117,16 +117,12 @@ async fn main() -> Result<()> {
     };
 
     // Run the main application logic
-    let (domains_tx, domains_rx) = {
-        let (tx, rx) = tokio::sync::mpsc::channel(config.performance.queue_capacity);
-        (tx, std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
-    };
+    let (domains_tx, _) = broadcast::channel(config.performance.queue_capacity);
 
     if let Err(e) = certwatch::app::run(
         config,
         shutdown_rx,
         domains_tx,
-        domains_rx,
         None,
         None,
         None,

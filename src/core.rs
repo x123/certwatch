@@ -26,6 +26,27 @@ pub struct Alert {
     pub enrichment: Vec<EnrichmentInfo>,
 }
 
+impl Alert {
+    /// Creates a new, minimal alert containing only a domain name.
+    /// This is used for pre-enrichment rule evaluation.
+    pub fn new_minimal(domain: &str) -> Self {
+        Self {
+            domain: domain.to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Returns a flattened list of all IP addresses (IPv4 and IPv6) from the alert.
+    pub fn all_ips(&self) -> Vec<IpAddr> {
+        self.dns
+            .a_records
+            .iter()
+            .chain(self.dns.aaaa_records.iter())
+            .cloned()
+            .collect()
+    }
+}
+
 /// DNS resolution information for a domain
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct DnsInfo {

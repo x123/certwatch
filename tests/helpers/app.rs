@@ -5,7 +5,7 @@ use anyhow::Result;
 use certwatch::{config::Config, core::Alert};
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{broadcast, mpsc, watch},
+    sync::{broadcast, watch},
     task::JoinHandle,
     time::timeout,
 };
@@ -13,7 +13,7 @@ use tokio::{
 /// Represents a running instance of the application for testing purposes.
 #[derive(Debug)]
 pub struct TestApp {
-    pub domains_tx: mpsc::Sender<String>,
+    pub domains_tx: broadcast::Sender<String>,
     pub shutdown_tx: watch::Sender<()>,
     pub app_handle: JoinHandle<Result<()>>,
 }
@@ -117,16 +117,14 @@ impl TestAppBuilder {
         }
 
         let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let (domains_tx, domains_rx) = mpsc::channel(self.config.performance.queue_capacity);
+        let (domains_tx, _) = broadcast::channel(self.config.performance.queue_capacity);
 
         let domains_tx_clone = domains_tx.clone();
         let app_handle = tokio::spawn(async move {
-            let domains_rx = Arc::new(tokio::sync::Mutex::new(domains_rx));
             certwatch::app::run(
                 self.config,
                 shutdown_rx,
                 domains_tx_clone,
-                domains_rx,
                 self.outputs,
                 self.websocket,
                 self.dns_resolver,

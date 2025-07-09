@@ -42,6 +42,8 @@ thiserror = "2.0.12"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
 psl = "2.1.123"
+serde_with = { version = "3.14.0", features = ["macros"] }
+serde_yml = "0.0.12"
 
 [features]
 live-tests = []
@@ -63,9 +65,10 @@ wiremock = "0.6.4"
 [[test]]
 name = "live_certstream_client"
 required-features = ["live-tests"]
-
 [[test]]
 name = "live_pattern_matching"
 
-
+[[test]]
+name = "rules"
+path = "tests/rules.rs"
 

@@ -527,36 +527,46 @@ The implementation is broken down into two sequential epics:
 ### **Phase 1: Foundational Two-Stage Rule Engine**
 *   **Goal:** Implement the core filtering logic for domain, ASN, and IP criteria using an efficient two-stage pipeline.
 *   **Tasks:**
-    *   [ ] **#157 - Config Schema:** In `config.yml`, add a `rule_files` key to load multiple rule YAML files.
-    *   [ ] **#158 - Rule Data Models:** Create Rust structs for `Rule`, `RuleExpression`, etc., with `serde` support. The initial schema will support `domain_regex`, `asns`, `ip_networks`, `not_asns`, `not_ip_networks`, and a top-level `all` for AND logic.
-    *   [ ] **#159 - Rule Loading & Validation:** Implement logic to load all specified rule files at startup, validate the syntax of each rule (valid regex, CIDR, etc.), and compile them into the internal struct format.
-    *   [ ] **#160 - Two-Stage Classifier:** Implement the startup logic that automatically sorts rules into a "Stage 1" (regex-only) or "Stage 2" (enrichment-required) collection.
-    *   [ ] **#161 - Staged Evaluator:** Implement the `evaluate` function and integrate it into the main pipeline. It must first check Stage 1 rules, trigger enrichment if there's a match, and then check Stage 2 rules.
-    *   [ ] **#162 - Unit & Integration Tests:** Add comprehensive tests for rule parsing, validation, and the two-stage evaluation logic.
+    *   [x] **#157 - Config Schema:** In `config.yml`, add a `rule_files` key to load multiple rule YAML files.
+    *   [x] **#158 - Rule Data Models:** Create Rust structs for `Rule`, `RuleExpression`, etc., with `serde` support. The initial schema will support `domain_regex`, `asns`, `ip_networks`, `not_asns`, `not_ip_networks`, and a top-level `all` for AND logic.
+    *   [x] **#159 - Rule Loading & Validation:** Implement logic to load all specified rule files at startup, validate the syntax of each rule (valid regex, CIDR, etc.), and compile them into the internal struct format.
+    *   [x] **#160 - Two-Stage Classifier:** Implement the startup logic that automatically sorts rules into a "Stage 1" (regex-only) or "Stage 2" (enrichment-required) collection.
+    *   [x] **#161 - Staged Evaluator:** Implement the `evaluate` function and integrate it into the main pipeline. It must first check Stage 1 rules, trigger enrichment if there's a match, and then check Stage 2 rules.
+    *   [x] **#162 - Unit & Integration Tests:** Add comprehensive tests for rule parsing, validation, and the two-stage evaluation logic.
 
 ---
 
-### **Phase 2: Advanced Boolean Logic**
+### **Phase 2: Refactor for Concurrency and Hot-Reloading**
+*   **Goal:** Resolve a critical concurrency bottleneck in the rule evaluation pipeline and refactor the architecture to support atomic, lock-free updates for future hot-reloading capabilities.
+*   **Tasks:**
+    *   [ ] **#172 - Diagnose Contention:** Add targeted `tracing` spans to the worker loop and `RuleMatcher` to confirm the exact source of contention under load.
+    *   [ ] **#173 - Stateless `RuleMatcher`:** Refactor the `RuleMatcher` and its associated `Condition`s to be completely stateless, ensuring the `match` method only requires an immutable `&self` reference.
+    *   [ ] **#174 - Implement `watch` Channel for Rules:** Replace the simple `Arc<RuleMatcher>` with a `tokio::sync::watch` channel to allow the central rule set to be updated atomically without interrupting worker threads. This makes future hot-reloading possible.
+    *   [ ] **#175 - Verify Fix:** Write a new integration test that spawns multiple workers and feeds a high volume of domains, asserting that processing is not serialized and throughput is maintained when rules are active.
+
+---
+
+### **Phase 3: Advanced Boolean Logic**
 *   **Goal:** Enhance the rule engine's expressiveness by adding support for `any` (OR) and nested conditions.
 *   **Tasks:**
-    *   [ ] **#163 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
-    *   [ ] **#164 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
-    *   [ ] **#165 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   [ ] **#176 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
+    *   [ ] **#177 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
+    *   [ ] **#178 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
 
 ---
 
-### **Phase 3: Formalize the Extensible Enrichment Framework**
+### **Phase 4: Formalize the Extensible Enrichment Framework**
 *   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
 *   **Tasks:**
-    *   [ ] **#166 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
-    *   [ ] **#167 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
-    *   [ ] **#168 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
+    *   [ ] **#179 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
+    *   [ ] **#180 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
+    *   [ ] **#181 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
 
 ---
 
-### **Phase 4: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+### **Phase 5: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
 *   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
 *   **Tasks:**
-    *   [ ] **#169 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
-    *   [ ] **#170 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
-    *   [ ] **#171 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
+    *   [ ] **#182 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
+    *   [ ] **#183 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
+    *   [ ] **#184 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
