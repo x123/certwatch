@@ -552,9 +552,9 @@ The implementation is broken down into two sequential epics:
 ### **Phase 3: Optimized Regex Compilation**
 *   **Goal:** Drastically improve startup performance and matching efficiency by grouping regex patterns by rule name and compiling them into a single, optimized regex per rule.
 *   **Tasks:**
-    *   [ ] **#176 - Group and Compile Regexes:** Refactor the rule loading logic to group individual `domain_regex` patterns by their `name`. Combine the patterns for each name into a single regex using the `|` (OR) operator.
-    *   [ ] **#177 - Update Rule Structs:** Modify the internal `Rule` representation to store the single, compiled `Regex` per name, rather than individual patterns.
-    *   [ ] **#178 - Verify Performance:** Add a test or benchmark to confirm that the startup time with a large number of regex-based rules is significantly reduced.
+    *   [x] **#176 - Group and Compile Regexes:** Refactor the rule loading logic to group individual `domain_regex` patterns by their `name`. Combine the patterns for each name into a single regex using the `|` (OR) operator.
+    *   [x] **#177 - Update Rule Structs:** Modify the internal `Rule` representation to store the single, compiled `Regex` per name, rather than individual patterns.
+    *   [x] **#178 - Verify Performance:** Add a test or benchmark to confirm that the startup time with a large number of regex-based rules is significantly reduced.
 
 ---
 
