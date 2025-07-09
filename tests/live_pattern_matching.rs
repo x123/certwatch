@@ -45,7 +45,9 @@ async fn test_process_domain_sends_alert_on_match() -> Result<()> {
         "matching.com".to_string(),
         0, // worker_id
         pattern_matcher,
-        Arc::new(RuleMatcher::new(&RulesConfig { rule_files: vec![] }).unwrap()),
+        Arc::new(
+            RuleMatcher::load(&RulesConfig { rule_files: vec![] }).unwrap(),
+        ),
         dns_manager,
         enrichment_provider,
         alerts_tx,

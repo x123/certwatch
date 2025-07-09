@@ -11,6 +11,53 @@ use regex::RegexSet;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+/// A pre-emptive filter that uses a `RegexSet` to quickly discard domains
+/// that match a global ignore list.
+#[derive(Debug, Clone)]
+pub struct PreFilter {
+    ignore_set: Option<RegexSet>,
+    metric_domains_ignored: metrics::Counter,
+}
+
+impl PreFilter {
+    /// Creates a new `PreFilter` from a list of ignore patterns.
+    ///
+    /// If the list of patterns is empty or `None`, it creates a filter that
+    /// will never match.
+    pub fn new(patterns: Option<Vec<String>>) -> Result<Self> {
+        let ignore_set = if let Some(patterns) = patterns {
+            if patterns.is_empty() {
+                None
+            } else {
+                Some(RegexSet::new(patterns)?)
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            ignore_set,
+            metric_domains_ignored: metrics::counter!("certwatch_domains_ignored_total"),
+        })
+    }
+
+    /// Checks if a domain should be ignored.
+    ///
+    /// Returns `true` if the domain matches the ignore list, `false` otherwise.
+    pub fn is_match(&self, domain: &str) -> bool {
+        if let Some(set) = &self.ignore_set {
+            let is_match = set.is_match(domain);
+            if is_match {
+                self.metric_domains_ignored.increment(1);
+                tracing::debug!(domain, "Domain matched ignore list");
+            }
+            is_match
+        } else {
+            false
+        }
+    }
+}
+
 /// A container for the staged rule sets.
 #[derive(Debug, Clone)]
 pub struct RuleMatcher {
@@ -18,21 +65,32 @@ pub struct RuleMatcher {
     pub stage_1_rules: Vec<Rule>,
     /// Rules that require enrichment data to be evaluated.
     pub stage_2_rules: Vec<Rule>,
+    /// The pre-emptive filter for ignoring domains.
+    pre_filter: PreFilter,
 }
 
 impl RuleMatcher {
-    /// Creates a new `RuleMatcher` by loading and classifying rules from the config.
-    pub fn new(config: &RulesConfig) -> Result<Self> {
-        let all_rules = Rule::load_from_files(config)?;
+    /// Loads rules and ignore patterns from the config, returning a `RuleMatcher`
+    /// that contains all compiled rules and the pre-filter.
+    pub fn load(config: &RulesConfig) -> Result<Self> {
+        let (all_rules, ignore_patterns) = Rule::load_from_files(config)?;
 
         let (stage_2_rules, stage_1_rules) = all_rules
             .into_iter()
             .partition(|rule| rule.required_level == EnrichmentLevel::Standard);
 
+        let pre_filter = PreFilter::new(Some(ignore_patterns))?;
+
         Ok(Self {
             stage_1_rules,
             stage_2_rules,
+            pre_filter,
         })
+    }
+
+    /// Checks if a domain should be ignored by the pre-filter.
+    pub fn is_ignored(&self, domain: &str) -> bool {
+        self.pre_filter.is_match(domain)
     }
 
     /// Checks an alert against the rules for a given enrichment stage.
@@ -87,19 +145,25 @@ impl Rule {
 
     /// Loads all rules from the file paths specified in the configuration,
     /// grouping and compiling them for efficiency.
-    pub fn load_from_files(config: &RulesConfig) -> Result<Vec<Rule>> {
+    pub fn load_from_files(config: &RulesConfig) -> Result<(Vec<Rule>, Vec<String>)> {
         let mut raw_rules = Vec::new();
+        let mut ignore_patterns = Vec::new();
+
         for file_path in &config.rule_files {
             let file_content = fs::read_to_string(file_path)
                 .with_context(|| format!("Failed to read rule file: {}", file_path.display()))?;
 
-            let rules: Vec<FileRule> = serde_yml::from_str(&file_content).with_context(|| {
+            let rules_file: RulesFile = serde_yml::from_str(&file_content).with_context(|| {
                 format!(
                     "Failed to parse YAML from rule file: {}",
                     file_path.display()
                 )
             })?;
-            raw_rules.extend(rules);
+
+            if let Some(patterns) = rules_file.ignore {
+                ignore_patterns.extend(patterns);
+            }
+            raw_rules.extend(rules_file.rules);
         }
 
         // Group rules by name and compile their regexes into RegexSets
@@ -137,11 +201,20 @@ impl Rule {
             });
         }
 
-        Ok(compiled_rules)
+        Ok((compiled_rules, ignore_patterns))
     }
 }
 
 // --- Deserialization-only structs ---
+
+/// Represents the top-level structure of a rule file.
+#[derive(Debug, Serialize, Deserialize)]
+struct RulesFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ignore: Option<Vec<String>>,
+    #[serde(default)]
+    rules: Vec<FileRule>,
+}
 
 /// A temporary struct that represents a rule as defined in the YAML file.
 #[derive(Debug, Serialize, Deserialize)]

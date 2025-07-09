@@ -78,7 +78,8 @@ pub async fn run(
             PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
         ),
     };
-    let rule_matcher = Arc::new(RuleMatcher::new(&config.rules)?);
+    let rule_matcher = Arc::new(RuleMatcher::load(&config.rules)?);
+
     let enrichment_provider = enrichment_provider_override
         .expect("Enrichment provider is now required to be passed into app::run");
     let deduplicator = Arc::new(Deduplicator::new(
@@ -198,6 +199,10 @@ pub async fn run(
                 };
 
                 debug!(worker_id = i, domain = %domain, "Worker processing domain");
+
+                if rule_matcher.is_ignored(&domain) {
+                    continue;
+                }
 
                 let process_fut = process_domain(
                     domain.clone(),
@@ -521,7 +526,7 @@ mod tests {
             "timeout.com".to_string(),
             0,
             pattern_matcher,
-            Arc::new(RuleMatcher::new(&RulesConfig { rule_files: vec![] }).unwrap()),
+            Arc::new(RuleMatcher::load(&RulesConfig { rule_files: vec![] }).unwrap()),
             dns_manager,
             enrichment_provider,
             alerts_tx.clone(),

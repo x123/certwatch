@@ -572,7 +572,7 @@ The implementation is broken down into two sequential epics:
 ### **Epic #47: Modernize Metrics System with Prometheus Exporter**
 
 *   **Goal:** Replace the current in-memory, log-based metrics system with a production-grade Prometheus exporter. This will provide real-time visibility into application performance and align with industry-standard observability practices.
-*   **Status:** Not Started
+*   **Status:** In Progress
 *   **Tasks:**
     *   [x] **#194 - Dependencies:** Add `metrics-exporter-prometheus` and `axum` to `Cargo.toml`.
     *   [x] **#195 - Configuration:** Add a `metrics` section to `config.rs` to enable/disable the exporter and configure its listen address.
@@ -586,12 +586,25 @@ The implementation is broken down into two sequential epics:
 
 ### **Phase 5: Pre-emptive Filtering with `ignore` Rules**
 *   **Goal:** Implement a global `ignore` list to provide a highly-efficient, pre-emptive filter that discards noisy, unwanted domains (e.g., `*.vpn.azure.com`) *before* any other processing occurs. This provides the boolean `NOT` capability that is currently missing.
-*   **Status:** Not Started
+*   **Architecture:** A new, decoupled `PreFilter` component will be created to encapsulate the filtering logic, making it independently testable and keeping the main application pipeline clean.
+    ```mermaid
+    graph TD
+        A[CertStream] --> B{Receive Domain};
+        B --> C[PreFilter];
+        C -- Match --> D[Discard & Increment Metric];
+        C -- No Match --> E[Existing Pipeline: Deduplication];
+        E --> F[Enrichment];
+        F --> G[Rule Matching];
+        G --> H[Notification];
+    ```
+*   **Status:** Completed
 *   **Tasks:**
-    *   [ ] **#181 - Update Schema & Parsing:** Extend the `rules.yml` schema to support a top-level `ignore` key, which will be a list of named `domain_regex` patterns. Update the rule-loading logic to parse these into a separate collection.
-    *   [ ] **#182 - Compile to `RegexSet`:** Compile all `ignore` patterns into a single, highly-efficient `regex::RegexSet` for fast matching.
-    *   [ ] **#183 - Integrate into Pipeline:** In `app::run`, before any other logic, check incoming domains against the `ignore` `RegexSet`. If a match is found, immediately drop the domain and increment a new `domains_ignored` metric.
-    *   [ ] **#184 - Add Tests:** Add unit tests to verify that the `ignore` rules are loaded correctly and that the `RegexSet` is built. Add an integration test to confirm that a domain matching an `ignore` rule is dropped and does not trigger any further processing (e.g., no DNS lookups, no positive rule matching).
+    *   [x] **#181 - Schema:** In `src/rules.rs`, add `ignore: Option<Vec<String>>` to the `Rules` struct.
+    *   [x] **#182 - Component:** Create a new module `src/filtering.rs` with a `PreFilter` struct. This struct will hold the compiled `regex::RegexSet` and a metric counter.
+    *   [x] **#183 - Compiler:** In `src/rules.rs`, modify `Rules::load` to create and return a `PreFilter` instance from the `ignore` patterns.
+    *   [x] **#184 - Integration:** In `src/app.rs`, add the `PreFilter` to the `App` struct and use it to check incoming domains at the very beginning of the processing pipeline.
+    *   [x] **#185 - Metrics:** In `src/filtering.rs`, add the `certwatch_domains_ignored_total` counter and increment it within the filtering logic.
+    *   [x] **#186 - Testing:** Create `tests/filtering.rs` to unit-test the `PreFilter` component. Add integration tests to verify the end-to-end ignore functionality.
 
 ---
 

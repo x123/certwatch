@@ -29,22 +29,23 @@ fn create_test_alert(domain: &str) -> Alert {
 #[test]
 fn test_rule_grouping_and_compilation_to_regex_set() {
     let rule_content = r#"
-- name: "Combined Rule"
-  all:
-    - domain_regex: "^test1\\.com$"
-- name: "Single Rule"
-  all:
-    - domain_regex: "^single\\.com$"
-- name: "Combined Rule"
-  all:
-    - domain_regex: "^test2\\.net$"
+rules:
+  - name: "Combined Rule"
+    all:
+      - domain_regex: "^test1\\.com$"
+  - name: "Single Rule"
+    all:
+      - domain_regex: "^single\\.com$"
+  - name: "Combined Rule"
+    all:
+      - domain_regex: "^test2\\.net$"
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
         rule_files: vec![rule_file],
     };
 
-    let rules = Rule::load_from_files(&config).unwrap();
+    let (rules, _) = Rule::load_from_files(&config).unwrap();
     assert_eq!(rules.len(), 2, "Rules with the same name should be grouped");
 
     let combined_rule = rules
@@ -73,18 +74,19 @@ fn test_rule_classification() {
     // TODO: Re-enable this test once ASN/IP conditions are re-implemented
     // in the new rule structure.
     let rule_content = r#"
-- name: "Stage 1 Rule"
-  all:
-    - domain_regex: "stage1"
-- name: "Stage 2 Rule"
-  all:
-    - asns: [123]
+rules:
+  - name: "Stage 1 Rule"
+    all:
+      - domain_regex: "stage1"
+  - name: "Stage 2 Rule"
+    all:
+      - asns: [123]
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
         rule_files: vec![rule_file],
     };
-    let matcher = RuleMatcher::new(&config).unwrap();
+    let matcher = RuleMatcher::load(&config).unwrap();
 
     assert_eq!(matcher.stage_1_rules.len(), 1);
     assert_eq!(matcher.stage_1_rules[0].name, "Stage 1 Rule");
@@ -99,18 +101,19 @@ fn test_combined_domain_regex_condition() {
     let alert3 = create_test_alert("other.net");
 
     let rule_content = r#"
-- name: "Match Example"
-  all:
-    - domain_regex: "\\.example\\.com$"
-- name: "Match Example"
-  all:
-    - domain_regex: "\\.example\\.org$"
+rules:
+  - name: "Match Example"
+    all:
+      - domain_regex: "\\.example\\.com$"
+  - name: "Match Example"
+    all:
+      - domain_regex: "\\.example\\.org$"
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
         rule_files: vec![rule_file],
     };
-    let matcher = RuleMatcher::new(&config).unwrap();
+    let matcher = RuleMatcher::load(&config).unwrap();
     let matches1 = matcher.matches(&alert1, EnrichmentLevel::None);
     assert_eq!(matches1, vec!["Match Example"]);
 
@@ -123,3 +126,85 @@ fn test_combined_domain_regex_condition() {
 
 // TODO: Add back tests for ASN, IP Network, and their 'not' variants
 // once they are supported by the new compiled Rule struct.
+
+#[test]
+fn test_prefilter_ignore_integration() {
+    let rule_content = r#"
+ignore:
+  - "\\.ignored\\.com$"
+  - "exact-ignore.net"
+
+rules:
+  - name: "Should Not Be Matched"
+    all:
+      - domain_regex: ".*"
+"#;
+    let rule_file = create_rule_file(rule_content);
+    let config = RulesConfig {
+        rule_files: vec![rule_file],
+    };
+    let matcher = RuleMatcher::load(&config).unwrap();
+
+    assert!(
+        matcher.is_ignored("sub.ignored.com"),
+        "Subdomain should be ignored"
+    );
+    assert!(
+        matcher.is_ignored("exact-ignore.net"),
+        "Exact domain should be ignored"
+    );
+    assert!(
+        !matcher.is_ignored("safe-domain.com"),
+        "Safe domain should not be ignored"
+    );
+}
+
+#[test]
+fn test_prefilter_no_ignore_list() {
+    let rule_content = r#"
+rules:
+  - name: "Some Rule"
+    all:
+      - domain_regex: ".*"
+"#;
+    let rule_file = create_rule_file(rule_content);
+    let config = RulesConfig {
+        rule_files: vec![rule_file],
+    };
+    let matcher = RuleMatcher::load(&config).unwrap();
+
+    assert!(!matcher.is_ignored("anything.com"));
+}
+
+#[test]
+fn test_prefilter_empty_ignore_list() {
+    let rule_content = r#"
+ignore: []
+rules:
+  - name: "Some Rule"
+    all:
+      - domain_regex: ".*"
+"#;
+    let rule_file = create_rule_file(rule_content);
+    let config = RulesConfig {
+        rule_files: vec![rule_file],
+    };
+    let matcher = RuleMatcher::load(&config).unwrap();
+
+    assert!(!matcher.is_ignored("anything.com"));
+}
+
+#[test]
+fn test_prefilter_invalid_regex_fails_load() {
+    let rule_content = r#"
+ignore:
+  - "(" # Invalid regex
+rules: []
+"#;
+    let rule_file = create_rule_file(rule_content);
+    let config = RulesConfig {
+        rule_files: vec![rule_file],
+    };
+    let result = RuleMatcher::load(&config);
+    assert!(result.is_err());
+}

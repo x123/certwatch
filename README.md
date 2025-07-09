@@ -21,6 +21,9 @@ monitoring:
 process domains from newly registered or renewed certificates as they appear.
 *   **High-Performance Pattern Matching:** Leverages Rust's `regex::RegexSet`
 for extremely fast matching against thousands of rules with minimal latency.
+*   **High-Performance Pre-emptive Filtering:** Uses a global `ignore` list,
+powered by a `RegexSet`, to discard uninteresting domains from high-volume
+sources (e.g., `*.google.com`) before any other processing occurs.
 *   **DNS & IP Enrichment:** Resolves domains (A, AAAA, NS records) and
 enriches associated IPs with ASN and country data using a local TSV file for
 rapid lookups.
@@ -152,7 +155,43 @@ line. For example, a file named `phishing.txt` might contain:
 ^.*(apple|icloud).*(login|support|verify).*$
 ```
 
-**c. Supply ASN Data File:**
+**d. (Optional) Create Advanced Rule Files:**
+
+For more complex logic, you can use advanced rule files. These YAML files
+support combining conditions and, crucially, allow for a global `ignore` list
+for high-performance pre-filtering.
+
+**Example `rules/common.yml`:**
+
+```yaml
+# A list of regex patterns to ignore before any processing.
+# This is highly efficient for filtering out high-volume, trusted domains.
+ignore:
+  - 'google\.com$'
+  - 'facebook\.com$'
+  - 'cloudfront\.net$'
+
+# The list of detection rules.
+rules:
+  - name: "Apple ID Phish outside of Apple's Network"
+    all:
+      - domain_regex: '^.*appleid.*$'
+      - not_asns: [714] # ASN 714 belongs to Apple Inc.
+```
+
+#### Performance Benefits of Pre-emptive Filtering
+
+The `ignore` list provides a significant performance advantage. It is compiled
+into a single, highly-optimized `regex::RegexSet`. This allows `certwatch` to
+check each incoming domain against a large set of "known good" patterns in a
+single, very fast operation.
+
+If a domain matches the ignore list, it is immediately discarded. This avoids
+the more expensive downstream processing steps, such as DNS resolution, ASN
+enrichment, and evaluation against more complex rules. For high-volume feeds,
+this can reduce CPU and network load considerably.
+
+**e. Supply ASN Data File:**
 
 The enrichment service requires a tab-separated value (TSV) file containing
 IP-to-ASN mapping data. The path to this file is specified in `certwatch.toml`
