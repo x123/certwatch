@@ -1,5 +1,5 @@
 ---
-### Epic 37: Unplanned Maintenance &amp; Bug Fixes
+### Epic 37: Unplanned Maintenance & Bug Fixes
 **User Story:** As a developer, I want to quickly address critical bugs and regressions to ensure the application remains stable and reliable for users.
 
 - [x] **#122 - Fix Startup Crash Due to Missing ASN Database**
@@ -292,7 +292,7 @@ As a security analyst or operator, I want to define flexible "rules" that group 
   - **Context:** The application would hang silently on startup if the configured DNS resolver was unreachable, making it difficult to debug.
   - **Subtasks:**
     - [x] Implemented a pre-flight health check in `DnsHealthMonitor` to validate the DNS resolver on startup.
-    - [x] Refactored the check to be mockable and accept a `&amp;dyn DnsResolver`.
+    - [x] Refactored the check to be mockable and accept a `&dyn DnsResolver`.
     - [x] Integrated the check into `app::run` to ensure it runs before any other services.
     - [x] Added integration tests using a `FakeDnsResolver` to verify both successful and failing startup scenarios.
 - [x] **#124 - Ensure Early Startup Logging**
@@ -474,3 +474,41 @@ The implementation is broken down into two sequential epics:
    - [x] **#149 - Refactor `bounded_concurrency.rs`:** Replaced a `sleep`-based test with a deterministic test using a `tokio::sync::Barrier` to control and verify concurrency limits.
    - [x] **#150 - Refactor Hot-Reload Tests:** Deleted the complex `live_hot_reload.rs` and refactored `pattern_hot_reload.rs` to use focused unit tests that call the `reload()` method directly, removing dependencies on filesystem events.
    - [x] **#151 - Refactor `certstream_client.rs`:** Replaced timeout-based synchronization with a deterministic `oneshot` channel to signal completion, making the tests faster and more reliable.
+
+---
+
+### Epic #45: Enhance Slack Notification Scannability
+
+- **User Story:** As a security analyst, I want the alerts within a single Slack notification batch to be sorted using a multi-level pipeline: first by base domain, then by the full domain name (FQDN), and finally by the Autonomous System Number (ASN), so that I can see a highly organized report where related domains and networks are grouped together, allowing for faster analysis and identification of potentially coordinated activity.
+- **Why:** Raw, unsorted alert batches are difficult to parse, especially when they contain related domains. A structured, sorted report allows analysts to quickly identify patterns (e.g., multiple subdomains from the same parent domain, or multiple domains from the same ASN) and prioritize their focus.
+- **Architecture:** The sorting will be implemented using the **Decorate-Sort-Undecorate** pattern for performance and clarity. This logic will reside entirely within the `SlackTextFormatter` in `src/formatting.rs`, as sorting is a presentation-layer concern.
+  ```mermaid
+  graph TD
+      subgraph Decorate
+          A[Batch of Alerts: Vec<Alert>] --> B{For each Alert...};
+          B --> C[Extract Base Domain, FQDN, ASN];
+          C --> D[Create SortableAlert struct];
+      end
+      subgraph Sort
+          E[Vec<SortableAlert>] --> F{sort() method};
+          F --> G[Sorted Vec<SortableAlert>];
+      end
+      subgraph Undecorate
+          G --> H[Extract original Alerts in order];
+          H --> I[Format into single String];
+      end
+      D --> E;
+  ```
+- **Acceptance Criteria:**
+    -   Alerts in a Slack batch are sorted using a three-level, stable, case-insensitive comparison.
+    -   **Primary Key:** Registrable domain (e.g., `example.com`).
+    -   **Secondary Key:** Full domain name (e.g., `a.example.com`).
+    -   **Tertiary Key:** ASN organization name.
+    -   Alerts with unparsable domains are placed at the very end of the batch.
+    -   Alerts with no ASN information are placed at the end of their respective FQDN group.
+- **Tasks:**
+    - [x] **#152 - Prerequisite: Fix VirusTotal Link:** Modify the VirusTotal link generation in `src/formatting.rs` to use only a single IP address, per prior feedback.
+    - [x] **#153 - Implement `SortableAlert` Struct:** In `src/formatting.rs`, create a private `SortableAlert` struct to hold pre-calculated sort keys (`base_domain`, `fqdn`, `asn_org`) and a reference to the original `Alert`.
+    - [x] **#154 - Implement `Ord` for `SortableAlert`:** Implement the `Ord` trait for `SortableAlert` to define the multi-level comparison logic, correctly handling `None` values for optional keys.
+    - [x] **#155 - Refactor `format_batch`:** Update `SlackTextFormatter::format_batch` to use the Decorate-Sort-Undecorate pattern: map to `Vec<SortableAlert>`, sort the vector, then map back to the original alerts for formatting.
+    - [x] **#156 - Add Sorting Unit Test:** Create a new unit test `test_format_batch_is_correctly_sorted` that verifies the complete sorting logic, including all sorting levels and edge cases for missing data.

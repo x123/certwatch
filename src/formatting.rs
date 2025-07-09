@@ -1,6 +1,7 @@
 // src/formatting.rs
 
 use crate::core::Alert;
+use std::cmp::Ordering;
 use std::net::IpAddr;
 
 /// A trait for formatting a batch of alerts into a single string.
@@ -63,15 +64,9 @@ impl SlackTextFormatter {
                 urlscan_ip_query, ip_urlscan_link_text
             );
 
-            let vt_ip_query = search_ips
-                .iter()
-                .map(|ip| ip.to_string())
-                .collect::<Vec<_>>()
-                .join("%250A");
-
             let other_ip_links = format!(
-                "(<https://www.shodan.io/search?query=ip%3A{0}|shodan>|<https://www.virustotal.com/gui/search/{1}?type=ips|vt>)",
-                all_ips[0], vt_ip_query
+                "(<https://www.shodan.io/search?query=ip%3A{0}|shodan>|<https://www.virustotal.com/gui/ip-address/{0}|vt>)",
+                all_ips[0]
             );
             format!(" | {} {}", ip_urlscan_link, other_ip_links)
         } else {
@@ -91,13 +86,90 @@ impl SlackTextFormatter {
     }
 }
 
+/// A private helper struct for sorting alerts using pre-calculated keys.
+struct SortableAlert<'a> {
+    base_domain: Option<&'a str>,
+    fqdn: &'a str,
+    asn_org: Option<&'a str>,
+    original: &'a Alert,
+}
+
+impl<'a> PartialEq for SortableAlert<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.base_domain == other.base_domain
+            && self.fqdn.eq_ignore_ascii_case(other.fqdn)
+            && self.asn_org.map(|s| s.to_lowercase()) == other.asn_org.map(|s| s.to_lowercase())
+    }
+}
+
+impl<'a> Eq for SortableAlert<'a> {}
+
+impl<'a> PartialOrd for SortableAlert<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Ord for SortableAlert<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Primary key: base_domain. None is considered greater.
+        let base_domain_cmp = match (self.base_domain, other.base_domain) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        if base_domain_cmp != Ordering::Equal {
+            return base_domain_cmp;
+        }
+
+        // Secondary key: fqdn (case-insensitive)
+        let fqdn_cmp = self.fqdn.to_lowercase().cmp(&other.fqdn.to_lowercase());
+        if fqdn_cmp != Ordering::Equal {
+            return fqdn_cmp;
+        }
+
+        // Tertiary key: asn_org. None is considered greater.
+        match (&self.asn_org, &other.asn_org) {
+            (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    }
+}
+
 impl TextFormatter for SlackTextFormatter {
     fn format_batch(&self, alerts: &[Alert]) -> String {
         if alerts.is_empty() {
             return String::new();
         }
 
-        let lines: Vec<String> = alerts.iter().map(|alert| self.format_line(alert)).collect();
+        let mut sortable_alerts: Vec<SortableAlert> = alerts
+            .iter()
+            .map(|alert| {
+                let base_domain = psl::domain_str(&alert.domain);
+                let asn_org = alert
+                    .enrichment
+                    .first()
+                    .and_then(|e| e.asn_info.as_ref())
+                    .map(|info| info.as_name.as_str());
+
+                SortableAlert {
+                    base_domain,
+                    fqdn: &alert.domain,
+                    asn_org,
+                    original: alert,
+                }
+            })
+            .collect();
+
+        sortable_alerts.sort();
+
+        let lines: Vec<String> = sortable_alerts
+            .iter()
+            .map(|sa| self.format_line(sa.original))
+            .collect();
 
         format!("```\n{}\n```", lines.join("\n"))
     }
@@ -125,7 +197,7 @@ mod tests {
 
         let enrichment = if let Some((country, asn, org)) = enrichment_details {
             vec![EnrichmentInfo {
-                ip: ips.first().and_then(|s| s.parse().ok()).unwrap(),
+                ip: ips.first().and_then(|s| s.parse().ok()).unwrap_or("0.0.0.0".parse().unwrap()),
                 asn_info: Some(AsnInfo {
                     as_number: asn,
                     as_name: org.to_string(),
@@ -157,7 +229,7 @@ mod tests {
         let formatter = SlackTextFormatter;
         let line = formatter.format_line(&alert);
 
-        let expected = "<https://urlscan.io/search/#page.domain%3Acom-etcapo.vip|com-etcapo.vip> (<https://www.shodan.io/search?query=hostname%3Acom-etcapo.vip|shodan>|<https://www.virustotal.com/gui/domain/com-etcapo.vip|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22%20OR%20%222.2.2.2%22%20OR%20%223.3.3.3%22)|1.1.1.1 (+3 others)> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/search/1.1.1.1%250A2.2.2.2%250A3.3.3.3?type=ips|vt>) @ CLOUDFLARENET, US";
+        let expected = "<https://urlscan.io/search/#page.domain%3Acom-etcapo.vip|com-etcapo.vip> (<https://www.shodan.io/search?query=hostname%3Acom-etcapo.vip|shodan>|<https://www.virustotal.com/gui/domain/com-etcapo.vip|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22%20OR%20%222.2.2.2%22%20OR%20%223.3.3.3%22)|1.1.1.1 (+3 others)> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ CLOUDFLARENET, US";
         assert_eq!(line, expected);
     }
 
@@ -200,11 +272,54 @@ mod tests {
         let formatter = SlackTextFormatter;
         let batch = formatter.format_batch(&[alert1, alert2]);
 
-        let expected_line1 = "<https://urlscan.io/search/#page.domain%3Asite1.com|site1.com> (<https://www.shodan.io/search?query=hostname%3Asite1.com|shodan>|<https://www.virustotal.com/gui/domain/site1.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22)|1.1.1.1> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/search/1.1.1.1?type=ips|vt>) @ APNIC, AU";
-        let expected_line2 = "<https://urlscan.io/search/#page.domain%3Asite2.com|site2.com> (<https://www.shodan.io/search?query=hostname%3Asite2.com|shodan>|<https://www.virustotal.com/gui/domain/site2.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%228.8.8.8%22)|8.8.8.8> (<https://www.shodan.io/search?query=ip%3A8.8.8.8|shodan>|<https://www.virustotal.com/gui/search/8.8.8.8?type=ips|vt>)";
+        // With sorting, site1 should come before site2.
+        let expected_line1 = "<https://urlscan.io/search/#page.domain%3Asite1.com|site1.com> (<https://www.shodan.io/search?query=hostname%3Asite1.com|shodan>|<https://www.virustotal.com/gui/domain/site1.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22)|1.1.1.1> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ APNIC, AU";
+        let expected_line2 = "<https://urlscan.io/search/#page.domain%3Asite2.com|site2.com> (<https://www.shodan.io/search?query=hostname%3Asite2.com|shodan>|<https://www.virustotal.com/gui/domain/site2.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%228.8.8.8%22)|8.8.8.8> (<https://www.shodan.io/search?query=ip%3A8.8.8.8|shodan>|<https://www.virustotal.com/gui/ip-address/8.8.8.8|vt>)";
         let expected = format!("```\n{}\n{}\n```", expected_line1, expected_line2);
 
         assert_eq!(batch, expected);
     }
 
+    #[test]
+    fn test_format_batch_is_correctly_sorted() {
+        // Test data, intentionally unordered
+        let alert_c_example_no_asn = create_test_alert("c.example.com", vec![], vec![], None);
+        let alert_unparsable = create_test_alert("unparsable-domain", vec![], vec![], None);
+        let alert_a_example_cloudflare =
+            create_test_alert("a.example.com", vec![], vec![], Some(("US", 13335, "CLOUDFLARE")));
+        let alert_z_another =
+            create_test_alert("z.another.net", vec![], vec![], Some(("US", 32934, "ZSCALER")));
+        let alert_b_example_google =
+            create_test_alert("b.example.com", vec![], vec![], Some(("US", 15169, "GOOGLE")));
+        let alert_example_amazon =
+            create_test_alert("example.com", vec![], vec![], Some(("US", 16509, "AMAZON-02")));
+
+        let alerts = vec![
+            alert_c_example_no_asn,
+            alert_unparsable,
+            alert_a_example_cloudflare,
+            alert_z_another,
+            alert_b_example_google,
+            alert_example_amazon,
+        ];
+        let formatter = SlackTextFormatter;
+        let batch = formatter.format_batch(&alerts);
+
+        let lines: Vec<&str> = batch.trim_matches('`').trim().lines().collect();
+
+        // Expected order:
+        // 1. z.another.net (base: another.net)
+        // 2. a.example.com (base: example.com, fqdn: a.example.com, asn: CLOUDFLARE)
+        // 3. b.example.com (base: example.com, fqdn: b.example.com, asn: GOOGLE)
+        // 4. c.example.com (base: example.com, fqdn: c.example.com, asn: None)
+        // 5. example.com   (base: example.com, fqdn: example.com)
+        // 6. unparsable-domain (base: None)
+        assert_eq!(lines.len(), 6);
+        assert!(lines[0].contains("z.another.net"));
+        assert!(lines[1].contains("a.example.com"));
+        assert!(lines[2].contains("b.example.com"));
+        assert!(lines[3].contains("c.example.com"));
+        assert!(lines[4].contains("|example.com>")); // Specific to avoid matching subdomains
+        assert!(lines[5].contains("unparsable-domain"));
+    }
 }
