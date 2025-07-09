@@ -288,7 +288,7 @@ impl DnsResolutionManager {
 
                             // Check if this is an NXDOMAIN error
                             if is_nxdomain_error_str(&e) {
-                                info!("Detected NXDOMAIN");
+                                debug!("Detected NXDOMAIN");
                                 metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
 
                                 // Schedule for NXDOMAIN retry queue

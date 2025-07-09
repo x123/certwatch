@@ -3,9 +3,10 @@
 
 use anyhow::Result;
 use certwatch::{config::Config, core::Alert};
+use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{broadcast, mpsc, watch},
+    sync::{broadcast, mpsc, watch, Mutex},
     task::JoinHandle,
     time::timeout,
 };
@@ -15,7 +16,7 @@ use tokio::{
 pub struct TestApp {
     pub domains_tx: mpsc::Sender<String>,
     pub shutdown_tx: watch::Sender<()>,
-    pub app_handle: JoinHandle<Result<()>>,
+    pub app_handle: Option<JoinHandle<Result<()>>>,
 }
 
 impl TestApp {
@@ -23,13 +24,19 @@ impl TestApp {
     /// Fails if the application does not shut down within the specified timeout.
     pub async fn shutdown(self, timeout_duration: Duration) -> Result<()> {
         // Send the shutdown signal
-        self.shutdown_tx.send(()).expect("Failed to send shutdown signal");
+        self.shutdown_tx
+            .send(())
+            .expect("Failed to send shutdown signal");
 
         // Wait for the application to terminate
-        match timeout(timeout_duration, self.app_handle).await {
-            Ok(Ok(_)) => Ok(()), // App finished successfully
-            Ok(Err(e)) => Err(e.into()), // App returned an error
-            Err(_) => Err(anyhow::anyhow!("App failed to shut down within the timeout")),
+        if let Some(handle) = self.app_handle {
+            match timeout(timeout_duration, handle).await {
+                Ok(Ok(_)) => Ok(()), // App finished successfully
+                Ok(Err(e)) => Err(e.into()), // App returned an error
+                Err(_) => Err(anyhow::anyhow!("App failed to shut down within the timeout")),
+            }
+        } else {
+            Ok(())
         }
     }
 }
@@ -42,6 +49,7 @@ pub struct TestAppBuilder {
     websocket: Option<Box<dyn certwatch::network::WebSocketConnection>>,
     dns_resolver: Option<std::sync::Arc<dyn certwatch::core::DnsResolver>>,
     enrichment_provider: Option<std::sync::Arc<dyn certwatch::core::EnrichmentProvider>>,
+    pattern_matcher: Option<std::sync::Arc<dyn certwatch::core::PatternMatcher>>,
     alert_tx: Option<broadcast::Sender<Alert>>,
 }
 
@@ -57,15 +65,17 @@ impl TestAppBuilder {
         // Set a path for the ASN database, even if it's empty, to satisfy the check
         config.enrichment.asn_tsv_path = Some("/tmp/empty.tsv".into());
 
-
         Self {
             config,
             outputs: Some(vec![Arc::new(
-                crate::helpers::mock_output::FailableMockOutput::new(),
+                crate::helpers::mock_output::CountingOutput::new(),
             )]),
             websocket: None,
             dns_resolver: None,
-            enrichment_provider: Some(Arc::new(crate::helpers::fake_enrichment::FakeEnrichmentProvider::new())),
+            enrichment_provider: Some(Arc::new(
+                crate::helpers::fake_enrichment::FakeEnrichmentProvider::new(),
+            )),
+            pattern_matcher: None,
             alert_tx: None,
         }
     }
@@ -75,12 +85,18 @@ impl TestAppBuilder {
         self
     }
 
-    pub fn with_outputs(mut self, outputs: Vec<std::sync::Arc<dyn certwatch::core::Output>>) -> Self {
+    pub fn with_outputs(
+        mut self,
+        outputs: Vec<std::sync::Arc<dyn certwatch::core::Output>>,
+    ) -> Self {
         self.outputs = Some(outputs);
         self
     }
 
-    pub fn with_websocket(mut self, ws: Box<dyn certwatch::network::WebSocketConnection>) -> Self {
+    pub fn with_websocket(
+        mut self,
+        ws: Box<dyn certwatch::network::WebSocketConnection>,
+    ) -> Self {
         self.websocket = Some(ws);
         self
     }
@@ -90,13 +106,27 @@ impl TestAppBuilder {
         self
     }
 
-    pub fn with_dns_resolver(mut self, resolver: std::sync::Arc<dyn certwatch::core::DnsResolver>) -> Self {
+    pub fn with_dns_resolver(
+        mut self,
+        resolver: std::sync::Arc<dyn certwatch::core::DnsResolver>,
+    ) -> Self {
         self.dns_resolver = Some(resolver);
         self
     }
 
-    pub fn with_enrichment_provider(mut self, provider: std::sync::Arc<dyn certwatch::core::EnrichmentProvider>) -> Self {
+    pub fn with_enrichment_provider(
+        mut self,
+        provider: std::sync::Arc<dyn certwatch::core::EnrichmentProvider>,
+    ) -> Self {
         self.enrichment_provider = Some(provider);
+        self
+    }
+
+    pub fn with_pattern_matcher(
+        mut self,
+        matcher: std::sync::Arc<dyn certwatch::core::PatternMatcher>,
+    ) -> Self {
+        self.pattern_matcher = Some(matcher);
         self
     }
 
@@ -105,8 +135,9 @@ impl TestAppBuilder {
         self
     }
 
-    /// Builds and spawns the application in a background task.
-    pub async fn build(self) -> Result<TestApp> {
+    /// Builds the application components but does not spawn it.
+    /// Returns the TestApp handle and a future that runs the app.
+    pub async fn build(self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {
         // Ensure the dummy ASN file exists to prevent startup errors
         if let Some(path) = &self.config.enrichment.asn_tsv_path {
             if !path.exists() {
@@ -117,27 +148,30 @@ impl TestAppBuilder {
         }
 
         let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let (domains_tx, _) = mpsc::channel(self.config.performance.queue_capacity);
+        let (domains_tx, domains_rx) = mpsc::channel(self.config.performance.queue_capacity);
+        let domains_rx_mutex = Arc::new(Mutex::new(domains_rx));
 
-        let domains_tx_clone = domains_tx.clone();
-        let app_handle = tokio::spawn(async move {
+        let app_future = async move {
             certwatch::app::run(
                 self.config,
                 shutdown_rx,
-                Some(domains_tx_clone),
+                Some(domains_rx_mutex),
                 self.outputs,
                 self.websocket,
                 self.dns_resolver,
                 self.enrichment_provider,
+                self.pattern_matcher,
                 self.alert_tx,
             )
             .await
-        });
+        };
 
-        Ok(TestApp {
+        let test_app = TestApp {
             domains_tx,
             shutdown_tx,
-            app_handle,
-        })
+            app_handle: None, // The app is not running yet
+        };
+
+        Ok((test_app, Box::pin(app_future)))
     }
 }

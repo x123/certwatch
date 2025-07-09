@@ -26,11 +26,12 @@ use tokio::task::JoinHandle;
 pub async fn run(
     config: Config,
     mut shutdown_rx: watch::Receiver<()>,
-    domains_tx_override: Option<mpsc::Sender<String>>,
+    domains_rx_override: Option<Arc<Mutex<mpsc::Receiver<String>>>>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
+    pattern_matcher_override: Option<Arc<dyn PatternMatcher>>,
     _alert_tx: Option<broadcast::Sender<Alert>>,
 ) -> Result<()> {
     // =========================================================================
@@ -71,9 +72,12 @@ pub async fn run(
     // =========================================================================
     // 3. Instantiate Remaining Services
     // =========================================================================
-    let pattern_matcher = Arc::new(
-        PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
-    );
+    let pattern_matcher = match pattern_matcher_override {
+        Some(matcher) => matcher,
+        None => Arc::new(
+            PatternWatcher::new(config.matching.pattern_files.clone(), shutdown_rx.clone()).await?,
+        ),
+    };
     let rule_matcher = Arc::new(RuleMatcher::new(&config.rules)?);
     let enrichment_provider = enrichment_provider_override
         .expect("Enrichment provider is now required to be passed into app::run");
@@ -98,12 +102,14 @@ pub async fn run(
     // 3. Create Channels for the Pipeline
     // =========================================================================
     let (alerts_tx, _alerts_rx) = broadcast::channel::<Alert>(1000);
-    let (domains_tx, domains_rx) = if let Some(tx) = domains_tx_override {
-        // This path is for testing, where the receiver is not needed directly
-        // as the test harness controls the sender.
-        let (_, rx) = mpsc::channel::<String>(1000);
-        (tx, Arc::new(Mutex::new(rx)))
+    let (domains_tx, domains_rx) = if let Some(rx_override) = domains_rx_override {
+        // This path is for testing. The test harness provides the receiver.
+        // We still need a sender to give to the CertStreamClient, but it will be
+        // disconnected and unused in the test environment.
+        let (tx, _) = mpsc::channel::<String>(1000);
+        (tx, rx_override)
     } else {
+        // This is the production path.
         let (tx, rx) = mpsc::channel::<String>(1000);
         (tx, Arc::new(Mutex::new(rx)))
     };

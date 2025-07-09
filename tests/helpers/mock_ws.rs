@@ -7,59 +7,59 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tokio::sync::Notify;
+use tokio::sync::{oneshot, Barrier};
 use tokio_tungstenite::tungstenite::{Error, Message};
 
 #[derive(Clone)]
 pub struct MockWebSocket {
     messages: Arc<Mutex<VecDeque<Result<Message, Error>>>>,
     is_closed: Arc<AtomicBool>,
-    notify: Arc<Notify>,
+    // Signals to the test that the app has called `read_message` at least once.
+    ready_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    // Synchronizes the test and the mock to prevent race conditions.
+    barrier: Arc<Barrier>,
 }
 
 impl MockWebSocket {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(barrier: Arc<Barrier>) -> (Self, oneshot::Receiver<()>) {
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let mock_ws = Self {
             messages: Arc::new(Mutex::new(VecDeque::new())),
             is_closed: Arc::new(AtomicBool::new(false)),
-            notify: Arc::new(Notify::new()),
-        }
-    }
-
-    pub fn add_message(&self, msg: Message) {
-        self.messages.lock().unwrap().push_back(Ok(msg));
-        self.notify.notify_one();
+            ready_tx: Arc::new(Mutex::new(Some(ready_tx))),
+            barrier,
+        };
+        (mock_ws, ready_rx)
     }
 
     pub fn add_domain_message(&self, domain: &str) {
-        let json = format!(r#"{{"data": ["{}"]}}"#, domain);
-        self.add_message(Message::Text(json.into()));
-    }
-
-    pub fn add_error(&self, error: Error) {
-        self.messages.lock().unwrap().push_back(Err(error));
-        self.notify.notify_one();
+        let json = format!(r#"{{"data": {{"leaf_cert": {{"all_domains": ["{}"]}}}}}}"#, domain);
+        self.messages
+            .lock()
+            .unwrap()
+            .push_back(Ok(Message::Text(json.into())));
     }
 
     pub fn close(&self) {
         self.is_closed.store(true, Ordering::SeqCst);
-        self.notify.notify_one();
     }
 }
 
 #[async_trait]
 impl WebSocketConnection for MockWebSocket {
     async fn read_message(&mut self) -> Option<Result<Message, Error>> {
-        loop {
-            if self.is_closed.load(Ordering::SeqCst) {
-                return None;
-            }
-
-            if let Some(msg) = self.messages.lock().unwrap().pop_front() {
-                return Some(msg);
-            }
-
-            self.notify.notified().await;
+        // On the first call, signal that the application is ready.
+        if let Some(tx) = self.ready_tx.lock().unwrap().take() {
+            let _ = tx.send(());
         }
+
+        // Wait for the test to signal it's ready for us to proceed.
+        self.barrier.wait().await;
+
+        if self.is_closed.load(Ordering::SeqCst) {
+            return None;
+        }
+
+        self.messages.lock().unwrap().pop_front()
     }
 }

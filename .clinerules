@@ -5,19 +5,50 @@ for the Cert-Watch project. Adhering to these rules ensures consistency,
 quality, and maintainability.
 
 ---
-## **IMPORTANT**: The Golden Rule of Integration Testing
+## **IMPORTANT**: The Golden Rules of Integration Testing
 
-**All integration tests that interact with the core application logic MUST use the `TestAppBuilder` pattern.**
+**All integration tests that interact with the core application logic MUST use
+the `TestAppBuilder` pattern.**
 
-After analyzing `tests/helpers/app.rs`, `tests/certstream_client.rs`, and `tests/shutdown_integration.rs`, a clear, idiomatic testing pattern has emerged that MUST be followed to ensure tests are robust, deterministic, and easy to maintain.
+A clear, idiomatic testing pattern has emerged that MUST be followed to ensure
+tests are robust, deterministic, and easy to maintain.
 
--   **`TestAppBuilder` is the Key:** The `TestAppBuilder` in `tests/helpers/app.rs` is the standard way to construct the application for integration tests. It is designed to run the core application logic while allowing critical components (like the network client, DNS resolver, etc.) to be replaced with mocks. **DO NOT** attempt to re-implement this functionality with bespoke mocks.
+-   **`TestAppBuilder` is the Key:** The `TestAppBuilder` in
+`tests/helpers/app.rs` is the standard way to construct the application for
+integration tests. It is designed to run the core application logic while
+allowing critical components (like the network client, DNS resolver, etc.) to
+be replaced with mocks. **DO NOT** attempt to re-implement this functionality
+with bespoke mocks.
 
--   **Direct Input via MPSC Channel:** Crucially, the `TestAppBuilder`'s `build()` method returns a `TestApp` struct which contains a `domains_tx: mpsc::Sender<String>`. This channel is plumbed directly into the application's worker distribution logic, completely bypassing the `CertStreamClient` and the `WebSocketConnection`. This is the **ONLY** approved "backdoor" for injecting test data directly into the system.
+-   **Direct Input via MPSC Channel:** Crucially, the `TestAppBuilder`'s
+`build()` method returns a `TestApp` struct which contains a `domains_tx:
+mpsc::Sender<String>`. This channel is plumbed directly into the application's
+worker distribution logic, completely bypassing the `CertStreamClient` and the
+`WebSocketConnection`. This is the **ONLY** approved "backdoor" for injecting
+test data directly into the system.
 
--   **Signal-Based Completion:** Tests like `certstream_client.rs` use `tokio::sync::oneshot` channels to signal when a task has completed its work. This is a robust, explicit way to synchronize the test with the application state, avoiding unreliable `sleep` calls.
+-   **Signal-Based Completion:** Tests like `certstream_client.rs` use
+`tokio::sync::oneshot` channels to signal when a task has completed its work.
+This is a robust, explicit way to synchronize the test with the application
+state, avoiding unreliable `sleep` calls.
 
-**Failure to adhere to this pattern will result in flaky, unreliable tests that are difficult to debug.**
+-   **Dependency Isolation:** For unit tests, the primary strategy must be
+**Trait-Based Dependency Injection** with hand-written "fake" implementations.
+Mocking libraries should only be used as a secondary tool when verifying the
+exact nature of an interaction is critical.
+
+-   **Hermetic Integration Tests:** When using the `TestAppBuilder` for
+integration tests, all external dependencies and side-effects must be mocked
+(e.g., `with_dns_resolver`, `with_enrichment_provider`, `with_websocket`,
+`with_outputs`). The goal is a fully controlled, deterministic test
+environment.
+
+-   **Avoid `tokio::time::sleep` for Synchronization:** Using `sleep` for
+synchronization in tests is forbidden. Use deterministic primitives like
+`tokio::sync::Barrier` or `tokio::sync::oneshot` instead.
+
+**Failure to adhere to these patterns will result in flaky, unreliable tests
+that are difficult to debug.**
 
 ---
 
@@ -137,29 +168,17 @@ channels (e.g., `tokio::sync::mpsc`). Direct shared-state primitives like
 `Arc<Mutex<T>>` should only be used in specific, well-justified cases, such as
 for read-mostly data like a shared configuration.
 
-### 3.3. Testing Strategy
-
+### 3.3 Testing Strategy
 -   **Follow Test-Driven Development (TDD):** Tests must be written before the
 implementation code.
 -   **Test Structure:**
     -   **Unit Tests:** Place these inside a `#[cfg(test)] mod tests { ... }`
     block within the same file as the code they test.
     -   **Integration Tests:** Place these in the top-level `/tests` directory.
--   **Dependency Isolation:** For unit tests, the primary strategy must be
-**Trait-Based Dependency Injection** with hand-written "fake" implementations.
-Mocking libraries should only be used as a secondary tool when verifying the
-exact nature of an interaction is critical.
--   **Hermetic Integration Tests:** When using the `TestAppBuilder` for
-integration tests, all external dependencies and side-effects must be mocked
-(e.g., `with_dns_resolver`, `with_enrichment_provider`, `with_websocket`,
-`with_outputs`). The goal is a fully controlled, deterministic test
-environment.
 -   **Prefer Focused Unit Tests:** Business logic must be tested with focused
 unit tests. Avoid broad "end-to-end" tests for verifying small pieces of
 functionality.
--   **Avoid `tokio::time::sleep` for Synchronization:** Using `sleep` for
-synchronization in tests is forbidden. Use deterministic primitives like
-`tokio::sync::Barrier` or `tokio::sync::oneshot` instead.
+
 
 ### 3.4. Code Structure & Safety
 

@@ -118,6 +118,7 @@ async fn main() -> Result<()> {
         None,
         None, // No DNS resolver override
         Some(enrichment_provider),
+        None, // No pattern matcher override
         alert_tx,
     )
     .await
