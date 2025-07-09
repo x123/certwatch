@@ -1,6 +1,7 @@
 use certwatch::{core::DnsInfo, dns::DnsError};
 use std::{sync::Arc, time::Duration};
 
+#[path = "../helpers/mod.rs"]
 mod helpers;
 use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver};
 

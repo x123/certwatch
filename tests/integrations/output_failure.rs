@@ -4,6 +4,7 @@ use anyhow::Result;
 use certwatch::core::Alert;
 use tokio::sync::mpsc;
 
+#[path = "../helpers/mod.rs"]
 mod helpers;
 
 #[tokio::test]

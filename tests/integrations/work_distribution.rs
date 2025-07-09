@@ -6,6 +6,7 @@ use std::{
 use tokio::time::timeout;
 
 // Import test helpers from the `tests` module.
+#[path = "../helpers/mod.rs"]
 mod helpers;
 use helpers::{
     app::TestAppBuilder, mock_dns::MockDnsResolver, mock_output::CountingOutput,

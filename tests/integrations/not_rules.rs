@@ -1,3 +1,4 @@
+#[path = "../helpers/mod.rs"]
 mod helpers;
 
 use helpers::{app::TestAppBuilder, fake_enrichment::FakeEnrichmentProvider};
@@ -10,7 +11,7 @@ async fn test_not_asns_rule_does_not_match_on_enrichment_failure() {
     // Arrange
     tracing_subscriber::registry()
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+        .with(EnvFilter::new("info,certwatch::network=off"))
         .init();
 
     let (alerts_tx, mut alerts_rx) = broadcast::channel(100);

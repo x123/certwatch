@@ -203,3 +203,94 @@ for smart pointer types, not to simulate inheritance.
 -   **Do Not Use `#![deny(warnings)]` in Libraries:** This can cause downstream
 projects to fail to build. Use a CI pipeline with `RUSTFLAGS="-D warnings"` to
 enforce a no-warning policy during development instead.
+---
+
+## 4. Project Structure
+
+To maintain consistency and ease of navigation, the project follows a mirrored
+directory structure between the `src` and `tests` directories.
+
+-   **Module-per-directory:** For any non-trivial feature, its source code
+    should live in its own directory (e.g., `src/dns/`). The corresponding
+    integration and unit tests should be placed in a parallel directory within
+    `tests/` (e.g., `tests/dns/`).
+-   **`mod.rs` as the root:** Each module directory must contain a `mod.rs` file
+    that serves as the entry point for the module, declaring its sub-modules.
+-   **Shared Test Helpers:** All shared test code, including builders, mocks,
+    and utilities, must reside in the `tests/helpers/` directory.
+
+### Canonical Structure:
+
+The following tree represents the canonical structure that must be adhered to.
+Any new modules or tests must be added in a way that is consistent with this
+layout.
+
+```text
+src
+├── app.rs
+├── cli.rs
+├── config.rs
+├── core.rs
+├── deduplication.rs
+├── dns
+│   ├── health.rs
+│   ├── manager.rs
+│   ├── mod.rs
+│   ├── resolver.rs
+│   └── test_utils.rs
+├── enrichment
+│   ├── fake.rs
+│   ├── health.rs
+│   ├── mod.rs
+│   └── tsv_lookup.rs
+├── formatting.rs
+├── internal_metrics
+│   ├── logging_recorder.rs
+│   └── mod.rs
+├── lib.rs
+├── main.rs
+├── network.rs
+├── notification
+│   ├── logging_subscriber.rs
+│   ├── manager.rs
+│   ├── mod.rs
+│   └── slack.rs
+├── outputs.rs
+├── rules.rs
+├── services.rs
+├── types.rs
+└── utils
+    ├── heartbeat.rs
+    └── mod.rs
+tests
+├── data
+│   ├── ip-to-asn-test.tsv
+│   └── test-regex.txt
+├── dns
+│   └── failure.rs
+├── enrichment
+│   ├── failure.rs
+│   ├── startup.rs
+│   └── tsv.rs
+├── helpers
+│   ├── app.rs
+│   ├── fake_enrichment.rs
+│   ├── fs_watch.rs
+│   ├── mock_dns.rs
+│   ├── mock_output.rs
+│   ├── mock_ws.rs
+│   ├── mod.rs
+│   ├── test_metrics.rs
+│   └── test_utils.rs
+├── integrations
+│   ├── app.rs
+│   ├── certstream_client.rs
+│   ├── config.rs
+│   ├── core_logic.rs
+│   ├── live_certstream_client.rs
+│   ├── not_rules.rs
+│   ├── output_failure.rs
+│   ├── shutdown.rs
+│   └── work_distribution.rs
+└── rules
+    └── mod.rs

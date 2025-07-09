@@ -4,6 +4,7 @@ use certwatch::{
     rules::{EnrichmentLevel, RuleMatcher},
 };
 
+#[path = "../helpers/mod.rs"]
 mod helpers;
 use helpers::test_utils::create_rule_file;
 

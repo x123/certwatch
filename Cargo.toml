@@ -68,9 +68,58 @@ once_cell = "1.21.3"
 
 [[test]]
 name = "live_certstream_client"
+path = "tests/integrations/live_certstream_client.rs"
 required-features = ["live-tests"]
 
 [[test]]
 name = "rules"
-path = "tests/rules.rs"
+path = "tests/rules/mod.rs"
+
+[[test]]
+name = "dns_failure"
+path = "tests/dns/failure.rs"
+
+[[test]]
+name = "enrichment_failure"
+path = "tests/enrichment/failure.rs"
+
+[[test]]
+name = "enrichment_startup"
+path = "tests/enrichment/startup.rs"
+
+[[test]]
+name = "tsv_enrichment"
+path = "tests/enrichment/tsv.rs"
+
+[[test]]
+name = "app_integration"
+path = "tests/integrations/app.rs"
+
+[[test]]
+name = "certstream_client_integration"
+path = "tests/integrations/certstream_client.rs"
+
+[[test]]
+name = "config_integration"
+path = "tests/integrations/config.rs"
+
+[[test]]
+name = "core_logic_integration"
+path = "tests/integrations/core_logic.rs"
+
+[[test]]
+name = "not_rules_integration"
+path = "tests/integrations/not_rules.rs"
+
+[[test]]
+name = "output_failure_integration"
+path = "tests/integrations/output_failure.rs"
+
+[[test]]
+name = "shutdown_integration"
+path = "tests/integrations/shutdown.rs"
+
+[[test]]
+name = "work_distribution_integration"
+path = "tests/integrations/work_distribution.rs"
 

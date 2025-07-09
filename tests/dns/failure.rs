@@ -8,6 +8,7 @@ use certwatch::{
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 
+#[path = "../helpers/mod.rs"]
 mod helpers;
 
 #[tokio::test]
