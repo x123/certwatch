@@ -516,38 +516,47 @@ The implementation is broken down into two sequential epics:
 
 ---
 
-## Epic #46: Implement Advanced Rule-Based Filtering Engine
+## Epic #46: Implement Advanced, Staged Rule-Based Filtering Engine
 
 **As a** Security Analyst,
-**I want to** define complex filtering rules that combine domain name patterns, ASN details, and resolved IP networks using boolean logic,
-**So that** I can create highly specific and targeted alerts, reduce false positives, and identify sophisticated threats more effectively.
+**I want to** define complex, multi-stage filtering rules that combine various data points using boolean logic,
+**So that** I can create highly specific alerts, reduce false positives, and minimize expensive operations like external API calls.
 
-### User Story 1: Foundational Rule Engine & Data Model
+---
 
-- **Title:** Implement Rule Engine with Multi-Condition Support
-- **Description:** As a Developer, I want to create a new rule evaluation engine and a flexible data model in the configuration, so that the system can parse and process rules that combine multiple criteria (domain, ASN, IP) with `AND` logic.
-- **Tasks:**
-    - [ ] **#157 - Define Rule Schema:** Design and document the YAML schema for `advanced_rules` in `config.yml`. It should support `name`, `domain_regex`, `asns`, and `ip_networks`.
-    - [ ] **#158 - Implement Rule Deserialization:** Create the Rust structs that correspond to the new schema and implement `serde::Deserialize`.
-    - [ ] **#159 - Implement Rule Validation:** Add logic at startup to validate all rules (valid regex, ASN integers, CIDR notation).
-    - [ ] **#160 - Create Rule Evaluation Logic:** Implement the core `AND` logic that checks an `Alert` against all conditions of a rule.
-    - [ ] **#161 - Integrate Rule Engine:** Modify the notification pipeline to pass alerts through the new rule engine.
-    - [ ] **#162 - Add Unit Tests:** Write unit tests for the rule validation and evaluation logic.
+### **Phase 1: Foundational Two-Stage Rule Engine**
+*   **Goal:** Implement the core filtering logic for domain, ASN, and IP criteria using an efficient two-stage pipeline.
+*   **Tasks:**
+    *   [ ] **#157 - Config Schema:** In `config.yml`, add a `rule_files` key to load multiple rule YAML files.
+    *   [ ] **#158 - Rule Data Models:** Create Rust structs for `Rule`, `RuleExpression`, etc., with `serde` support. The initial schema will support `domain_regex`, `asns`, `ip_networks`, `not_asns`, `not_ip_networks`, and a top-level `all` for AND logic.
+    *   [ ] **#159 - Rule Loading & Validation:** Implement logic to load all specified rule files at startup, validate the syntax of each rule (valid regex, CIDR, etc.), and compile them into the internal struct format.
+    *   [ ] **#160 - Two-Stage Classifier:** Implement the startup logic that automatically sorts rules into a "Stage 1" (regex-only) or "Stage 2" (enrichment-required) collection.
+    *   [ ] **#161 - Staged Evaluator:** Implement the `evaluate` function and integrate it into the main pipeline. It must first check Stage 1 rules, trigger enrichment if there's a match, and then check Stage 2 rules.
+    *   [ ] **#162 - Unit & Integration Tests:** Add comprehensive tests for rule parsing, validation, and the two-stage evaluation logic.
 
-### User Story 2: Implement Negation and Set Logic
+---
 
-- **Title:** Add Support for Negation (`NOT IN`) to Rule Conditions
-- **Description:** As a Security Analyst, I want to be able to negate conditions, such as excluding specific ASNs or IP ranges, so that I can filter out known-good infrastructure and focus on anomalous activity.
-- **Tasks:**
-    - [ ] **#163 - Update Rule Schema for Negation:** Extend the YAML schema and Rust structs to include `not_asns` and `not_ip_networks`.
-    - [ ] **#164 - Enhance Rule Engine for Negation:** Update the evaluation logic to correctly process the `not_` conditions.
-    - [ ] **#165 - Add Unit Tests for Negation:** Write specific unit tests to verify that negated conditions work as expected.
+### **Phase 2: Advanced Boolean Logic**
+*   **Goal:** Enhance the rule engine's expressiveness by adding support for `any` (OR) and nested conditions.
+*   **Tasks:**
+    *   [ ] **#163 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
+    *   [ ] **#164 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
+    *   [ ] **#165 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
 
-### User Story 3: Implement Complex Boolean Logic (Future)
+---
 
-- **Title:** Allow Complex Boolean Expressions (`OR`, Grouping)
-- **Description:** As a Threat Hunter, I want to combine multiple rule groups with `OR` logic and create nested conditions, so that I can build highly sophisticated detection logic that covers multiple, distinct attack patterns in a single, organized rule.
-- **Tasks:**
-    - [ ] **#166 - Design Nested Schema:** Design a schema that supports `any` (OR) and `all` (AND) blocks for nesting conditions.
-    - [ ] **#167 - Implement Recursive Evaluation:** Refactor the rule engine to recursively evaluate a nested rule tree.
-    - [ ] **#168 - Add Complex Unit Tests:** Write unit tests for various nested boolean logic scenarios.
+### **Phase 3: Formalize the Extensible Enrichment Framework**
+*   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
+*   **Tasks:**
+    *   [ ] **#166 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
+    *   [ ] **#167 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
+    *   [ ] **#168 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
+
+---
+
+### **Phase 4: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+*   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
+*   **Tasks:**
+    *   [ ] **#169 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
+    *   [ ] **#170 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
+    *   [ ] **#171 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
