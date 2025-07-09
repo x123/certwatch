@@ -200,30 +200,32 @@ impl Rule {
         let mut compiled_rules = Vec::new();
         let mut ignore_patterns = Vec::new();
 
-        for file_path in &config.rule_files {
-            let file_content = fs::read_to_string(file_path)
-                .with_context(|| format!("Failed to read rule file: {}", file_path.display()))?;
+        if let Some(rule_files) = &config.rule_files {
+            for file_path in rule_files {
+                let file_content = fs::read_to_string(file_path)
+                    .with_context(|| format!("Failed to read rule file: {}", file_path.display()))?;
 
-            let rules_file: RulesFile = serde_yml::from_str(&file_content).with_context(|| {
-                format!(
-                    "Failed to parse YAML from rule file: {}",
-                    file_path.display()
-                )
-            })?;
+                let rules_file: RulesFile = serde_yml::from_str(&file_content).with_context(|| {
+                    format!(
+                        "Failed to parse YAML from rule file: {}",
+                        file_path.display()
+                    )
+                })?;
 
-            if let Some(patterns) = rules_file.ignore {
-                ignore_patterns.extend(patterns);
-            }
+                if let Some(patterns) = rules_file.ignore {
+                    ignore_patterns.extend(patterns);
+                }
 
-            for file_rule in rules_file.rules {
-                // Basic validation for now. A more robust validation step can be added.
-                // For example, ensuring regexes are valid.
-                let required_level = file_rule.expression.required_level();
-                compiled_rules.push(Rule {
-                    name: file_rule.name,
-                    expression: file_rule.expression,
-                    required_level,
-                });
+                for file_rule in rules_file.rules {
+                    // Basic validation for now. A more robust validation step can be added.
+                    // For example, ensuring regexes are valid.
+                    let required_level = file_rule.expression.required_level();
+                    compiled_rules.push(Rule {
+                        name: file_rule.name,
+                        expression: file_rule.expression,
+                        required_level,
+                    });
+                }
             }
         }
 

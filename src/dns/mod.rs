@@ -12,26 +12,21 @@ pub use manager::{DnsResolutionManager, ResolvedNxDomain};
 pub use resolver::HickoryDnsResolver;
 pub use crate::core::DnsResolver;
 
-
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DnsRetryConfig {
-    /// Number of retries for standard failures (timeouts, server errors)
-    pub standard_retries: u32,
-    /// Initial backoff delay for standard failures in milliseconds
-    pub standard_initial_backoff_ms: u64,
-    /// Number of retries for NXDOMAIN responses
-    pub nxdomain_retries: u32,
-    /// Initial backoff delay for NXDOMAIN responses in milliseconds
-    pub nxdomain_initial_backoff_ms: u64,
+    pub retries: Option<u32>,
+    pub backoff_ms: Option<u64>,
+    pub nxdomain_retries: Option<u32>,
+    pub nxdomain_backoff_ms: Option<u64>,
 }
 
 impl Default for DnsRetryConfig {
     fn default() -> Self {
         Self {
-            standard_retries: 3,
-            standard_initial_backoff_ms: 500,
-            nxdomain_retries: 5,
-            nxdomain_initial_backoff_ms: 10000,
+            retries: Some(3),
+            backoff_ms: Some(500),
+            nxdomain_retries: Some(5),
+            nxdomain_backoff_ms: Some(10000),
         }
     }
 }

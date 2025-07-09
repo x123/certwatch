@@ -45,12 +45,11 @@ allow_invalid_certs = false
 # =============================================================================
 [rules]
 # A list of file paths containing advanced filtering rules in YAML format.
-# This is the new, more powerful way to define detection logic, supporting
-# `all` (AND), `any` (OR), and nested boolean conditions.
+# This is the primary way to define detection logic, supporting `all` (AND),
+# `any` (OR), and nested boolean conditions. This section replaces the legacy
+# `[matching]` table.
 #
-# See `data/rules/advanced-examples.yml` for detailed examples.
-#
-# Example `rules/common.yml`:
+# Example `data/rules/common.yml`:
 #
 # # A list of regex patterns to ignore before any processing.
 # # This is highly efficient for filtering out high-volume, trusted domains.
@@ -70,7 +69,7 @@ allow_invalid_certs = false
 #           - not_asns: [7843, 3589, 7132] # ASNs for Chase, Wells Fargo, Bank of America
 #           - domain_regex: '\\.(biz|info)$'
 #
-rule_files = ["data/rules/advanced-examples.yml"]
+# rule_files = ["data/rules/test-rule.yml"]
 
 
 # =============================================================================
@@ -107,7 +106,8 @@ recovery_check_interval_seconds = 10
 # Path to the TSV ASN database file.
 # The file should be in the format: START_IP<TAB>END_IP<TAB>ASN<TAB>COUNTRY<TAB>NAME
 # Download from: https://iptoasn.com/
-# asn_tsv_path = "data/ip2asn-v4.tsv"
+# REQUIRED: Path to the TSV ASN database file.
+asn_tsv_path = "data/enrichment/ip2asn-combined.tsv"
 
 # =============================================================================
 # Output Configuration

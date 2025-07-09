@@ -9,7 +9,6 @@ use chrono::Utc;
 pub mod utils;
 use std::sync::Arc;
 
-pub mod cli;
 pub mod config;
 pub mod core;
 pub mod deduplication;

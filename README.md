@@ -98,10 +98,6 @@ certstream_url = "wss://127.0.0.1:8181/domains-only"
 sample_rate = 1.0 # 1.0 = 100% sampling, 0.01 = 1% sampling
 allow_invalid_certs = true
 
-[matching]
-# REQUIRED: A list of file paths containing regex patterns. For example:
-# pattern_files = ["patterns/phishing.txt", "patterns/malware.txt"]
-
 [dns]
 # Optional: Specify a custom DNS resolver. If commented out, uses the system default.
 # resolver = "192.168.1.1:53"
@@ -143,24 +139,13 @@ cache_size = 100000
 cache_ttl_seconds = 3600
 ```
 
-**b. Create Pattern Files:**
+**b. Create Rule Files:**
 
-The `matching.pattern_files` key in `certwatch.toml` points to a list of text
-files containing regex patterns. Each file should contain one regex pattern per
-line. For example, a file named `phishing.txt` might contain:
-
-```text
-# contents of patterns/phishing.txt
-^.*(login|secure|account|webscr|signin).*paypal.*$
-^.*(apple|icloud).*(login|support|verify).*$
-```
-
-**d. (Optional) Create Advanced Rule Files:**
-
-For more complex logic, you can use advanced rule files. These YAML files
-support combining conditions using `all` (AND), `any` (OR), and nested boolean
-logic, providing a powerful way to define precise detection rules. They also
-support a global `ignore` list for high-performance pre-filtering.
+Detection logic is defined using advanced rule files. These YAML files are
+**required** for `certwatch` to perform any matching. They support combining
+conditions using `all` (AND), `any` (OR), and nested boolean logic, providing a
+powerful way to define precise detection rules. They also support a global
+`ignore` list for high-performance pre-filtering.
 
 **Example `rules/advanced-logic.yml`:**
 
@@ -209,7 +194,7 @@ the more expensive downstream processing steps, such as DNS resolution, ASN
 enrichment, and evaluation against more complex rules. For high-volume feeds,
 this can reduce CPU and network load considerably.
 
-**e. Supply ASN Data File:**
+**c. Supply ASN Data File:**
 
 The enrichment service requires a tab-separated value (TSV) file containing
 IP-to-ASN mapping data. The path to this file is specified in `certwatch.toml`
@@ -233,30 +218,32 @@ start_ip    end_ip  asn country description
 
 ### 4. Run the Application
 
-Once configured, you can run the application using the compiled binary:
+Once configured, you can run the application. All configuration is handled
+via the `certwatch.toml` file.
 
 ```bash
-certwatch
+./target/release/certwatch
 ```
+
+By default, `certwatch` will look for a `certwatch.toml` file in the current
+directory.
 
 ## Command-Line Arguments
 
-You can override settings from `certwatch.toml` using command-line arguments.
-This is useful for quick tests or temporary changes.
+The application's behavior is controlled almost exclusively by the `certwatch.toml`
+file to ensure configuration is explicit and reproducible. The only command-line
+arguments are:
 
-| Flag | Description | Config Key |
-| --- | --- | --- |
-| `-c, --config <FILE>` | Path to a different TOML configuration file. | N/A |
-| `--dns-resolver <IP>` | IP address of the DNS resolver to use (e.g., "8.8.8.8:53"). | `dns.resolver` |
-| `--dns-timeout-ms <MS>` | Timeout for a single DNS query in milliseconds. | `dns.timeout_ms` |
-| `--sample-rate <RATE>` | Sampling rate for the certstream (0.0 to 1.0). | `network.sample_rate` |
-| `--log-metrics` | Periodically log key metrics to the console. | `log_metrics` |
-| `-j, --json` | Output alerts in JSON format to stdout. | `output.format` |
+| Flag | Description |
+| --- | --- |
+| `--config-file <PATH>` | Path to a specific TOML configuration file. Defaults to `./certwatch.toml`. |
+| `--test-mode` | Runs the application in a test mode, which may alter certain behaviors (e.g., not connecting to live services). This is intended for internal testing. |
 
 **Example:**
 
+To run the application with a configuration file from a different location:
 ```bash
-certwatch --dns-resolver 1.1.1.1:53 --log-metrics
+certwatch --config-file /etc/certwatch/production.toml
 ```
 
 ## Contributing

@@ -18,8 +18,8 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
     // Arrange
     let fake_resolver = Arc::new(FakeDnsResolver::new());
     let retry_config = DnsRetryConfig {
-        nxdomain_retries: 1,
-        nxdomain_initial_backoff_ms: 10, // Short delay for testing
+        nxdomain_retries: Some(1),
+        nxdomain_backoff_ms: Some(10), // Short delay for testing
         ..Default::default()
     };
 

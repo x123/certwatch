@@ -14,44 +14,38 @@
 
 
 ---
-### Epic 32: Unify Configuration and CLI Parsing
-**User Story:** As a power user or system administrator, I want to configure every application setting using command-line arguments, so that I can run the application in automated or ephemeral environments (like Docker or CI/CD) without needing to manage a separate configuration file.
-**Technical Goal:** Refactor the configuration and CLI parsing logic to use a single source of truth. The `Config` struct will be decorated with `clap::Parser` attributes, eliminating the separate `Cli` struct and the manual mapping between them.
+### Epic 32: Simplify Configuration to be File-Only
+**User Story:** As a developer, I want a simple, robust, and predictable configuration system, so that I can avoid complex debugging sessions caused by unpredictable configuration layering between defaults, files, and command-line arguments.
+**Technical Goal:** Refactor the configuration system to be exclusively file-driven. The application will be configured via a single TOML file, with `clap` only being used to parse the path to that file and a test-only flag. This eliminates the complex and error-prone interaction between `figment` and `clap`.
 
-- [ ] **#97 - Refactor `Config` to be the `clap` Parser**
-  - **Context:** The core of the refactor. The `Config` struct and its sub-structs will be decorated with `clap` attributes, making them the single source of truth for all configuration, including CLI flags.
-  - **Dependencies:** #10
+- [x] **#97 - Simplify `Config` Struct and Loading Logic**
+  - **Context:** The core of the refactor. The `Config` struct was stripped of all `clap` and `figment` attributes, becoming a pure data container. The loading logic was simplified to a two-step process: start with `Config::default()` and merge a single TOML file over it.
   - **Subtasks:**
-    - [ ] In `Cargo.toml`, ensure `clap` with the `derive` feature is a dependency of the `certwatch` library.
-    - [ ] In `src/config.rs`, add `#[derive(Parser)]` to `Config` and `#[derive(Args)]` to all sub-structs.
-    - [ ] Add `#[command(flatten)]` to all fields that are sub-structs.
-    - [ ] Add `#[arg(long = "...")]` to every individual configuration field, defining its command-line flag.
-    - [ ] Ensure all fields that can be layered are `Option<T>` to work correctly with `figment`'s merging.
-    - [ ] Add a dedicated, `#[serde(skip)]`-ed field to `Config` for the `--config` file path argument.
+    - [x] Removed all `clap::Parser` and `figment` attributes from `src/config.rs`.
+    - [x] Implemented `Default` for `Config` and its sub-structs to provide the baseline configuration.
+    - [x] Created a minimal `Cli` struct in `src/main.rs` to parse only `--config-file` and `--test-mode`.
+    - [x] Updated `Config::load()` to be driven by the `Cli` input.
 
-- [ ] **#98 - Update `main` to Use the New Unified Config Strategy**
-  - **Context:** The application's entry point must be updated to use the new parsing and layering logic.
-  - **Dependencies:** #97
+- [x] **#98 - Remove Redundant Code and Features**
+  - **Context:** With the move to a file-only strategy, all code related to command-line overrides for individual settings became obsolete.
   - **Subtasks:**
-    - [ ] In `main.rs`, replace the old `Cli::parse()` and `Config::load()` logic.
-    - [ ] First, call `Config::parse()` to get a partial `Config` object containing only the values provided on the command line.
-    - [ ] Then, use `figment` to layer the configuration sources correctly: `Defaults -> TOML File -> Environment -> CLI Arguments`.
-    - [ ] Ensure the final, merged `Config` is extracted successfully.
+    - [x] Deleted the `src/cli.rs` file and its `mod` declaration.
+    - [x] Removed the `env` feature from the `clap` dependency in `Cargo.toml`.
+    - [x] Stripped out all logic for layering environment variables and individual CLI flags.
 
-- [ ] **#99 - Remove Redundant CLI Code**
-  - **Context:** With the `Config` struct now handling CLI parsing, the old `Cli` struct and its `figment::Provider` implementation are obsolete.
-  - **Dependencies:** #98
+- [x] **#99 - Update Integration Tests to be File-Driven**
+  - **Context:** The existing integration tests relied heavily on passing command-line arguments. They were completely rewritten to create temporary TOML configuration files for each test case.
   - **Subtasks:**
-    - [ ] Delete the `src/cli.rs` file.
-    - [ ] Remove the `mod cli;` declaration from `src/lib.rs`.
-    - [ ] Remove any `use certwatch::cli::Cli;` statements.
+    - [x] Rewrote all tests in `tests/integrations/config.rs` to use `tempfile` and `figment` to create and load test-specific configuration files.
+    - [x] Updated tests in other modules, like `tests/enrichment/startup.rs`, that were also using the old CLI argument system.
 
-- [ ] **#100 - Validate the Refactoring**
-  - **Context:** After such a significant refactoring, it's critical to verify that all functionality remains intact and the new CLI works as expected.
-  - **Dependencies:** #99
+- [x] **#100 - Cleanup and Documentation**
+  - **Context:** After the major architectural change, a thorough cleanup and documentation pass was required to bring the project into a consistent state.
   - **Subtasks:**
-    - [ ] Run `cargo test --all-features` to ensure no regressions.
-    - [ ] Run `certwatch --help` and verify that the generated help message is comprehensive and correctly documents all available flags.
+    - [x] Reviewed all changed files for dead code and simplification opportunities.
+    - [x] Updated `README.md` to describe the new file-only configuration and the two remaining command-line arguments.
+    - [x] Verified and updated `certwatch-example.toml` to be a complete and accurate template for users.
+    - [x] Ran the full test suite (`cargo test --all-features`) to ensure no regressions were introduced.
 
 ---
 

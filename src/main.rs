@@ -4,20 +4,14 @@
 // logs and detecting suspicious domain registrations in real-time.
 
 use anyhow::Result;
-use certwatch::{
-    cli::Cli,
-    config::{Config, OutputFormat},
-};
-use clap::Parser;
+use certwatch::config::{Config, OutputFormat};
 use tokio::sync::watch;
 use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-
     // Load configuration by layering sources: defaults, file, environment, and CLI args.
-    let config = Config::load(&cli).unwrap_or_else(|err| {
+    let config = Config::load().unwrap_or_else(|err| {
         // We can't use the tracing `error!` macro here because the logger isn't initialized yet.
         eprintln!("[ERROR] Failed to load configuration: {}", err);
         std::process::exit(1);
@@ -26,16 +20,21 @@ async fn main() -> Result<()> {
     // Initialize the logger with the final log level from the config.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(config.log_level.parse().unwrap()),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive(
+                config
+                    .log_level
+                    .clone()
+                    .unwrap_or_else(|| "info".to_string())
+                    .parse()
+                    .unwrap(),
+            ),
         )
         .init();
 
     info!("CertWatch starting up...");
 
-
     // Log the loaded configuration settings for visibility
-    log_config_settings(&config, &cli);
+    log_config_settings(&config);
 
     // =========================================================================
     // Create Shutdown Channel
@@ -63,7 +62,7 @@ async fn main() -> Result<()> {
     info!("Enrichment data check successful.");
 
     // In test mode, exit immediately after successful startup checks.
-    if cli.test_mode {
+    if config.test_mode {
         info!("Test mode enabled. Exiting after successful startup.");
         return Ok(());
     }
@@ -95,21 +94,16 @@ async fn main() -> Result<()> {
 }
 
 /// Logs the final, merged configuration settings to the console.
-fn log_config_settings(config: &Config, cli: &Cli) {
+fn log_config_settings(config: &Config) {
     info!("-------------------- Configuration --------------------");
-    info!("Log Level: {}", config.log_level);
-    info!("Log Metrics: {}", config.metrics.log_metrics);
-    info!(
-        "Log Aggregation Interval: {}s",
-        config.metrics.log_aggregation_seconds
-    );
-    info!("Concurrency: {}", config.concurrency);
-    info!(
-        "Domain Queue Capacity: {}",
-        config.performance.queue_capacity
-    );
-    info!("CertStream URL: {}", config.network.certstream_url);
-    info!("Sample Rate: {}% (sample_rate:{})", (config.network.sample_rate * 100.0) as u64, config.network.sample_rate);
+    info!("Log Level: {}", config.log_level.as_deref().unwrap_or("info"));
+    info!("Log Metrics: {}", config.metrics.log_metrics.unwrap_or(false));
+    info!("Log Aggregation Interval: {}s", config.metrics.log_aggregation_seconds.unwrap_or(10));
+    info!("Concurrency: {}", config.concurrency.unwrap_or_else(num_cpus::get));
+    info!("Domain Queue Capacity: {}", config.performance.queue_capacity.unwrap_or(100_000));
+    info!("CertStream URL: {}", config.network.certstream_url.as_deref().unwrap_or("wss://certstream.calidog.io"));
+    let sample_rate = config.network.sample_rate.unwrap_or(1.0);
+    info!("Sample Rate: {}% (sample_rate:{})", (sample_rate * 100.0) as u64, sample_rate);
     if let Some(resolver) = &config.dns.resolver {
         info!("DNS Resolver: {}", resolver);
     } else {
@@ -118,53 +112,21 @@ fn log_config_settings(config: &Config, cli: &Cli) {
     if let Some(timeout) = config.dns.timeout_ms {
         info!("DNS Timeout: {}ms", timeout);
     }
-    info!(
-        "DNS Standard Retries: {}",
-        config.dns.retry_config.standard_retries
-    );
-    info!(
-        "DNS Standard Backoff: {}ms",
-        config.dns.retry_config.standard_initial_backoff_ms
-    );
-    info!(
-        "DNS NXDOMAIN Retries: {}",
-        config.dns.retry_config.nxdomain_retries
-    );
-    info!(
-        "DNS NXDOMAIN Backoff: {}ms",
-        config.dns.retry_config.nxdomain_initial_backoff_ms
-    );
+    info!("DNS Standard Retries: {}", config.dns.retry_config.retries.unwrap_or(3));
+    info!("DNS Standard Backoff: {}ms", config.dns.retry_config.backoff_ms.unwrap_or(500));
+    info!("DNS NXDOMAIN Retries: {}", config.dns.retry_config.nxdomain_retries.unwrap_or(1));
+    info!("DNS NXDOMAIN Backoff: {}ms", config.dns.retry_config.nxdomain_backoff_ms.unwrap_or(0));
     if let Some(path) = &config.enrichment.asn_tsv_path {
         info!("ASN TSV Path: {}", path.display());
     } else {
         info!("ASN TSV Path: Not configured");
     }
-    let output_format = if cli.json {
-        OutputFormat::Json
-    } else {
-        config.output.format.clone()
-    };
+    let output_format = config.output.format.clone().unwrap_or(OutputFormat::PlainText);
     info!("Output Format: {}", output_format);
-    info!(
-        "Slack Output: {}",
-        if config
-            .output
-            .slack
-            .as_ref()
-            .is_some_and(|s| s.enabled && !s.webhook_url.is_empty())
-        {
-            "Enabled"
-        } else {
-            "Disabled"
-        }
-    );
-    info!(
-        "Deduplication Cache Size: {}",
-        config.deduplication.cache_size
-    );
-    info!(
-        "Deduplication Cache TTL: {}s",
-        config.deduplication.cache_ttl_seconds
-    );
+    let slack_enabled = config.output.slack.as_ref().and_then(|s| s.enabled).unwrap_or(false);
+    let slack_webhook_set = config.output.slack.as_ref().and_then(|s| s.webhook_url.as_ref()).is_some();
+    info!("Slack Output: {}", if slack_enabled && slack_webhook_set { "Enabled" } else { "Disabled" });
+    info!("Deduplication Cache Size: {}", config.deduplication.cache_size.unwrap_or(100_000));
+    info!("Deduplication Cache TTL: {}s", config.deduplication.cache_ttl_seconds.unwrap_or(3600));
     info!("-------------------------------------------------------");
 }

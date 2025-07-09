@@ -30,7 +30,7 @@ rules:
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
-        rule_files: vec![rule_file],
+        rule_files: vec![rule_file].into(),
     };
     let matcher = RuleMatcher::load(&config).unwrap();
 
@@ -65,7 +65,7 @@ rules:
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
-        rule_files: vec![rule_file],
+        rule_files: vec![rule_file].into(),
     };
     let matcher = RuleMatcher::load(&config).unwrap();
 
@@ -105,7 +105,7 @@ rules:
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
-        rule_files: vec![rule_file],
+        rule_files: vec![rule_file].into(),
     };
     let matcher = RuleMatcher::load(&config).unwrap();
 
@@ -133,7 +133,7 @@ rules:
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
-        rule_files: vec![rule_file],
+        rule_files: vec![rule_file].into(),
     };
     let matcher = RuleMatcher::load(&config).unwrap();
 
@@ -151,7 +151,7 @@ rules:
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
-        rule_files: vec![rule_file],
+        rule_files: vec![rule_file].into(),
     };
     let matcher = RuleMatcher::load(&config).unwrap();
 
@@ -167,7 +167,7 @@ rules: []
 "#;
     let rule_file = create_rule_file(rule_content);
     let config = RulesConfig {
-        rule_files: vec![rule_file],
+        rule_files: vec![rule_file].into(),
     };
     let result = RuleMatcher::load(&config);
     assert!(result.is_err());

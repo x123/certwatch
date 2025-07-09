@@ -2,57 +2,66 @@
 //!
 //! This module defines the main `Config` struct and its sub-structs,
 //! responsible for holding all application settings. It uses the `figment`
-//! crate to load configuration from a `certwatch.toml` file and merge it
-//! with environment variables.
+//! crate to load configuration from a `certwatch.toml` file.
 
-use anyhow::Result;
-use crate::{cli::Cli, dns::DnsRetryConfig};
+use crate::dns::DnsRetryConfig;
+use clap::Parser;
 use figment::{
-    providers::{Env, Format, Serialized, Toml},
+    providers::{Format, Toml},
     Figment,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
+/// Command-line arguments for the application.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Cli {
+    /// Path to the configuration file.
+    #[arg(short, long, value_name = "FILE", default_value = "certwatch.toml")]
+    pub config_file: PathBuf,
+
+    /// Run in test mode, exiting after successful startup checks.
+    #[arg(long)]
+    pub test_mode: bool,
+}
+
 /// The main configuration struct for the application.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct Config {
-    /// The logging level for the application.
-    pub log_level: String,
-    /// The number of concurrent domain processing tasks.
-    pub concurrency: usize,
-    /// Configuration for metrics.
+    #[serde(skip)] // test_mode is a runtime flag, not a config value.
+    pub test_mode: bool,
+    pub log_level: Option<String>,
+    pub concurrency: Option<usize>,
+    #[serde(default)]
     pub metrics: MetricsConfig,
-    /// Configuration for performance tuning.
+    #[serde(default)]
     pub performance: PerformanceConfig,
-    /// Configuration for the CertStream network client.
+    #[serde(default)]
     pub network: NetworkConfig,
-    /// Configuration for advanced rule-based filtering.
+    #[serde(default)]
     pub rules: RulesConfig,
-    /// Configuration for DNS resolution.
+    #[serde(default)]
     pub dns: DnsConfig,
-    /// Configuration for IP address enrichment.
+    #[serde(default)]
     pub enrichment: EnrichmentConfig,
-    /// Configuration for output and alerting.
+    #[serde(default)]
     pub output: OutputConfig,
-    /// Configuration for alert deduplication.
+    #[serde(default)]
     pub deduplication: DeduplicationConfig,
-    // Note: The `notifications` field has been removed.
-    // Slack notification settings are now part of `OutputConfig`.
 }
 
 /// Configuration for performance tuning.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct PerformanceConfig {
-    /// The capacity of the central domain queue.
-    pub queue_capacity: usize,
+    pub queue_capacity: Option<usize>,
 }
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
-            queue_capacity: 100_000,
+            queue_capacity: Some(100_000),
         }
     }
 }
@@ -60,33 +69,34 @@ impl Default for PerformanceConfig {
 /// Configuration for the CertStream network client.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct NetworkConfig {
-    /// The URL of the CertStream WebSocket server.
-    pub certstream_url: String,
-    /// The percentage of domains to process (0.0 to 1.0).
-    pub sample_rate: f64,
-    /// Whether to accept invalid TLS certificates (for testing).
-    pub allow_invalid_certs: bool,
+    pub certstream_url: Option<String>,
+    pub sample_rate: Option<f64>,
+    pub allow_invalid_certs: Option<bool>,
+}
+
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self {
+            certstream_url: Some("wss://certstream.calidog.io".to_string()),
+            sample_rate: Some(1.0),
+            allow_invalid_certs: Some(false),
+        }
+    }
 }
 
 /// Configuration for advanced rule-based filtering.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct RulesConfig {
-    /// A list of file paths containing advanced filtering rules.
-    pub rule_files: Vec<PathBuf>,
+    pub rule_files: Option<Vec<PathBuf>>,
 }
 
 /// Configuration for DNS resolution.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DnsConfig {
-    /// The IP address of the DNS resolver to use (e.g., "8.8.8.8:53").
-    /// If not set, the system's default resolver will be used.
     pub resolver: Option<String>,
-    /// The timeout in milliseconds for a single DNS query.
     pub timeout_ms: Option<u64>,
-    /// DNS retry and backoff settings.
     #[serde(flatten)]
     pub retry_config: DnsRetryConfig,
-    /// Configuration for the DNS health monitor.
     pub health: DnsHealthConfig,
 }
 
@@ -104,23 +114,19 @@ impl Default for DnsConfig {
 /// Configuration for the DNS health monitor.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DnsHealthConfig {
-    /// The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
-    pub failure_threshold: f64,
-    /// The time window in seconds to consider for the failure rate calculation.
-    pub window_seconds: u64,
-    /// A known-good domain to resolve to check for recovery.
-    pub recovery_check_domain: String,
-    /// The interval in seconds between recovery checks when the system is unhealthy.
-    pub recovery_check_interval_seconds: u64,
+    pub failure_threshold: Option<f64>,
+    pub window_seconds: Option<u64>,
+    pub recovery_check_domain: Option<String>,
+    pub recovery_check_interval_seconds: Option<u64>,
 }
 
 impl Default for DnsHealthConfig {
     fn default() -> Self {
         Self {
-            failure_threshold: 0.95,
-            window_seconds: 120,
-            recovery_check_domain: "google.com".to_string(),
-            recovery_check_interval_seconds: 10,
+            failure_threshold: Some(0.95),
+            window_seconds: Some(120),
+            recovery_check_domain: Some("google.com".to_string()),
+            recovery_check_interval_seconds: Some(10),
         }
     }
 }
@@ -128,40 +134,33 @@ impl Default for DnsHealthConfig {
 /// Configuration for metrics.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct MetricsConfig {
-    /// Log metrics to the console periodically.
-    #[serde(default)]
-    pub log_metrics: bool,
-    /// The interval in seconds for logging aggregated metrics.
-    pub log_aggregation_seconds: u64,
-    /// Enable the Prometheus exporter endpoint.
-    #[serde(default)]
-    pub prometheus_enabled: bool,
-    /// The listen address for the Prometheus exporter (e.g., "127.0.0.1:9090").
-    pub prometheus_listen_address: String,
+    pub log_metrics: Option<bool>,
+    pub log_aggregation_seconds: Option<u64>,
+    pub prometheus_enabled: Option<bool>,
+    pub prometheus_listen_address: Option<String>,
 }
 
 impl Default for MetricsConfig {
     fn default() -> Self {
         Self {
-            log_metrics: false,
-            log_aggregation_seconds: 10,
-            prometheus_enabled: false,
-            prometheus_listen_address: "127.0.0.1:9090".to_string(),
+            log_metrics: Some(false),
+            log_aggregation_seconds: Some(10),
+            prometheus_enabled: Some(false),
+            prometheus_listen_address: Some("127.0.0.1:9090".to_string()),
         }
     }
 }
 
 /// Configuration for IP address enrichment.
-/// Configuration for IP address enrichment.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct EnrichmentConfig {
-    /// Path to the TSV ASN database file.
     pub asn_tsv_path: Option<PathBuf>,
 }
 
 /// The format for stdout output.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub enum OutputFormat {
+    #[default]
     Json,
     PlainText,
 }
@@ -176,101 +175,67 @@ impl fmt::Display for OutputFormat {
 }
 
 /// Configuration for output and alerting.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct OutputConfig {
-    /// The format to use for stdout output.
-    pub format: OutputFormat,
-    /// Configuration for Slack alerts.
+    pub format: Option<OutputFormat>,
     pub slack: Option<SlackConfig>,
 }
 
 /// Configuration for Slack alerts.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
 pub struct SlackConfig {
-    /// Enables or disables Slack notifications.
-    #[serde(default)]
-    pub enabled: bool,
-    /// The Slack incoming webhook URL.
-    pub webhook_url: String,
-    /// The maximum number of alerts to batch together before sending.
-    #[serde(default = "default_slack_batch_size")]
-    pub batch_size: usize,
-    /// The maximum time in seconds to wait before sending a batch, even if it's not full.
-    #[serde(default = "default_slack_batch_timeout")]
-    pub batch_timeout_seconds: u64,
-}
-
-fn default_slack_batch_size() -> usize {
-    50
-}
-
-fn default_slack_batch_timeout() -> u64 {
-    300
+    pub enabled: Option<bool>,
+    pub webhook_url: Option<String>,
+    pub batch_size: Option<usize>,
+    pub batch_timeout_seconds: Option<u64>,
 }
 
 /// Configuration for alert deduplication.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 pub struct DeduplicationConfig {
-    /// The size of the deduplication cache.
-    pub cache_size: usize,
-    /// The time-to-live for cache entries in seconds.
-    pub cache_ttl_seconds: u64,
+    pub cache_size: Option<usize>,
+    pub cache_ttl_seconds: Option<u64>,
 }
 
-impl Config {
-    /// Loads the application configuration.
-    ///
-    /// This function builds the final configuration by layering different sources
-    /// in the following order of precedence (from lowest to highest):
-    /// 1. Default values.
-    /// 2. Configuration file (`certwatch.toml` or specified by `--config`).
-    /// 3. Environment variables (prefixed with `CERTWATCH_`).
-    /// 4. Command-line arguments.
-    pub fn load(cli: &Cli) -> Result<Self> {
-        let config_path = cli.config.clone().unwrap_or_else(|| "certwatch.toml".into());
-
-        let mut figment = Figment::new()
-            .merge(Serialized::defaults(Config::default()));
-
-        if config_path.exists() {
-            figment = figment.merge(Toml::file(&config_path));
+impl Default for DeduplicationConfig {
+    fn default() -> Self {
+        Self {
+            cache_size: Some(100_000),
+            cache_ttl_seconds: Some(3600),
         }
-
-        let figment = figment.merge(Env::prefixed("CERTWATCH_")).merge(cli.clone());
-
-        let config: Config = figment.extract()?;
-        Ok(config)
     }
 }
 
-// Provide a default implementation for tests and easy setup.
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            log_level: "info".to_string(),
-            concurrency: num_cpus::get(),
-            metrics: MetricsConfig::default(),
-            performance: PerformanceConfig::default(),
-            network: NetworkConfig {
-                certstream_url: "wss://certstream.calidog.io".to_string(),
-                sample_rate: 1.0,
-                allow_invalid_certs: false,
-            },
-            rules: RulesConfig {
-                rule_files: vec![],
-            },
-            dns: DnsConfig::default(),
-            enrichment: EnrichmentConfig {
-                asn_tsv_path: None,
-            },
-            output: OutputConfig {
-                format: OutputFormat::PlainText,
-                slack: None,
-            },
-            deduplication: DeduplicationConfig {
-                cache_size: 100_000,
-                cache_ttl_seconds: 3600,
-            },
+impl Config {
+    /// Loads the application configuration by parsing command-line arguments.
+    pub fn load() -> anyhow::Result<Self> {
+        let cli_args = Cli::parse();
+        Self::load_from_cli(cli_args)
+    }
+
+    /// Loads the application configuration from a given `Cli` struct.
+    /// This is the core logic, made public for testing purposes.
+    pub fn load_from_cli(cli_args: Cli) -> anyhow::Result<Self> {
+        let config_path = &cli_args.config_file;
+
+        // Check if the config file exists.
+        if !config_path.exists() {
+            anyhow::bail!("Config file not found at specified path: {:?}", config_path);
         }
+
+        // Build the final config by loading the TOML file over the defaults.
+        let figment = Figment::new()
+            .merge(figment::providers::Serialized::defaults(Config::default()))
+            .merge(Toml::file(config_path));
+
+        // Extract the configuration.
+        let mut config: Config = figment
+            .extract()
+            .map_err(|e| anyhow::anyhow!("Configuration loading error: {}", e))?;
+
+        // Set the runtime test_mode flag from the CLI.
+        config.test_mode = cli_args.test_mode;
+
+        Ok(config)
     }
 }

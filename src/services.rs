@@ -15,22 +15,24 @@ use tracing::info;
 /// otherwise returns `Ok(None)`.
 pub fn setup_notification_pipeline(config: &Config) -> Result<Option<broadcast::Sender<Alert>>> {
     if let Some(slack_config) = &config.output.slack {
-        if slack_config.enabled {
-            if slack_config.webhook_url.is_empty() {
-                tracing::warn!("Slack notifications are enabled, but no webhook URL was provided. Slack notifications will be disabled.");
-                return Ok(None);
-            }
+        if slack_config.enabled.unwrap_or(false) {
+            let webhook_url = match slack_config.webhook_url.as_ref() {
+                Some(url) if !url.is_empty() => url.clone(),
+                _ => {
+                    tracing::warn!("Slack notifications are enabled, but no webhook URL was provided. Slack notifications will be disabled.");
+                    return Ok(None);
+                }
+            };
 
-            let (tx, _rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
+            let queue_capacity = config.performance.queue_capacity.unwrap_or(1000);
+            let (tx, _rx) = broadcast::channel::<Alert>(queue_capacity);
             info!("Slack notification pipeline enabled.");
 
             // Spawn the Slack notifier.
             let slack_config = slack_config.clone();
             let slack_formatter = Box::new(crate::formatting::SlackTextFormatter);
-            let slack_client = std::sync::Arc::new(SlackClient::new(
-                slack_config.webhook_url.clone(),
-                slack_formatter,
-            ));
+            let slack_client =
+                std::sync::Arc::new(SlackClient::new(webhook_url, slack_formatter));
             let slack_notifier =
                 NotificationManager::new(slack_config, tx.subscribe(), slack_client);
             tokio::spawn(slack_notifier.run());

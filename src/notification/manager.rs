@@ -33,8 +33,16 @@ impl<S: SlackClientTrait> NotificationManager<S> {
     /// Runs the notification manager's main loop.
     pub async fn run(mut self) {
         info!("NotificationManager started.");
-        let mut batch = Vec::with_capacity(self.config.batch_size);
-        let mut timer = interval(Duration::from_secs(self.config.batch_timeout_seconds));
+        let batch_size = self.config.batch_size.unwrap_or(50);
+        let batch_timeout = self.config.batch_timeout_seconds.unwrap_or(300);
+        debug!(
+            batch_size = batch_size,
+            batch_timeout = batch_timeout,
+            "NotificationManager configured"
+        );
+
+        let mut batch = Vec::with_capacity(batch_size);
+        let mut timer = interval(Duration::from_secs(batch_timeout));
 
         loop {
             tokio::select! {
@@ -50,7 +58,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                         Ok(alert) => {
                             debug!(domain = %alert.domain, "Received alert in NotificationManager.");
                             batch.push(alert);
-                            if batch.len() >= self.config.batch_size {
+                            if batch.len() >= batch_size {
                                 info!("Batch size limit reached, sending {} alerts to Slack.", batch.len());
                                 self.send_batch(&mut batch).await;
                                 timer.reset();
@@ -130,10 +138,10 @@ mod tests {
         let (alert_tx, alert_rx) = broadcast::channel(100);
         let fake_client = Arc::new(FakeSlackClient::new());
         let config = SlackConfig {
-            enabled: true,
-            webhook_url: "fake".to_string(),
-            batch_size: 2,
-            batch_timeout_seconds: 10,
+            enabled: Some(true),
+            webhook_url: Some("fake".to_string()),
+            batch_size: Some(2),
+            batch_timeout_seconds: Some(10),
         };
 
         let manager = NotificationManager::new(config, alert_rx, fake_client.clone());
@@ -162,10 +170,10 @@ mod tests {
         let (alert_tx, alert_rx) = broadcast::channel(100);
         let fake_client = Arc::new(FakeSlackClient::new());
         let config = SlackConfig {
-            enabled: true,
-            webhook_url: "fake".to_string(),
-            batch_size: 10,
-            batch_timeout_seconds: 5,
+            enabled: Some(true),
+            webhook_url: Some("fake".to_string()),
+            batch_size: Some(10),
+            batch_timeout_seconds: Some(5),
         };
 
         let manager = NotificationManager::new(config, alert_rx, fake_client.clone());

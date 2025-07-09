@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Represents the health state of the DNS resolver.
 #[derive(Debug, PartialEq, Clone)]
@@ -53,13 +53,16 @@ impl DnsHealthMonitor {
     ) -> Result<()> {
         info!("Performing startup DNS health check...");
 
-        match resolver.resolve(&config.recovery_check_domain).await {
+        let check_domain = config.recovery_check_domain.as_deref().unwrap_or("google.com");
+        debug!(domain = check_domain, "Performing startup DNS health check");
+
+        match resolver.resolve(check_domain).await {
             Ok(_) => {
                 info!("DNS health check passed.");
                 Ok(())
             }
             Err(e) => {
-                anyhow::bail!("DNS health check failed: Resolver could not resolve '{}': {}. Please check your DNS configuration.", config.recovery_check_domain, e)
+                anyhow::bail!("DNS health check failed: Resolver could not resolve '{}': {}. Please check your DNS configuration.", check_domain, e)
             }
         }
     }
@@ -137,16 +140,19 @@ impl DnsHealthMonitor {
         let failures = state.outcomes.iter().filter(|o| !o.is_success).count();
         let failure_rate = failures as f64 / total as f64;
 
-        if failure_rate >= self.config.failure_threshold && state.health == HealthState::Healthy {
+        let failure_threshold = self.config.failure_threshold.unwrap_or(0.2);
+        let window_seconds = self.config.window_seconds.unwrap_or(60);
+
+        if failure_rate >= failure_threshold && state.health == HealthState::Healthy {
             state.health = HealthState::Unhealthy;
             tracing::error!(
                 failure_rate = failure_rate * 100.0,
-                window_seconds = self.config.window_seconds,
+                window_seconds,
                 failures,
                 total,
                 "DNS resolver is now UNHEALTHY."
             );
-        } else if failure_rate < self.config.failure_threshold && state.health == HealthState::Unhealthy {
+        } else if failure_rate < failure_threshold && state.health == HealthState::Unhealthy {
             // Recovery is handled by the dedicated recovery task to ensure stability
         }
     }
@@ -159,8 +165,9 @@ impl DnsHealthMonitor {
             return;
         }
 
-        tracing::info!("DNS resolver is unhealthy, attempting recovery check...");
-        match self.resolver.resolve(&self.config.recovery_check_domain).await {
+        let check_domain = self.config.recovery_check_domain.as_deref().unwrap_or("google.com");
+        tracing::info!(domain = check_domain, "DNS resolver is unhealthy, attempting recovery check...");
+        match self.resolver.resolve(check_domain).await {
             Ok(_) => {
                 // SAFETY: The lock is held for the entire state transition to ensure
                 // that the health status is updated and the outcomes are cleared
@@ -177,7 +184,7 @@ impl DnsHealthMonitor {
             }
             Err(e) => {
                 tracing::warn!(
-                    domain = %self.config.recovery_check_domain,
+                    domain = %check_domain,
                     error = %e,
                     "DNS recovery check failed. Remaining in unhealthy state."
                 );
@@ -187,11 +194,13 @@ impl DnsHealthMonitor {
 
     /// Background task to periodically check for recovery when the system is unhealthy.
     async fn recovery_check_task(&self, shutdown_rx: &mut watch::Receiver<()>) {
+        let check_interval = self.config.recovery_check_interval_seconds.unwrap_or(30);
+        debug!(check_interval, "Starting DNS recovery check task.");
         loop {
             tokio::select! {
                 _ = self.perform_single_recovery_check() => {
                     // After a check, wait before the next one.
-                    tokio::time::sleep(Duration::from_secs(self.config.recovery_check_interval_seconds)).await;
+                    tokio::time::sleep(Duration::from_secs(check_interval)).await;
                 }
                 _ = shutdown_rx.changed() => {
                     tracing::info!("DNS health monitor recovery task received shutdown signal, exiting.");
@@ -215,7 +224,8 @@ impl DnsHealthMonitor {
         });
 
         // Prune old outcomes that are outside the time window
-        let window_start = now - Duration::from_secs(self.config.window_seconds);
+        let window_seconds = self.config.window_seconds.unwrap_or(60);
+        let window_start = now - Duration::from_secs(window_seconds);
         while let Some(outcome) = state.outcomes.front() {
             if outcome.timestamp < window_start {
                 state.outcomes.pop_front();
@@ -263,8 +273,8 @@ mod tests {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
+            failure_threshold: Some(0.5),
+            window_seconds: Some(10),
             ..Default::default()
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
@@ -297,8 +307,8 @@ mod tests {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.8,
-            window_seconds: 10,
+            failure_threshold: Some(0.8),
+            window_seconds: Some(10),
             ..Default::default()
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
@@ -329,8 +339,9 @@ mod tests {
     async fn test_recovery_to_healthy_state() {
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
+            failure_threshold: Some(0.5),
+            window_seconds: Some(10),
+            recovery_check_domain: Some("google.com".to_string()),
             ..Default::default()
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
@@ -359,8 +370,8 @@ mod tests {
     async fn test_outcome_window_pruning() {
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 2,
+            failure_threshold: Some(0.5),
+            window_seconds: Some(2),
             ..Default::default()
         };
         let (_shutdown_tx, shutdown_rx) = watch::channel(());
@@ -384,8 +395,8 @@ mod tests {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
+            failure_threshold: Some(0.5),
+            window_seconds: Some(10),
             ..Default::default()
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
@@ -423,7 +434,7 @@ mod tests {
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
             // Disable the recovery task to prevent it from interfering.
-            recovery_check_interval_seconds: 3600,
+            recovery_check_interval_seconds: Some(3600),
             ..Default::default()
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
@@ -469,8 +480,8 @@ mod tests {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
+            failure_threshold: Some(0.5),
+            window_seconds: Some(10),
             ..Default::default()
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());

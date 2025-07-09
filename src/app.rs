@@ -144,13 +144,14 @@ impl AppBuilder {
         // 1. Initialize Metrics Recorder (and logging)
         // =========================================================================
         let mut metrics_task: Option<JoinHandle<()>> = None;
-        if config.metrics.log_metrics {
+        if config.metrics.log_metrics.unwrap_or(false) {
+            let aggregation_seconds = config.metrics.log_aggregation_seconds.unwrap_or(60);
             info!(
                 "Logging recorder enabled. Metrics will be printed every {} seconds.",
-                config.metrics.log_aggregation_seconds
+                aggregation_seconds
             );
             let (recorder, handle) = LoggingRecorder::new(
-                Duration::from_secs(config.metrics.log_aggregation_seconds),
+                Duration::from_secs(aggregation_seconds),
                 shutdown_rx.clone(),
             );
             metrics::set_global_recorder(recorder).expect("Failed to install logging recorder");
@@ -178,9 +179,12 @@ impl AppBuilder {
         let enrichment_provider = self
             .enrichment_provider_override
             .expect("Enrichment provider is now required to be passed into app::run");
+        let cache_ttl_seconds = config.deduplication.cache_ttl_seconds.unwrap_or(3600);
+        let cache_size = config.deduplication.cache_size.unwrap_or(100_000);
+        debug!(cache_ttl_seconds, cache_size, "Initializing deduplicator");
         let deduplicator = Arc::new(Deduplicator::new(
-            Duration::from_secs(config.deduplication.cache_ttl_seconds),
-            config.deduplication.cache_size as u64,
+            Duration::from_secs(cache_ttl_seconds),
+            cache_size as u64,
         ));
         let in_flight_deduplicator = Arc::new(InFlightDeduplicator::new(
             Duration::from_secs(30), // Short TTL for in-flight checks
@@ -193,8 +197,10 @@ impl AppBuilder {
         let output_manager = match self.output_override {
             Some(outputs) => Arc::new(OutputManager::new(outputs)),
             None => {
+                let output_format = config.output.format.clone().unwrap_or_default();
+                debug!(?output_format, "Initializing StdoutOutput");
                 let outputs: Vec<Arc<dyn Output>> =
-                    vec![Arc::new(StdoutOutput::new(config.output.format.clone()))];
+                    vec![Arc::new(StdoutOutput::new(output_format))];
                 Arc::new(OutputManager::new(outputs))
             }
         };
@@ -230,11 +236,24 @@ impl AppBuilder {
         // =========================================================================
         // 7. Start the CertStream Client
         // =========================================================================
+        let certstream_url = config
+            .network
+            .certstream_url
+            .clone()
+            .unwrap_or_else(|| "wss://certstream.calidog.io".to_string());
+        let sample_rate = config.network.sample_rate.unwrap_or(1.0);
+        let allow_invalid_certs = config.network.allow_invalid_certs.unwrap_or(false);
+        debug!(
+            certstream_url,
+            sample_rate,
+            allow_invalid_certs,
+            "Initializing CertStream client"
+        );
         let certstream_client = CertStreamClient::new(
-            config.network.certstream_url.clone(),
+            certstream_url,
             domains_tx,
-            config.network.sample_rate,
-            config.network.allow_invalid_certs,
+            sample_rate,
+            allow_invalid_certs,
         );
         let certstream_task = {
             let shutdown_rx_clone = shutdown_rx.clone();
@@ -255,9 +274,10 @@ impl AppBuilder {
         // 8. Main Processing Loop (Worker Pool)
         // =========================================================================
         let mut worker_handles = Vec::new();
-        info!("Spawning {} worker tasks...", config.concurrency);
+        let concurrency = config.concurrency.unwrap_or_else(num_cpus::get);
+        info!("Spawning {} worker tasks...", concurrency);
 
-        for i in 0..config.concurrency {
+        for i in 0..concurrency {
             let domains_rx = domains_rx.clone();
             let rule_matcher = rule_matcher.clone();
             let dns_manager = dns_manager.clone();

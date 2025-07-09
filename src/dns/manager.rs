@@ -80,10 +80,20 @@ impl DnsResolutionManager {
         domain: &str,
         source_tag: &str,
     ) -> Result<DnsInfo, DnsError> {
+        let retries = self.config.retries.unwrap_or(3);
+        let backoff_ms = self.config.backoff_ms.unwrap_or(500);
+        let nxdomain_backoff_ms = self.config.nxdomain_backoff_ms.unwrap_or(5000);
+        debug!(
+            retries,
+            backoff_ms,
+            nxdomain_backoff_ms,
+            "Using DNS retry config"
+        );
+
         let mut last_error = None;
         let mut shutdown_rx = self.shutdown_rx.clone();
 
-        for attempt in 0..=self.config.standard_retries {
+        for attempt in 0..=retries {
             tokio::select! {
                 biased;
 
@@ -110,7 +120,7 @@ impl DnsResolutionManager {
 
                                 // Schedule for NXDOMAIN retry queue
                                 let retry_time = Instant::now()
-                                    + Duration::from_millis(self.config.nxdomain_initial_backoff_ms);
+                                    + Duration::from_millis(nxdomain_backoff_ms);
                                 if let Err(send_err) = self.nxdomain_retry_tx.send((
                                     domain.to_string(),
                                     source_tag.to_string(),
@@ -131,10 +141,10 @@ impl DnsResolutionManager {
                             last_error = Some(e);
 
                             // For standard errors, apply exponential backoff
-                            if attempt < self.config.standard_retries {
-                                let backoff_ms = self.config.standard_initial_backoff_ms * 2_u64.pow(attempt);
-                                debug!(backoff_ms, "Retrying after backoff");
-                                sleep(Duration::from_millis(backoff_ms)).await;
+                            if attempt < retries {
+                                let backoff_duration = backoff_ms * 2_u64.pow(attempt);
+                                debug!(backoff_ms = backoff_duration, "Retrying after backoff");
+                                sleep(Duration::from_millis(backoff_duration)).await;
                             }
                         }
                         Err(DnsError::Shutdown) => {
@@ -150,7 +160,7 @@ impl DnsResolutionManager {
         Err(DnsError::Resolution(last_error.unwrap_or_else(|| {
             format!(
                 "DNS resolution failed after {} retries",
-                self.config.standard_retries
+                retries
             )
         })))
     }
@@ -171,6 +181,14 @@ impl DnsResolutionManager {
 
         type HeapItem = (Reverse<Instant>, String, String, u32);
         let mut retry_heap: BinaryHeap<HeapItem> = BinaryHeap::new();
+
+        let nxdomain_retries = config.nxdomain_retries.unwrap_or(10);
+        let nxdomain_backoff_ms = config.nxdomain_backoff_ms.unwrap_or(5000);
+        debug!(
+            nxdomain_retries,
+            nxdomain_backoff_ms,
+            "Starting NXDOMAIN retry task"
+        );
 
         loop {
             metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
@@ -222,8 +240,8 @@ impl DnsResolutionManager {
                                 }
                                 Err(e) => {
                                     if let DnsError::Resolution(res_err) = e {
-                                       if is_nxdomain_error_str(&res_err) && attempt < config.nxdomain_retries {
-                                            let backoff_ms = config.nxdomain_initial_backoff_ms * 2_u64.pow(attempt + 1);
+                                       if is_nxdomain_error_str(&res_err) && attempt < nxdomain_retries {
+                                            let backoff_ms = nxdomain_backoff_ms * 2_u64.pow(attempt + 1);
                                             let next_retry = now + Duration::from_millis(backoff_ms);
                                             retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
                                             metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);

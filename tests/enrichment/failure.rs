@@ -56,14 +56,14 @@ async fn test_process_domain_propagates_enrichment_error() -> Result<()> {
         0, // worker_id
         Arc::new(
             RuleMatcher::load(&RulesConfig {
-                rule_files: vec![create_rule_file(
+                rule_files: Some(vec![create_rule_file(
                     r#"
 rules:
   - name: "Always Match"
     all:
       - domain_regex: ".*"
 "#,
-                )],
+                )]),
             })
             .unwrap(),
         ),
