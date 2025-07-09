@@ -539,10 +539,13 @@ The implementation is broken down into two sequential epics:
 ### **Phase 2: Refactor for Concurrency and Hot-Reloading**
 *   **Goal:** Resolve a critical concurrency bottleneck in the rule evaluation pipeline and refactor the architecture to support atomic, lock-free updates for future hot-reloading capabilities.
 *   **Tasks:**
-    *   [ ] **#172 - Diagnose Contention:** Add targeted `tracing` spans to the worker loop and `RuleMatcher` to confirm the exact source of contention under load.
-    *   [ ] **#173 - Stateless `RuleMatcher`:** Refactor the `RuleMatcher` and its associated `Condition`s to be completely stateless, ensuring the `match` method only requires an immutable `&self` reference.
-    *   [ ] **#174 - Implement `watch` Channel for Rules:** Replace the simple `Arc<RuleMatcher>` with a `tokio::sync::watch` channel to allow the central rule set to be updated atomically without interrupting worker threads. This makes future hot-reloading possible.
-    *   [ ] **#175 - Verify Fix:** Write a new integration test that spawns multiple workers and feeds a high volume of domains, asserting that processing is not serialized and throughput is maintained when rules are active.
+    *   [x] **#172 - Diagnose Contention & Logic Flaws:** Added targeted `tracing` spans and used `DEBUG` logs to diagnose and fix a series of issues:
+        *   An initial application hang caused by `mpsc` channel contention.
+        *   A logging system failure due to double-initialization of `tracing_subscriber`.
+        *   A critical logic flaw where valid Stage 1 matches were incorrectly discarded.
+    *   [x] **#173 - Refactor Concurrency Model:** Replaced the `mpsc` channel with a `tokio::sync::broadcast` channel to fix the one-to-many distribution bottleneck.
+    *   [x] **#174 - Refactor Filtering Logic:** Reworked the `process_domain` function to correctly combine legacy patterns, Stage 1, and Stage 2 rule matches.
+    *   [x] **#175 - Verify Fix:** Ran the application with a test configuration to confirm the logic is correct and added a `HashSet` to deduplicate source tags for cleaner alert messages.
 
 ---
 

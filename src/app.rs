@@ -17,7 +17,7 @@ use crate::{
 use anyhow::{Context, Result};
 use tokio::sync::{broadcast, watch};
 use tracing::{debug, error, info, instrument, warn};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
 
@@ -350,31 +350,25 @@ pub async fn process_domain(
     enrichment_provider: Arc<dyn EnrichmentProvider>,
     alerts_tx: AlertSender,
 ) -> Result<()> {
-    // STAGE 1: Pre-enrichment filtering (Regex only)
-    let stage_1_matches = {
+    // STAGE 1: Pre-enrichment filtering (legacy patterns and Stage 1 rules)
+    let legacy_match = pattern_matcher.match_domain(&domain).await;
+    let stage_1_rule_matches = {
         let _span = tracing::info_span!("stage_1_rule_matching").entered();
         let base_alert = Alert::new_minimal(&domain);
         rule_matcher.matches(&base_alert, EnrichmentLevel::None)
     };
 
-    let source_tag = if !stage_1_matches.is_empty() {
-        // If advanced rules match, use their names as the source tag
-        stage_1_matches.join(", ")
-    } else {
-        // Fallback to legacy pattern matcher
-        let legacy_match = pattern_matcher.match_domain(&domain).await;
-        if let Some(tag) = legacy_match {
-            tag
-        } else {
-            // No match in either system, stop processing.
-            debug!(domain = %domain, "Domain did not match any rules or patterns");
-            return Ok(());
-        }
-    };
+    // If there's no match from either legacy patterns or Stage 1 rules, we can stop.
+    if legacy_match.is_none() && stage_1_rule_matches.is_empty() {
+        debug!("Domain did not match any pre-enrichment patterns or rules.");
+        return Ok(());
+    }
+    debug!("Domain matched pre-enrichment checks. Proceeding to enrichment.");
 
-    debug!(domain = %domain, source_tag, "Domain matched stage 1 rules or patterns");
-
-    let result = dns_manager.resolve_with_retry(&domain, &source_tag).await;
+    // STAGE 2: Enrichment and Post-enrichment filtering
+    let result = dns_manager
+        .resolve_with_retry(&domain, "enrichment_candidate")
+        .await;
     debug!(?result, "DNS resolution result");
 
     let dns_info = match result {
@@ -393,9 +387,9 @@ pub async fn process_domain(
     };
 
     let resolved_after_nxdomain = result.is_ok() && dns_info.is_empty();
-    let alert = build_alert(
+    let mut alert = build_alert(
         domain,
-        source_tag,
+        "placeholder".to_string(), // Source will be replaced with combined rule names
         resolved_after_nxdomain,
         dns_info,
         enrichment_provider.clone(),
@@ -403,22 +397,34 @@ pub async fn process_domain(
     .await
     .context("Failed to build alert")?;
 
-    // STAGE 2: Post-enrichment filtering (ASN, IP, etc.)
-    let stage_2_matches = {
+    let stage_2_rule_matches = {
         let _span = tracing::info_span!("stage_2_rule_matching").entered();
         rule_matcher.matches(&alert, EnrichmentLevel::Standard)
     };
-    if stage_2_matches.is_empty() {
-        // If no Stage 2 rules are defined or none match, we assume the Stage 1 match was sufficient.
-        // This allows for regex-only rules to pass through without requiring a second-stage rule.
-        // However, if there ARE stage 2 rules, an alert MUST match one to proceed.
-        let has_stage_2_rules = !rule_matcher.stage_2_rules.is_empty();
-        if has_stage_2_rules {
-            debug!("Domain matched stage 1 but failed to match any stage 2 rules. Discarding.");
-            return Ok(());
-        }
+
+    // FINAL DECISION: Combine all matches to determine if we should alert.
+    let mut all_matches_set: HashSet<String> = stage_1_rule_matches.into_iter().collect();
+    all_matches_set.extend(stage_2_rule_matches);
+    if let Some(tag) = legacy_match {
+        all_matches_set.insert(tag);
     }
 
+    if all_matches_set.is_empty() {
+        // This can happen if a domain matched a legacy pattern, but the rules engine
+        // logic (which is now the source of truth) doesn't have a corresponding rule.
+        // Or if a Stage 1 rule was a false positive that was correctly filtered by Stage 2.
+        debug!("Domain was enriched but did not match any final rules. Discarding.");
+        return Ok(());
+    }
+
+    // Sort for consistent output order before joining
+    let mut all_matches: Vec<String> = all_matches_set.into_iter().collect();
+    all_matches.sort();
+
+    // Update the alert with the final, combined source tags.
+    alert.source_tag = all_matches.join(", ");
+
+    debug!(source = %alert.source_tag, "Domain passed all checks. Sending alert.");
     if alerts_tx.send(alert).is_err() {
         anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
     }

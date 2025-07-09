@@ -4,7 +4,6 @@ use certwatch::{
     rules::{EnrichmentLevel, Rule, RuleMatcher},
 };
 use std::{
-    collections::HashSet,
     fs::File,
     io::Write,
     net::{IpAddr, Ipv4Addr},

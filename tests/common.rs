@@ -18,7 +18,7 @@ pub const TEST_CERTSTREAM_URL: &str = "wss://127.0.0.1:8181/domains-only";
 ///
 /// This function encapsulates the common boilerplate for:
 /// 1. Initializing the logger.
-/// 2. Setting up an `mpsc` channel for receiving domains.
+/// 2. Setting up a `broadcast` channel for receiving domains.
 /// 3. Creating and spawning the `CertStreamClient`.
 /// 4. Running a provided test logic future (`test_logic`) that receives the domains.
 /// 5. Applying a timeout to the test.
