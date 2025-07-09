@@ -17,29 +17,22 @@ use tracing::{error, info};
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize logging ASAP. We'll use a default log level for now.
-    // The final log level will be determined by the config.
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(
-            "info".parse().unwrap(),
-        ))
-        .init();
-
-    info!("CertWatch starting up...");
-
     // Load configuration by layering sources: defaults, file, environment, and CLI args.
     let config = Config::load(&cli).unwrap_or_else(|err| {
-        error!("Failed to load configuration: {}", err);
+        // We can't use the tracing `error!` macro here because the logger isn't initialized yet.
+        eprintln!("[ERROR] Failed to load configuration: {}", err);
         std::process::exit(1);
     });
 
-    // Re-initialize the logger with the final log level from the config.
-    let _ = tracing_subscriber::fmt()
+    // Initialize the logger with the final log level from the config.
+    tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(config.log_level.parse().unwrap()),
         )
-        .try_init();
+        .init();
+
+    info!("CertWatch starting up...");
 
 
     // Log the loaded configuration settings for visibility
