@@ -44,10 +44,17 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
     assert_eq!(fake_resolver.get_call_count("newly-active.com"), 1);
 
     // Assert: Wait for the retry task to process and check for the resolved domain
-    let resolved_result = tokio::time::timeout(Duration::from_secs(1), resolved_rx.recv()).await;
-    assert!(resolved_result.is_ok(), "Did not receive resolved domain from channel");
+    // Use a timeout that is generous for a test but prevents it from hanging forever.
+    let resolved_result = tokio::time::timeout(Duration::from_millis(250), resolved_rx.recv()).await;
+    assert!(
+        resolved_result.is_ok(),
+        "Timeout waiting for resolved domain from retry channel"
+    );
 
-    let (domain, tag, dns_info) = resolved_result.unwrap().unwrap();
+    let received = resolved_result.unwrap();
+    assert!(received.is_some(), "The resolved_rx channel was closed unexpectedly");
+
+    let (domain, tag, dns_info) = received.unwrap();
     assert_eq!(domain, "newly-active.com");
     assert_eq!(tag, "test-tag");
     assert_eq!(dns_info.a_records, success_dns_info.a_records);

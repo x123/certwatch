@@ -10,8 +10,9 @@ use crate::utils::heartbeat::run_heartbeat;
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
 use tracing::info;
 
 /// Represents the health state of the DNS resolver.
@@ -257,7 +258,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_state_transitions_to_unhealthy() {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
@@ -270,6 +271,9 @@ mod tests {
         let _guard = ShutdownGuard(shutdown_tx);
         let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
 
+        // Subscribe to health changes *before* making changes
+        let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
+
         assert_eq!(monitor.current_state(), HealthState::Healthy);
 
         // Report 4 successes and 6 failures -> 60% failure rate
@@ -281,18 +285,14 @@ mod tests {
             monitor.record_outcome(false);
         }
 
-        // Poll until the state becomes unhealthy
-        for _ in 0..20 {
-            if monitor.current_state() == HealthState::Unhealthy {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        // Wait for the background task to process the outcomes and update the state.
+        // This is now deterministic and instant due to the paused clock and signaling.
+        health_rx.changed().await.expect("Health update signal was not received");
 
         assert_eq!(monitor.current_state(), HealthState::Unhealthy);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_state_remains_healthy_below_threshold() {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
@@ -305,6 +305,8 @@ mod tests {
         let _guard = ShutdownGuard(shutdown_tx);
         let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
 
+        let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
+
         assert_eq!(monitor.current_state(), HealthState::Healthy);
 
         // Report 5 successes and 5 failures -> 50% failure rate
@@ -316,9 +318,10 @@ mod tests {
             monitor.record_outcome(false);
         }
 
-        // Give the background task a moment to process
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for the background task to process.
+        health_rx.changed().await.expect("Health update signal was not received");
 
+        // The state should remain healthy as the failure rate is below the threshold.
         assert_eq!(monitor.current_state(), HealthState::Healthy);
     }
 
@@ -352,7 +355,7 @@ mod tests {
         assert!(state.outcomes.is_empty());
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_outcome_window_pruning() {
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
@@ -367,16 +370,16 @@ mod tests {
         monitor.process_outcome(false);
         assert_eq!(monitor.monitor_state.lock().unwrap().outcomes.len(), 1);
 
-        // Wait for longer than the window
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        // Advance time by more than the window duration
+        tokio::time::advance(Duration::from_secs(3)).await;
 
-        // Record another outcome, which should trigger pruning
+        // Record another outcome, which should trigger pruning of the old one
         monitor.process_outcome(true);
         let state = monitor.monitor_state.lock().unwrap();
-        assert_eq!(state.outcomes.len(), 1);
-        assert!(state.outcomes.front().unwrap().is_success);
+        assert_eq!(state.outcomes.len(), 1, "Old outcome should have been pruned");
+        assert!(state.outcomes.front().unwrap().is_success, "The new outcome should be the only one remaining");
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_no_state_change_when_unhealthy() {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
@@ -388,19 +391,15 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
         let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
+        let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
 
         // Transition to Unhealthy
         tracing::debug!("Recording two failures to become unhealthy");
         monitor.record_outcome(false);
         monitor.record_outcome(false);
 
-        // Poll until the state becomes unhealthy
-        for _ in 0..20 {
-            if monitor.current_state() == HealthState::Unhealthy {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        // Wait for the state to become unhealthy
+        health_rx.changed().await.expect("Health update signal was not received");
         assert_eq!(monitor.current_state(), HealthState::Unhealthy);
 
         // Add successes, bringing the failure rate below the threshold
@@ -408,8 +407,8 @@ mod tests {
         monitor.record_outcome(true);
         monitor.record_outcome(true);
 
-        // Give the background task a moment to process
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for the background task to process the new outcomes
+        health_rx.changed().await.expect("Health update signal was not received after successes");
 
         // State should remain Unhealthy because recovery is handled by a separate task
         assert_eq!(

@@ -1,8 +1,7 @@
 use anyhow::Result;
 use certwatch::{
     config::Config,
-    core::{DnsInfo, EnrichmentProvider, PatternMatcher},
-    dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, DnsResolver},
+    dns::{DnsHealthMonitor, DnsResolutionManager},
 };
 use futures::stream::StreamExt;
 use std::sync::{
@@ -12,63 +11,29 @@ use std::sync::{
 use tokio::sync::{mpsc, watch, Barrier};
 use tokio_stream;
 
-// Mock implementations for services
-struct MockPatternMatcher;
-#[async_trait::async_trait]
-impl PatternMatcher for MockPatternMatcher {
-    async fn match_domain(&self, _domain: &str) -> Option<String> {
-        Some("mock_tag".to_string())
-    }
-}
-
-struct MockEnrichmentProvider;
-#[async_trait::async_trait]
-impl EnrichmentProvider for MockEnrichmentProvider {
-    async fn enrich(&self, ip: std::net::IpAddr) -> Result<certwatch::core::EnrichmentInfo> {
-        Ok(certwatch::core::EnrichmentInfo {
-            ip,
-            asn_info: Some(Default::default()),
-        })
-    }
-}
-
-struct MockDnsResolver;
-#[async_trait::async_trait]
-impl DnsResolver for MockDnsResolver {
-    async fn resolve(&self, _domain: &str) -> Result<DnsInfo, DnsError> {
-        Ok(DnsInfo {
-            a_records: vec!["1.1.1.1".parse().unwrap()],
-            ..Default::default()
-        })
-    }
-}
+mod helpers;
+use helpers::create_mock_dependencies;
 
 #[tokio::test]
 async fn test_bounded_concurrency() -> Result<()> {
     let concurrency_limit = 2;
-    let total_domains = 10; // Reduced for faster, more focused test
+    let total_domains = 10;
 
-    // The config and mock setup is fine, it simulates the app's dependencies.
     let mut config = Config::default();
     config.concurrency = concurrency_limit;
 
-    let pattern_matcher = Arc::new(MockPatternMatcher);
-    let dns_resolver: Arc<dyn DnsResolver> = Arc::new(MockDnsResolver);
+    let (pattern_matcher, dns_resolver, enrichment_provider) = create_mock_dependencies();
     let (_tx, rx) = watch::channel(());
     let health_monitor = DnsHealthMonitor::new(Default::default(), dns_resolver.clone(), rx.clone());
     let (dns_manager, _) =
         DnsResolutionManager::new(dns_resolver, Default::default(), health_monitor, rx);
     let dns_manager = Arc::new(dns_manager);
 
-    let enrichment_provider: Arc<dyn EnrichmentProvider> = Arc::new(MockEnrichmentProvider);
     let (alerts_tx, _alerts_rx) = mpsc::channel(total_domains);
 
     let active_tasks = Arc::new(AtomicUsize::new(0));
     let max_concurrent_tasks = Arc::new(AtomicUsize::new(0));
     let processed_domains = Arc::new(AtomicUsize::new(0));
-
-    // This barrier will be used to control task execution deterministically.
-    // It will wait for `concurrency_limit` tasks to start, then another batch, etc.
     let barrier = Arc::new(Barrier::new(concurrency_limit));
 
     let domains: Vec<String> = (0..total_domains)
@@ -89,12 +54,9 @@ async fn test_bounded_concurrency() -> Result<()> {
             let barrier = barrier.clone();
 
             async move {
-                // Increment active tasks and update max
                 let current_active = active_tasks.fetch_add(1, Ordering::SeqCst) + 1;
                 max_concurrent_tasks.fetch_max(current_active, Ordering::SeqCst);
 
-                // Instead of sleeping, wait on the barrier.
-                // This synchronizes the tasks and makes the test deterministic.
                 barrier.wait().await;
 
                 if let Some(source_tag) = pattern_matcher.match_domain(&domain).await {

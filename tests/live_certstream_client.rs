@@ -9,11 +9,48 @@
 #![cfg(feature = "live-tests")]
 
 use anyhow::Result;
+use certwatch::{config::Config, network::CertStreamClient};
+use futures::Future;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tracing::error;
 
-mod common;
-use common::run_live_test;
+/// Helper to run a live test against a local certstream server.
+async fn run_live_test<F, Fut>(duration: Duration, test_logic: F) -> Result<()>
+where
+    F: FnOnce(mpsc::Receiver<String>) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let (domains_tx, domains_rx) = mpsc::channel(100);
+    let (shutdown_tx, shutdown_rx) = watch::channel(());
+
+    let mut config = Config::default();
+    config.network.certstream_url = "ws://127.0.0.1:8181".to_string();
+    config.network.allow_invalid_certs = true;
+
+    let certstream_client = CertStreamClient::new(
+        config.network.certstream_url.clone(),
+        domains_tx,
+        config.network.sample_rate,
+        config.network.allow_invalid_certs,
+    );
+
+    let client_handle = tokio::spawn(async move {
+        if let Err(e) = certstream_client.run(shutdown_rx).await {
+            error!("CertStream client failed: {}", e);
+        }
+    });
+
+    let logic_handle = tokio::spawn(test_logic(domains_rx));
+
+    tokio::time::timeout(duration, logic_handle).await??;
+
+    shutdown_tx.send(()).unwrap();
+    client_handle.await?;
+
+    Ok(())
+}
+
 
 #[tokio::test]
 #[ignore] // This test requires a live server, so ignore by default
