@@ -147,17 +147,28 @@ impl TestAppBuilder {
         let domains_rx_mutex = Arc::new(Mutex::new(domains_rx));
 
         let app_future = async move {
-            certwatch::app::run(
-                self.config,
-                shutdown_rx,
-                Some(domains_rx_mutex),
-                self.outputs,
-                self.websocket,
-                self.dns_resolver,
-                self.enrichment_provider,
-                self.alert_tx,
-            )
-            .await
+            let mut builder = certwatch::app::App::builder(self.config)
+                .domains_rx_override(domains_rx_mutex)
+                .enrichment_provider_override(
+                    self.enrichment_provider
+                        .expect("Enrichment provider must be set in test builder"),
+                );
+
+            if let Some(outputs) = self.outputs {
+                builder = builder.output_override(outputs);
+            }
+            if let Some(ws) = self.websocket {
+                builder = builder.websocket_override(ws);
+            }
+            if let Some(resolver) = self.dns_resolver {
+                builder = builder.dns_resolver_override(resolver);
+            }
+            if let Some(tx) = self.alert_tx {
+                builder = builder.notification_tx(tx);
+            }
+
+            let app = builder.build(shutdown_rx).await?;
+            app.run().await
         };
 
         let test_app = TestApp {

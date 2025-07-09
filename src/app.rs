@@ -20,311 +20,383 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
 
-/// Runs the main application logic.
-#[instrument(skip_all)]
-pub async fn run(
+/// A handle to the running application, containing all its task handles.
+pub struct App {
+    _config: Config,
+    shutdown_rx: watch::Receiver<()>,
+    certstream_task: JoinHandle<()>,
+    worker_handles: Vec<JoinHandle<()>>,
+    nxdomain_feedback_task: JoinHandle<()>,
+    output_task: JoinHandle<()>,
+    metrics_task: Option<JoinHandle<()>>,
+}
+
+impl App {
+    /// Creates a new `AppBuilder` to construct an `App`.
+    pub fn builder(config: Config) -> AppBuilder {
+        AppBuilder::new(config)
+    }
+
+    /// Waits for the shutdown signal and then gracefully shuts down all tasks.
+    pub async fn run(self) -> Result<()> {
+        let mut shutdown_rx = self.shutdown_rx;
+        // Wait for the external shutdown signal
+        shutdown_rx.changed().await.ok();
+        info!("Shutdown signal received in run function. Waiting for tasks to complete...");
+
+        // Wait for all tasks to complete
+        if let Err(e) = self.certstream_task.await {
+            error!("CertStream task panicked: {:?}", e);
+        }
+        for handle in self.worker_handles {
+            if let Err(e) = handle.await {
+                error!("Worker task panicked: {:?}", e);
+            }
+        }
+        if let Err(e) = self.nxdomain_feedback_task.await {
+            error!("NXDOMAIN feedback task panicked: {:?}", e);
+        }
+        if let Err(e) = self.output_task.await {
+            error!("Output task panicked: {:?}", e);
+        }
+        if let Some(handle) = self.metrics_task {
+            if let Err(e) = handle.await {
+                error!("Metrics task panicked: {:?}", e);
+            }
+        }
+
+        info!("All tasks shut down.");
+        Ok(())
+    }
+}
+
+/// Builder for the main application.
+///
+/// This pattern allows for a clean separation of concerns between constructing
+/// the application's components and running the application. It also provides
+/// a convenient way to override components for testing purposes.
+pub struct AppBuilder {
     config: Config,
-    mut shutdown_rx: watch::Receiver<()>,
     domains_rx_override: Option<Arc<Mutex<mpsc::Receiver<String>>>>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
     notification_tx: Option<broadcast::Sender<Alert>>,
-) -> Result<()> {
-    // =========================================================================
-    // 1. Initialize Metrics Recorder (and logging)
-    //
-    // This MUST happen first so that startup logs are visible.
-    // =========================================================================
-    let mut metrics_task: Option<JoinHandle<()>> = None;
-    if config.metrics.log_metrics {
-        info!(
-            "Logging recorder enabled. Metrics will be printed every {} seconds.",
-            config.metrics.log_aggregation_seconds
-        );
-        let (recorder, handle) = LoggingRecorder::new(
-            Duration::from_secs(config.metrics.log_aggregation_seconds),
+}
+
+impl AppBuilder {
+    /// Creates a new `AppBuilder` with the given configuration.
+    pub fn new(config: Config) -> Self {
+        Self {
+            config,
+            domains_rx_override: None,
+            output_override: None,
+            websocket_override: None,
+            dns_resolver_override: None,
+            enrichment_provider_override: None,
+            notification_tx: None,
+        }
+    }
+
+    /// Overrides the domain receiver channel for testing.
+    pub fn domains_rx_override(mut self, rx: Arc<Mutex<mpsc::Receiver<String>>>) -> Self {
+        self.domains_rx_override = Some(rx);
+        self
+    }
+
+    /// Overrides the output channels for testing.
+    pub fn output_override(mut self, outputs: Vec<Arc<dyn Output>>) -> Self {
+        self.output_override = Some(outputs);
+        self
+    }
+
+    /// Overrides the WebSocket connection for testing.
+    pub fn websocket_override(mut self, ws: Box<dyn WebSocketConnection>) -> Self {
+        self.websocket_override = Some(ws);
+        self
+    }
+
+    /// Overrides the DNS resolver for testing.
+    pub fn dns_resolver_override(mut self, resolver: Arc<dyn DnsResolver>) -> Self {
+        self.dns_resolver_override = Some(resolver);
+        self
+    }
+
+    /// Overrides the enrichment provider for testing.
+    pub fn enrichment_provider_override(mut self, provider: Arc<dyn EnrichmentProvider>) -> Self {
+        self.enrichment_provider_override = Some(provider);
+        self
+    }
+
+    /// Overrides the notification sender channel for testing.
+    pub fn notification_tx(mut self, tx: broadcast::Sender<Alert>) -> Self {
+        self.notification_tx = Some(tx);
+        self
+    }
+
+    /// Builds and initializes all application components, returning a runnable `App`.
+    #[instrument(skip_all)]
+    pub async fn build(self, shutdown_rx: watch::Receiver<()>) -> Result<App> {
+        let config = self.config;
+
+        // =========================================================================
+        // 1. Initialize Metrics Recorder (and logging)
+        // =========================================================================
+        let mut metrics_task: Option<JoinHandle<()>> = None;
+        if config.metrics.log_metrics {
+            info!(
+                "Logging recorder enabled. Metrics will be printed every {} seconds.",
+                config.metrics.log_aggregation_seconds
+            );
+            let (recorder, handle) = LoggingRecorder::new(
+                Duration::from_secs(config.metrics.log_aggregation_seconds),
+                shutdown_rx.clone(),
+            );
+            metrics::set_global_recorder(recorder).expect("Failed to install logging recorder");
+            metrics_task = Some(handle);
+        }
+
+        // =========================================================================
+        // 2. Pre-flight Checks & Service Instantiation
+        // =========================================================================
+        let dns_resolver = match self.dns_resolver_override {
+            Some(resolver) => resolver,
+            None => {
+                let (resolver, _nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
+                Arc::new(resolver)
+            }
+        };
+
+        DnsHealthMonitor::startup_check(dns_resolver.as_ref(), &config.dns.health).await?;
+
+        // =========================================================================
+        // 3. Instantiate Remaining Services
+        // =========================================================================
+        let rule_matcher = Arc::new(RuleMatcher::load(&config.rules)?);
+
+        let enrichment_provider = self
+            .enrichment_provider_override
+            .expect("Enrichment provider is now required to be passed into app::run");
+        let deduplicator = Arc::new(Deduplicator::new(
+            Duration::from_secs(config.deduplication.cache_ttl_seconds),
+            config.deduplication.cache_size as u64,
+        ));
+        let in_flight_deduplicator = Arc::new(InFlightDeduplicator::new(
+            Duration::from_secs(30), // Short TTL for in-flight checks
+            100_000,                 // Capacity
+        ));
+
+        // =========================================================================
+        // 4. Setup Output Manager
+        // =========================================================================
+        let output_manager = match self.output_override {
+            Some(outputs) => Arc::new(OutputManager::new(outputs)),
+            None => {
+                let outputs: Vec<Arc<dyn Output>> =
+                    vec![Arc::new(StdoutOutput::new(config.output.format.clone()))];
+                Arc::new(OutputManager::new(outputs))
+            }
+        };
+
+        // =========================================================================
+        // 5. Create Channels for the Pipeline
+        // =========================================================================
+        let (internal_alerts_tx, _) = broadcast::channel::<Alert>(1000);
+        let (domains_tx, domains_rx) = if let Some(rx_override) = self.domains_rx_override {
+            let (tx, _) = mpsc::channel::<String>(1000);
+            (tx, rx_override)
+        } else {
+            let (tx, rx) = mpsc::channel::<String>(1000);
+            (tx, Arc::new(Mutex::new(rx)))
+        };
+
+        // =========================================================================
+        // 6. Start the DNS Resolution Manager
+        // =========================================================================
+        let dns_health_monitor = DnsHealthMonitor::new(
+            config.dns.health.clone(),
+            dns_resolver.clone(),
             shutdown_rx.clone(),
         );
-        metrics::set_global_recorder(recorder).expect("Failed to install logging recorder");
-        metrics_task = Some(handle);
-    }
+        let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
+            dns_resolver.clone(),
+            config.dns.retry_config.clone(),
+            dns_health_monitor.clone(),
+            shutdown_rx.clone(),
+        );
+        let dns_manager = Arc::new(dns_manager);
 
-    // =========================================================================
-    // 2. Pre-flight Checks
-    // =========================================================================
-    // =========================================================================
-    // 2. Pre-flight Checks & Service Instantiation
-    // =========================================================================
-    let dns_resolver = match dns_resolver_override {
-        Some(resolver) => resolver,
-        None => {
-            let (resolver, _nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
-            Arc::new(resolver)
-        }
-    };
-
-    DnsHealthMonitor::startup_check(dns_resolver.as_ref(), &config.dns.health).await?;
-
-    // =========================================================================
-    // 3. Instantiate Remaining Services
-    // =========================================================================
-    let rule_matcher = Arc::new(RuleMatcher::load(&config.rules)?);
-
-    let enrichment_provider = enrichment_provider_override
-        .expect("Enrichment provider is now required to be passed into app::run");
-    let deduplicator = Arc::new(Deduplicator::new(
-        Duration::from_secs(config.deduplication.cache_ttl_seconds),
-        config.deduplication.cache_size as u64,
-    ));
-    let in_flight_deduplicator = Arc::new(InFlightDeduplicator::new(
-        Duration::from_secs(30), // Short TTL for in-flight checks
-        100_000,                 // Capacity
-    ));
-
-    // =========================================================================
-    // 2. Setup Output Manager
-    // =========================================================================
-    let output_manager = match output_override {
-        Some(outputs) => Arc::new(OutputManager::new(outputs)),
-        None => {
-            let outputs: Vec<Arc<dyn Output>> =
-                vec![Arc::new(StdoutOutput::new(config.output.format.clone()))];
-            Arc::new(OutputManager::new(outputs))
-        }
-    };
-
-    // =========================================================================
-    // 3. Create Channels for the Pipeline
-    // =========================================================================
-    // This is the primary, internal channel for alerts flowing from workers to the
-    // output task. The output task will then publish to the optional `notification_tx`
-    // for external subscribers like Slack.
-    let (internal_alerts_tx, _) = broadcast::channel::<Alert>(1000);
-    let (domains_tx, domains_rx) = if let Some(rx_override) = domains_rx_override {
-        // This path is for testing. The test harness provides the receiver.
-        // We still need a sender to give to the CertStreamClient, but it will be
-        // disconnected and unused in the test environment.
-        let (tx, _) = mpsc::channel::<String>(1000);
-        (tx, rx_override)
-    } else {
-        // This is the production path.
-        let (tx, rx) = mpsc::channel::<String>(1000);
-        (tx, Arc::new(Mutex::new(rx)))
-    };
-
-    // =========================================================================
-    // 5. Start the DNS Resolution Manager
-    // =========================================================================
-    let dns_health_monitor = DnsHealthMonitor::new(
-        config.dns.health.clone(),
-        dns_resolver.clone(),
-        shutdown_rx.clone(),
-    );
-    let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
-        dns_resolver.clone(),
-        config.dns.retry_config.clone(),
-        dns_health_monitor.clone(),
-        shutdown_rx.clone(),
-    );
-    let dns_manager = Arc::new(dns_manager);
-
-    // =========================================================================
-    // 4. Start the CertStream Client
-    // =========================================================================
-    let certstream_client = CertStreamClient::new(
-        config.network.certstream_url.clone(),
-        domains_tx,
-        config.network.sample_rate,
-        config.network.allow_invalid_certs,
-    );
-    let certstream_task = {
-        let shutdown_rx_clone = shutdown_rx.clone();
-        tokio::spawn(async move {
-            let result = if let Some(ws) = websocket_override {
-                certstream_client.run_with_connection(ws).await
-            } else {
-                certstream_client.run(shutdown_rx_clone).await
-            };
-
-            if let Err(e) = result {
-                error!("CertStream client failed: {}", e);
-            }
-        })
-    };
-
-    // =========================================================================
-    // 6. Main Processing Loop (Worker Pool)
-    // =========================================================================
-    let mut worker_handles = Vec::new();
-    info!("Spawning {} worker tasks...", config.concurrency);
-
-    for i in 0..config.concurrency {
-        let domains_rx = domains_rx.clone();
-        let rule_matcher = rule_matcher.clone();
-        let dns_manager = dns_manager.clone();
-        let enrichment_provider = enrichment_provider.clone();
-        let alerts_tx = internal_alerts_tx.clone();
-        let mut shutdown_rx = shutdown_rx.clone();
-        let in_flight_deduplicator = in_flight_deduplicator.clone();
-
-        let handle = tokio::spawn(async move {
-            debug!("Worker {} started", i);
-            loop {
-                // This `select!` block is the new, correct way to handle this.
-                // It ensures the Mutex lock on the receiver is held for the shortest
-                // possible time (only during the `recv()` await).
-                let domain_to_process = tokio::select! {
-                    biased;
-                    _ = shutdown_rx.changed() => {
-                        debug!("Worker {} received shutdown signal, exiting.", i);
-                        None // This will cause the loop to break.
-                    }
-                    // This async block creates a future that `select!` can own.
-                    // The lock is acquired and dropped entirely within this block.
-                    domain_opt = async { domains_rx.lock().await.recv().await } => {
-                        domain_opt
-                    }
+        // =========================================================================
+        // 7. Start the CertStream Client
+        // =========================================================================
+        let certstream_client = CertStreamClient::new(
+            config.network.certstream_url.clone(),
+            domains_tx,
+            config.network.sample_rate,
+            config.network.allow_invalid_certs,
+        );
+        let certstream_task = {
+            let shutdown_rx_clone = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let result = if let Some(ws) = self.websocket_override {
+                    certstream_client.run_with_connection(ws).await
+                } else {
+                    certstream_client.run(shutdown_rx_clone).await
                 };
 
-                let domain = match domain_to_process {
-                    Some(domain) => domain,
-                    None => {
-                        // The channel is closed or shutdown was triggered.
-                        debug!(
-                            "Domain channel closed or shutdown triggered, worker {} shutting down.",
-                            i
-                        );
-                        break;
-                    }
-                };
-
-                debug!(worker_id = i, domain = %domain, "Worker picked up domain");
-
-                // In-flight deduplication check to prevent a stampede of workers
-                // processing the same domain from a burst on the CertStream.
-                if in_flight_deduplicator.is_duplicate(&domain) {
-                    debug!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
-                    metrics::counter!("domains_skipped_inflight", "worker_id" => i.to_string())
-                        .increment(1);
-                    continue;
+                if let Err(e) = result {
+                    error!("CertStream client failed: {}", e);
                 }
+            })
+        };
 
-                debug!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
+        // =========================================================================
+        // 8. Main Processing Loop (Worker Pool)
+        // =========================================================================
+        let mut worker_handles = Vec::new();
+        info!("Spawning {} worker tasks...", config.concurrency);
 
-                if rule_matcher.is_ignored(&domain) {
-                    debug!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
-                    continue;
-                }
+        for i in 0..config.concurrency {
+            let domains_rx = domains_rx.clone();
+            let rule_matcher = rule_matcher.clone();
+            let dns_manager = dns_manager.clone();
+            let enrichment_provider = enrichment_provider.clone();
+            let alerts_tx = internal_alerts_tx.clone();
+            let mut shutdown_rx = shutdown_rx.clone();
+            let in_flight_deduplicator = in_flight_deduplicator.clone();
 
-                let process_fut = process_domain(
-                    domain.clone(),
-                    i,
-                    rule_matcher.clone(),
-                    dns_manager.clone(),
-                    enrichment_provider.clone(),
-                    alerts_tx.clone(),
-                );
+            let handle = tokio::spawn(async move {
+                debug!("Worker {} started", i);
+                loop {
+                    let domain_to_process = tokio::select! {
+                        biased;
+                        _ = shutdown_rx.changed() => {
+                            debug!("Worker {} received shutdown signal, exiting.", i);
+                            None
+                        }
+                        domain_opt = async { domains_rx.lock().await.recv().await } => {
+                            domain_opt
+                        }
+                    };
 
-                tokio::select! {
-                    biased;
-                    _ = shutdown_rx.changed() => {
-                        debug!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
+                    let domain = match domain_to_process {
+                        Some(domain) => domain,
+                        None => {
+                            debug!(
+                                "Domain channel closed or shutdown triggered, worker {} shutting down.",
+                                i
+                            );
+                            break;
+                        }
+                    };
+
+                    debug!(worker_id = i, domain = %domain, "Worker picked up domain");
+
+                    if in_flight_deduplicator.is_duplicate(&domain) {
+                        debug!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
+                        metrics::counter!("domains_skipped_inflight", "worker_id" => i.to_string())
+                            .increment(1);
+                        continue;
                     }
-                    result = process_fut => {
-                        debug!(worker_id = i, domain = %domain, "Worker finished processing domain");
-                        match result {
-                            Ok(_) => {
-                                metrics::counter!("cert_processing_successes").increment(1);
-                            }
-                            Err(e) => {
-                                metrics::counter!("cert_processing_failures").increment(1);
-                                debug!("Failed to process certificate update for domain {}: {}", domain, e);
+
+                    debug!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
+
+                    if rule_matcher.is_ignored(&domain) {
+                        debug!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
+                        continue;
+                    }
+
+                    let process_fut = process_domain(
+                        domain.clone(),
+                        i,
+                        rule_matcher.clone(),
+                        dns_manager.clone(),
+                        enrichment_provider.clone(),
+                        alerts_tx.clone(),
+                    );
+
+                    tokio::select! {
+                        biased;
+                        _ = shutdown_rx.changed() => {
+                            debug!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
+                        }
+                        result = process_fut => {
+                            debug!(worker_id = i, domain = %domain, "Worker finished processing domain");
+                            match result {
+                                Ok(_) => {
+                                    metrics::counter!("cert_processing_successes").increment(1);
+                                }
+                                Err(e) => {
+                                    metrics::counter!("cert_processing_failures").increment(1);
+                                    debug!("Failed to process certificate update for domain {}: {}", domain, e);
+                                }
                             }
                         }
                     }
                 }
-            }
-        });
-        worker_handles.push(handle);
-    }
+            });
+            worker_handles.push(handle);
+        }
 
-    // =========================================================================
-    // 7. NXDOMAIN Resolution Feedback Loop
-    // =========================================================================
-    let nxdomain_feedback_task = {
-        let alerts_tx = internal_alerts_tx.clone();
-        let enrichment_provider = enrichment_provider.clone();
-        tokio::spawn(async move {
-            while let Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv().await {
-                info!(
-                    "Domain previously NXDOMAIN now resolves: {} ({})",
-                    domain, source_tag
-                );
-                match build_alert(
-                    domain,
-                    source_tag,
-                    true,
-                    dns_info,
-                    enrichment_provider.clone(),
-                )
-                .await
-                {
-                    Ok(alert) => {
-                        if let Err(e) = alerts_tx.send(alert) {
-                            error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
+        // =========================================================================
+        // 9. NXDOMAIN Resolution Feedback Loop
+        // =========================================================================
+        let nxdomain_feedback_task = {
+            let alerts_tx = internal_alerts_tx.clone();
+            let enrichment_provider = enrichment_provider.clone();
+            tokio::spawn(async move {
+                while let Some((domain, source_tag, dns_info)) = resolved_nxdomain_rx.recv().await {
+                    info!(
+                        "Domain previously NXDOMAIN now resolves: {} ({})",
+                        domain, source_tag
+                    );
+                    match build_alert(
+                        domain,
+                        source_tag,
+                        true,
+                        dns_info,
+                        enrichment_provider.clone(),
+                    )
+                    .await
+                    {
+                        Ok(alert) => {
+                            if let Err(e) = alerts_tx.send(alert) {
+                                error!("Failed to send resolved NXDOMAIN alert to channel: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to build alert for resolved NXDOMAIN: {}", e);
                         }
                     }
-                    Err(e) => {
-                        error!("Failed to build alert for resolved NXDOMAIN: {}", e);
-                    }
                 }
-            }
-            info!("NXDOMAIN feedback loop finished.");
+                info!("NXDOMAIN feedback loop finished.");
+            })
+        };
+
+        // =========================================================================
+        // 10. Alert Deduplication and Output Task
+        // =========================================================================
+        let output_task = tokio::spawn(output_task_logic(
+            shutdown_rx.clone(),
+            internal_alerts_tx.subscribe(),
+            deduplicator,
+            output_manager,
+            self.notification_tx,
+        ));
+
+        info!("CertWatch initialized successfully. Monitoring for domains...");
+
+        Ok(App {
+            _config: config,
+            shutdown_rx,
+            certstream_task,
+            worker_handles,
+            nxdomain_feedback_task,
+            output_task,
+            metrics_task,
         })
-    };
-
-    // =========================================================================
-    // 8. Alert Deduplication and Output Task
-    // =========================================================================
-    let output_task = tokio::spawn(output_task_logic(
-        shutdown_rx.clone(),
-        internal_alerts_tx.subscribe(),
-        deduplicator,
-        output_manager,
-        notification_tx,
-    ));
-
-    info!("CertWatch initialized successfully. Monitoring for domains...");
-
-    // Wait for the external shutdown signal
-    shutdown_rx.changed().await.ok();
-    info!("Shutdown signal received in run function. Waiting for tasks to complete...");
-
-    // Wait for all tasks to complete
-    if let Err(e) = certstream_task.await {
-        error!("CertStream task panicked: {:?}", e);
     }
-    for handle in worker_handles {
-        if let Err(e) = handle.await {
-            error!("Worker task panicked: {:?}", e);
-        }
-    }
-    if let Err(e) = nxdomain_feedback_task.await {
-        error!("NXDOMAIN feedback task panicked: {:?}", e);
-    }
-    if let Err(e) = output_task.await {
-        error!("Output task panicked: {:?}", e);
-    }
-    if let Some(handle) = metrics_task {
-        if let Err(e) = handle.await {
-            error!("Metrics task panicked: {:?}", e);
-        }
-    }
-
-    info!("All tasks shut down.");
-    Ok(())
 }
 
 #[instrument(skip_all)]

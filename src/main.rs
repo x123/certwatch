@@ -7,10 +7,9 @@ use anyhow::Result;
 use certwatch::{
     cli::Cli,
     config::{Config, OutputFormat},
-    core::Alert,
 };
 use clap::Parser;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::watch;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -72,56 +71,21 @@ async fn main() -> Result<()> {
     // =========================================================================
     // Setup Notification Pipeline
     // =========================================================================
-    let alert_tx = {
-        let mut enabled = false;
-        if let Some(slack_config) = &config.output.slack {
-            if slack_config.enabled {
-                if slack_config.webhook_url.is_empty() {
-                    tracing::warn!("Slack notifications are enabled, but no webhook URL was provided. Slack notifications will be disabled.");
-                } else {
-                    enabled = true;
-                }
-            }
-        }
+    let alert_tx = certwatch::services::setup_notification_pipeline(&config)?;
 
-        if enabled {
-            let (tx, _rx) = broadcast::channel::<Alert>(config.performance.queue_capacity);
-            info!("Slack notification pipeline enabled.");
+    // Build and run the main application
+    let app_builder = certwatch::app::App::builder(config)
+        .enrichment_provider_override(enrichment_provider);
 
-            // Spawn the Slack notifier.
-            let slack_config = config.output.slack.as_ref().unwrap().clone();
-            let slack_formatter =
-                Box::new(certwatch::formatting::SlackTextFormatter);
-            let slack_client =
-                std::sync::Arc::new(certwatch::notification::slack::SlackClient::new(
-                    slack_config.webhook_url.clone(),
-                    slack_formatter,
-                ));
-            let slack_notifier = certwatch::notification::manager::NotificationManager::new(
-                slack_config,
-                tx.subscribe(),
-                slack_client,
-            );
-            tokio::spawn(slack_notifier.run());
-            Some(tx)
-        } else {
-            None
-        }
+    let app_builder = if let Some(tx) = alert_tx {
+        app_builder.notification_tx(tx)
+    } else {
+        app_builder
     };
 
-    // Run the main application logic
-    if let Err(e) = certwatch::app::run(
-        config,
-        shutdown_rx,
-        None,
-        None,
-        None,
-        None, // No DNS resolver override
-        Some(enrichment_provider),
-        alert_tx,
-    )
-    .await
-    {
+    let app = app_builder.build(shutdown_rx).await?;
+
+    if let Err(e) = app.run().await {
         error!("Application error: {}", e);
         std::process::exit(1);
     }

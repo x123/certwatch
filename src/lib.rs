@@ -1,3 +1,4 @@
+pub mod services;
 /// CertWatch - A high-performance certificate transparency log monitor
 ///
 /// This library provides the core functionality for monitoring certificate

@@ -4,10 +4,12 @@
 use metrics::{Counter, Gauge, Histogram, Key, KeyName, Metadata, Recorder, Unit};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 #[derive(Debug, Clone, Default)]
 pub struct TestMetrics {
     counters: Arc<Mutex<HashMap<String, u64>>>,
+    notifier: Arc<Notify>,
 }
 
 impl TestMetrics {
@@ -30,17 +32,20 @@ impl TestMetrics {
     }
 
     pub async fn wait_for_counter(&self, name: &str, value: u64, timeout: std::time::Duration) {
-        let start = std::time::Instant::now();
-        while start.elapsed() < timeout {
-            if self.get_counter(name) >= value {
-                return;
+        let wait_future = async {
+            while self.get_counter(name) < value {
+                self.notifier.notified().await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        };
+
+        if tokio::time::timeout(timeout, wait_future).await.is_err() {
+            panic!(
+                "Timeout waiting for counter '{}' to reach '{}'. Current value: {}",
+                name,
+                value,
+                self.get_counter(name)
+            );
         }
-        panic!(
-            "Timeout waiting for counter '{}' to reach '{}'",
-            name, value
-        );
     }
 }
 
@@ -53,6 +58,7 @@ impl Recorder for TestMetrics {
         Counter::from_arc(Arc::new(MetricCounter {
             name: key.name().to_string(),
             counters: self.counters.clone(),
+            notifier: self.notifier.clone(),
         }))
     }
 
@@ -71,12 +77,14 @@ impl Recorder for TestMetrics {
 struct MetricCounter {
     name: String,
     counters: Arc<Mutex<HashMap<String, u64>>>,
+    notifier: Arc<Notify>,
 }
 
 impl metrics::CounterFn for MetricCounter {
     fn increment(&self, value: u64) {
         let mut counters = self.counters.lock().unwrap();
         *counters.entry(self.name.clone()).or_insert(0) += value;
+        self.notifier.notify_waiters();
     }
 
     fn absolute(&self, _value: u64) {
