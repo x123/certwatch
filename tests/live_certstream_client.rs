@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 mod common;
 use common::run_live_test;
@@ -20,19 +20,19 @@ use common::run_live_test;
 async fn test_live_connection_to_certstream() -> Result<()> {
     let test_duration = Duration::from_secs(10);
 
-    let test_logic = |mut rx: broadcast::Receiver<String>| async move {
+    let test_logic = |mut rx: mpsc::Receiver<String>| async move {
         log::info!("Waiting for the server to send a message...");
 
         // We'll just wait for any message to confirm the connection is established.
         let received_message = rx.recv().await;
 
         assert!(
-            received_message.is_ok(),
+            received_message.is_some(),
             "Test failed: Did not receive any message from the certstream server within {}s.",
             test_duration.as_secs()
         );
 
-        if let Ok(domain) = received_message {
+        if let Some(domain) = received_message {
             log::info!("Successfully received a domain from the live certstream server: '{}'. Test passed.", domain);
         }
     };

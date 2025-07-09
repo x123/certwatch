@@ -110,15 +110,13 @@ async fn main() -> Result<()> {
     };
 
     // Run the main application logic
-    let (domains_tx, _) = broadcast::channel(config.performance.queue_capacity);
-
     if let Err(e) = certwatch::app::run(
         config,
         shutdown_rx,
-        domains_tx,
         None,
         None,
         None,
+        None, // No DNS resolver override
         Some(enrichment_provider),
         alert_tx,
     )

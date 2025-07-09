@@ -15,8 +15,8 @@ use crate::{
     utils::heartbeat::run_heartbeat,
 };
 use anyhow::{Context, Result};
-use tokio::sync::{broadcast, watch};
-use tracing::{debug, error, info, instrument, warn};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tracing::{debug, error, info, instrument};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 pub async fn run(
     config: Config,
     mut shutdown_rx: watch::Receiver<()>,
-    domains_tx: broadcast::Sender<String>,
+    domains_tx_override: Option<mpsc::Sender<String>>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
@@ -98,6 +98,15 @@ pub async fn run(
     // 3. Create Channels for the Pipeline
     // =========================================================================
     let (alerts_tx, _alerts_rx) = broadcast::channel::<Alert>(1000);
+    let (domains_tx, domains_rx) = if let Some(tx) = domains_tx_override {
+        // This path is for testing, where the receiver is not needed directly
+        // as the test harness controls the sender.
+        let (_, rx) = mpsc::channel::<String>(1000);
+        (tx, Arc::new(Mutex::new(rx)))
+    } else {
+        let (tx, rx) = mpsc::channel::<String>(1000);
+        (tx, Arc::new(Mutex::new(rx)))
+    };
 
     // =========================================================================
     // 5. Start the DNS Resolution Manager
@@ -114,17 +123,6 @@ pub async fn run(
         shutdown_rx.clone(),
     );
     let dns_manager = Arc::new(dns_manager);
-
-    // =========================================================================
-    // 6. Main Processing Loop (Worker Pool)
-    // =========================================================================
-    let mut worker_handles = Vec::new();
-    info!("Spawning {} worker tasks...", config.concurrency);
-
-    let mut domains_rxs = Vec::new();
-    for _ in 0..config.concurrency {
-        domains_rxs.push(domains_tx.subscribe());
-    }
 
     // =========================================================================
     // 4. Start the CertStream Client
@@ -150,7 +148,14 @@ pub async fn run(
         })
     };
 
-    for (i, mut domains_rx) in domains_rxs.into_iter().enumerate() {
+    // =========================================================================
+    // 6. Main Processing Loop (Worker Pool)
+    // =========================================================================
+    let mut worker_handles = Vec::new();
+    info!("Spawning {} worker tasks...", config.concurrency);
+
+    for i in 0..config.concurrency {
+        let domains_rx = domains_rx.clone();
         let pattern_matcher = pattern_matcher.clone();
         let rule_matcher = rule_matcher.clone();
         let dns_manager = dns_manager.clone();
@@ -161,28 +166,32 @@ pub async fn run(
         let handle = tokio::spawn(async move {
             debug!("Worker {} started", i);
             loop {
+                // Acquire the lock before the select to ensure the MutexGuard's lifetime is long enough.
+                let mut guard = domains_rx.lock().await;
+
                 let domain_to_process = tokio::select! {
                     biased;
                     _ = shutdown_rx.changed() => {
+                        // Drop the guard to release the lock before exiting the loop.
+                        drop(guard);
                         debug!("Worker {} received shutdown signal, exiting.", i);
                         break;
                     }
-                    domain_result = domains_rx.recv() => {
-                        domain_result
+                    domain_opt = guard.recv() => {
+                        domain_opt
                     }
                 };
 
                 let domain = match domain_to_process {
-                    Ok(domain) => domain,
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!("Worker {} lagged behind, skipping {} domains.", i, n);
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
+                    Some(domain) => domain,
+                    None => {
+                        // The channel is closed, which means the sender (CertStream client) has shut down.
                         debug!("Domain channel closed, worker {} shutting down.", i);
                         break;
                     }
                 };
+
+                debug!(worker_id = i, domain = %domain, "Worker processing domain");
 
                 let process_fut = process_domain(
                     domain.clone(),

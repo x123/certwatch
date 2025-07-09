@@ -556,29 +556,40 @@ The implementation is broken down into two sequential epics:
     *   [x] **#177 - Update Rule Structs:** Modify the internal `Rule` representation to store a compiled `RegexSet` for each rule name.
     *   [x] **#178 - Verify Performance and Memory:** Add tests to confirm that the new implementation has significantly lower memory usage and resolves the worker lag issues.
 
+### **Phase 4: Resolve Performance Bottleneck via Architectural Correction**
+
+*   **Goal:** Eliminate the root cause of the `Worker X lagged behind` warnings by correcting a fundamental architectural flaw in the work distribution model.
+*   **Status:** **Completed**
+*   **Diagnosis:** Severe performance degradation (`worker lagged behind` errors) under load has been traced to a fundamental architectural issue. The use of a `tokio::sync::broadcast` channel for domain distribution causes every domain to be sent to every worker. This results in massive **DNS query amplification**, overwhelming the resolver and causing worker tasks to stall. This was confirmed by adding diagnostic logging to the worker loop and observing multiple workers processing the same domain.
+*   **Tasks:**
+    *   [x] **#179 - Revert Channel Implementation:** The `broadcast` channel in `src/app.rs` has been replaced with a `tokio::sync::mpsc` channel. The receiver is wrapped in an `Arc<Mutex<...>>` to allow multiple workers to pull from it, ensuring each domain is processed by exactly one worker.
+        *   **Rationale:** This reverts to the correct work-distribution pattern for our use case. While a previous commit (`4e4798e`) introduced the `broadcast` channel to solve a perceived "concurrency bottleneck," that change introduced this more severe architectural flaw. The current fix accepts the possibility of minor lock contention on the `mpsc` receiver as a trade-off for eliminating the critical DNS amplification problem.
+    *   [x] **#180 - Validate Fix:** After the change was implemented, the application was run with the `debug-collector.toml` configuration, confirming that domains are processed by single workers and that the `worker lagged behind` errors are eliminated.
+    *   [x] **#180a - Tame DNS Log Noise:** Refined the DNS resolution logic in `src/dns.rs` to handle partial successes (e.g., A record found but no AAAA) and common "not found" errors more gracefully. Benign failures are now logged at the `trace` level instead of `debug`, significantly reducing log verbosity during normal operation.
+
 ---
 
-### **Phase 4: Advanced Boolean Logic**
+### **Phase 5: Advanced Boolean Logic**
 *   **Goal:** Enhance the rule engine's expressiveness by adding support for `any` (OR) and nested conditions.
 *   **Tasks:**
-    *   [ ] **#179 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
-    *   [ ] **#180 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
-    *   [ ] **#181 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
+    *   [ ] **#181 - Update Schema & Parsing:** Extend the YAML schema and `serde` parsing to support `any` blocks and nested `all`/`any` structures.
+    *   [ ] **#182 - Recursive Evaluator:** Refactor the `evaluate` function to be fully recursive, allowing it to walk the nested expression tree correctly.
+    *   [ ] **#183 - Complex Logic Tests:** Add new unit tests specifically for verifying complex boolean scenarios (e.g., `all` nested inside `any`).
 
 ---
 
-### **Phase 5: Formalize the Extensible Enrichment Framework**
+### **Phase 6: Formalize the Extensible Enrichment Framework**
 *   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
 *   **Tasks:**
-    *   [ ] **#182 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
-    *   [ ] **#183 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
-    *   [ ] **#184 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
+    *   [ ] **#184 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
+    *   [ ] **#185 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
+    *   [ ] **#186 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
 
 ---
 
-### **Phase 6: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
+### **Phase 7: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
 *   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
 *   **Tasks:**
-    *   [ ] **#185 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
-    *   [ ] **#186 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
-    *   [ ] **#187 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
+    *   [ ] **#187 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
+    *   [ ] **#188 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
+    *   [ ] **#189 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.

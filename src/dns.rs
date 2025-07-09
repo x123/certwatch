@@ -134,7 +134,7 @@ impl DnsResolver for HickoryDnsResolver {
         );
 
         let mut dns_info = DnsInfo::default();
-        let mut first_error = None;
+        let mut primary_error = None;
 
         // Process A records
         match a_result {
@@ -142,10 +142,7 @@ impl DnsResolver for HickoryDnsResolver {
                 dns_info.a_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
             }
             Err(e) => {
-                debug!(domain, error = %e, "A record lookup failed");
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
+                primary_error = Some(e);
             }
         }
 
@@ -155,47 +152,46 @@ impl DnsResolver for HickoryDnsResolver {
                 dns_info.aaaa_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
             }
             Err(e) => {
-                debug!(domain, error = %e, "AAAA record lookup failed");
-                if first_error.is_none() {
-                    first_error = Some(e);
+                // If A lookup also failed, keep that as the primary error.
+                // Otherwise, this is the primary error.
+                if primary_error.is_none() {
+                    primary_error = Some(e);
+                } else {
+                    // A lookup failed, AAAA lookup also failed. Log this one at trace.
+                    trace!(domain, error = %e, "AAAA record lookup also failed");
                 }
             }
         }
 
-        // Process NS records
-        match ns_result {
-            Ok(lookup) => {
-                dns_info.ns_records = lookup.into_iter().map(|r| r.to_string()).collect();
-            }
-            Err(e) => {
-                debug!(domain, error = %e, "NS record lookup failed");
-                if first_error.is_none() {
-                    first_error = Some(e);
-                }
-            }
+        // Process NS records - failure here is non-critical
+        if let Ok(lookup) = ns_result {
+            dns_info.ns_records = lookup.into_iter().map(|r| r.to_string()).collect();
+        } else if let Err(e) = ns_result {
+            trace!(domain, error = %e, "NS record lookup failed");
         }
 
-        // Only return an error if all lookups failed.
-        if dns_info.is_empty() {
-            if let Some(err) = first_error {
-                let err_string = err.to_string();
-                if is_nxdomain_error_str(&err_string) {
-                    return Err(DnsError::Resolution(err_string));
-                }
-                return Err(DnsError::Resolution(format!(
-                    "All DNS lookups failed for {}: {}",
-                    domain, err_string
-                )));
-            } else {
-                // This case should be rare, but it's possible if all lookups succeed but return no records.
-                return Err(DnsError::Resolution(format!(
-                    "No A, AAAA, or NS records found for {}",
-                    domain
-                )));
+        // A resolution is successful if we get at least one A or AAAA record.
+        if !dns_info.a_records.is_empty() || !dns_info.aaaa_records.is_empty() {
+            // If one of the IP lookups failed but the other succeeded, log it quietly.
+            if let Some(e) = primary_error {
+                trace!(domain, error = %e, "A partial DNS failure occurred but was recovered");
             }
+            return Ok(dns_info);
         }
 
-        Ok(dns_info)
+        // If we are here, both A and AAAA lookups failed or returned empty.
+        // This is a definitive failure for our purposes.
+        if let Some(err) = primary_error {
+            let err_string = err.to_string();
+            // The original error from hickory is sufficient.
+            return Err(DnsError::Resolution(err_string));
+        }
+
+        // This case means both lookups succeeded but returned no IP records.
+        Err(DnsError::Resolution(format!(
+            "No A or AAAA records found for {}",
+            domain
+        )))
     }
 }
 
@@ -204,7 +200,8 @@ pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, d
 
 /// Checks if an `anyhow::Error` is an NXDOMAIN error.
 fn is_nxdomain_error_str(err_str: &str) -> bool {
-    err_str.contains("NXDOMAIN")
+    let lower = err_str.to_lowercase();
+    lower.contains("nxdomain") || lower.contains("no records found")
 }
 
 /// Manages DNS resolution with dual-curve retry logic

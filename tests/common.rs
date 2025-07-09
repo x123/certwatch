@@ -7,7 +7,7 @@ use certwatch::network::CertStreamClient;
 use std::future::Future;
 use chrono::Local;
 use std::time::Duration;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::time::timeout;
 
 // TODO fix this or make it optional locked behind test flags, we cannot always rely on 127.0.0.1
@@ -26,11 +26,11 @@ pub const TEST_CERTSTREAM_URL: &str = "wss://127.0.0.1:8181/domains-only";
 /// # Arguments
 ///
 /// * `duration` - The `Duration` for which the test should run.
-/// * `test_logic` - An async block or function that takes a `broadcast::Receiver<String>`
+/// * `test_logic` - An async block or function that takes a `mpsc::Receiver<String>`
 ///   and performs the specific assertions for the test.
 pub async fn run_live_test<F, Fut>(duration: Duration, test_logic: F) -> Result<()>
 where
-    F: FnOnce(broadcast::Receiver<String>) -> Fut,
+    F: FnOnce(mpsc::Receiver<String>) -> Fut,
     Fut: Future<Output = ()>,
 {
     // Initialize the logger to see output from the client
@@ -38,7 +38,7 @@ where
     println!("[INFO] {} Starting live test for {} seconds...", Local::now().to_rfc3339(), duration.as_secs());
 
     // Setup communication channel
-    let (tx, rx) = broadcast::channel(100);
+    let (tx, rx) = mpsc::channel(100);
 
     // Connect to CertStream
     let client = CertStreamClient::new(TEST_CERTSTREAM_URL.to_string(), tx, 1.0, true); // 1.0 sample rate for tests, allow invalid certs
