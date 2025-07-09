@@ -32,7 +32,7 @@ pub async fn run(
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
     pattern_matcher_override: Option<Arc<dyn PatternMatcher>>,
-    _alert_tx: Option<broadcast::Sender<Alert>>,
+    alert_tx: Option<broadcast::Sender<Alert>>,
 ) -> Result<()> {
     // =========================================================================
     // 1. Initialize Metrics Recorder (and logging)
@@ -102,7 +102,16 @@ pub async fn run(
     // =========================================================================
     // 3. Create Channels for the Pipeline
     // =========================================================================
-    let (alerts_tx, _alerts_rx) = broadcast::channel::<Alert>(1000);
+    // If an alert channel is provided from main (for notifications), we use it.
+    // Otherwise (e.g., in tests), we create a new one and crucially keep the
+    // receiver in scope (`_alerts_rx`) so the channel remains open.
+    let (alerts_tx, _alerts_rx) = match alert_tx {
+        Some(tx) => (tx, None),
+        None => {
+            let (tx, rx) = broadcast::channel(1000);
+            (tx, Some(rx))
+        }
+    };
     let (domains_tx, domains_rx) = if let Some(rx_override) = domains_rx_override {
         // This path is for testing. The test harness provides the receiver.
         // We still need a sender to give to the CertStreamClient, but it will be
@@ -279,7 +288,7 @@ pub async fn run(
         alerts_tx.subscribe(),
         deduplicator,
         output_manager,
-        Some(alerts_tx),
+        Some(alerts_tx.clone()),
     ));
 
     info!("CertWatch initialized successfully. Monitoring for domains...");
