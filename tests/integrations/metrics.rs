@@ -109,3 +109,45 @@ async fn dns_failure_metric_is_incremented() -> Result<()> {
 
     Ok(())
 }
+#[tokio::test]
+async fn metrics_format_is_correct() -> Result<()> {
+    let test_app = TestAppBuilder::new().with_metrics().start().await?;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("http://{}/metrics", test_app.metrics_addr()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body = response.text().await?;
+
+    let lines: Vec<&str> = body.lines().collect();
+    let metric_name = "process_cpu_usage_percent";
+
+    let metric_line_index = lines
+        .iter()
+        .position(|&line| line.starts_with(metric_name))
+        .unwrap_or_else(|| panic!("Metric '{}' not found in output", metric_name));
+
+    assert!(metric_line_index >= 2, "Metric '{}' should be preceded by HELP and TYPE lines", metric_name);
+
+    let type_line = lines[metric_line_index - 1];
+    let help_line = lines[metric_line_index - 2];
+
+    assert!(
+        type_line.starts_with(&format!("# TYPE {} gauge", metric_name)),
+        "TYPE line is missing or incorrect for metric '{}'. Found: {}",
+        metric_name,
+        type_line
+    );
+
+    assert!(
+        help_line.starts_with(&format!("# HELP {}", metric_name)),
+        "HELP line is missing or incorrect for metric '{}'. Found: {}",
+        metric_name,
+        help_line
+    );
+
+    Ok(())
+}

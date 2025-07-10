@@ -44,14 +44,7 @@ impl MetricsServer {
         let app = Router::new().route(
             "/metrics",
             get(move || async move {
-                let rendered = handle.render();
-                let mut lines: Vec<&str> = rendered.lines().collect();
-                lines.sort_unstable();
-                let mut body = lines.join("\n");
-                if !body.is_empty() {
-                    body.push('\n');
-                }
-                body
+                handle.render()
             }),
         );
 
