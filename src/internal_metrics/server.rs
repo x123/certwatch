@@ -41,7 +41,19 @@ impl MetricsServer {
         handle: PrometheusHandle,
         mut shutdown_rx: watch::Receiver<()>,
     ) -> Self {
-        let app = Router::new().route("/metrics", get(move || async move { handle.render() }));
+        let app = Router::new().route(
+            "/metrics",
+            get(move || async move {
+                let rendered = handle.render();
+                let mut lines: Vec<&str> = rendered.lines().collect();
+                lines.sort_unstable();
+                let mut body = lines.join("\n");
+                if !body.is_empty() {
+                    body.push('\n');
+                }
+                body
+            }),
+        );
 
         let task = tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app.into_make_service())
