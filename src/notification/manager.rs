@@ -2,9 +2,9 @@
 //! alerts and sending them to a notification service like Slack.
 
 use crate::config::{DeduplicationConfig, SlackConfig};
-use crate::core::Alert;
-use crate::deduplication::Deduplicator;
+use crate::core::{Alert, AggregatedAlert};
 use crate::notification::slack::SlackClientTrait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::time::{interval, Duration};
@@ -15,31 +15,20 @@ pub struct NotificationManager<S: SlackClientTrait> {
     config: SlackConfig,
     alert_rx: broadcast::Receiver<Alert>,
     slack_client: Arc<S>,
-    deduplicator: Option<Deduplicator>,
 }
 
 impl<S: SlackClientTrait> NotificationManager<S> {
     /// Creates a new `NotificationManager`.
     pub fn new(
         slack_config: SlackConfig,
-        deduplication_config: &DeduplicationConfig,
+        _deduplication_config: &DeduplicationConfig,
         alert_rx: broadcast::Receiver<Alert>,
         slack_client: Arc<S>,
     ) -> Self {
-        let deduplicator = if deduplication_config.enabled {
-            Some(Deduplicator::new(
-                Duration::from_secs(deduplication_config.cache_ttl_seconds),
-                deduplication_config.cache_size as u64,
-            ))
-        } else {
-            None
-        };
-
         Self {
             config: slack_config,
             alert_rx,
             slack_client,
-            deduplicator,
         }
     }
 
@@ -54,7 +43,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
             "NotificationManager configured"
         );
 
-        let mut batch = Vec::with_capacity(batch_size);
+        let mut batch: HashMap<String, AggregatedAlert> = HashMap::with_capacity(batch_size);
         let mut timer = interval(Duration::from_secs(batch_timeout));
 
         loop {
@@ -62,7 +51,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                 biased;
                 _ = timer.tick() => {
                     if !batch.is_empty() {
-                        info!("Batch timer expired, sending {} alerts to Slack.", batch.len());
+                        info!("Batch timer expired, sending {} aggregated alerts to Slack.", batch.len());
                         self.send_batch(&mut batch).await;
                     }
                 }
@@ -70,15 +59,17 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                     match result {
                         Ok(alert) => {
                             debug!(domain = %alert.domain, "Received alert in NotificationManager.");
-                            if let Some(deduplicator) = &self.deduplicator {
-                                if deduplicator.is_duplicate(&alert).await {
-                                    debug!(domain = %alert.domain, "Skipping duplicate alert.");
-                                    continue;
-                                }
+                            let base_domain = psl::domain_str(&alert.domain).unwrap_or(&alert.domain).to_string();
+                            
+                            if let Some(existing_alert) = batch.get_mut(&base_domain) {
+                                existing_alert.deduplicated_count += 1;
+                                debug!(domain = %alert.domain, "Aggregated subdomain.");
+                            } else {
+                                batch.insert(base_domain, AggregatedAlert { alert, deduplicated_count: 0 });
                             }
-                            batch.push(alert);
+
                             if batch.len() >= batch_size {
-                                info!("Batch size limit reached, sending {} alerts to Slack.", batch.len());
+                                info!("Batch size limit reached, sending {} aggregated alerts to Slack.", batch.len());
                                 self.send_batch(&mut batch).await;
                                 timer.reset();
                             }
@@ -89,7 +80,7 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                         Err(broadcast::error::RecvError::Closed) => {
                             info!("Alert channel closed. Shutting down NotificationManager.");
                             if !batch.is_empty() {
-                                info!("Sending final batch of {} alerts before shutdown.", batch.len());
+                                info!("Sending final batch of {} aggregated alerts before shutdown.", batch.len());
                                 self.send_batch(&mut batch).await;
                             }
                             break;
@@ -102,8 +93,12 @@ impl<S: SlackClientTrait> NotificationManager<S> {
     }
 
     /// Sends the current batch of alerts and clears the batch.
-    async fn send_batch(&self, batch: &mut Vec<Alert>) {
-        if let Err(e) = self.slack_client.send_batch(batch).await {
+    async fn send_batch(&self, batch: &mut HashMap<String, AggregatedAlert>) {
+        if batch.is_empty() {
+            return;
+        }
+        let alerts: Vec<AggregatedAlert> = batch.values().cloned().collect();
+        if let Err(e) = self.slack_client.send_batch(&alerts).await {
             error!("Failed to send Slack notification batch: {}", e);
             // TODO: Add metrics for failed sends
         }
@@ -125,7 +120,7 @@ mod tests {
     // A fake Slack client for testing the manager's batching logic.
     #[derive(Clone)]
     struct FakeSlackClient {
-        sent_batches: Arc<Mutex<Vec<Vec<Alert>>>>,
+        sent_batches: Arc<Mutex<Vec<Vec<AggregatedAlert>>>>,
     }
 
     impl FakeSlackClient {
@@ -136,7 +131,7 @@ mod tests {
         }
 
         // A test helper to get the batches that were "sent".
-        fn get_sent_batches(&self) -> Vec<Vec<Alert>> {
+        fn get_sent_batches(&self) -> Vec<Vec<AggregatedAlert>> {
             self.sent_batches.lock().unwrap().clone()
         }
     }
@@ -144,7 +139,7 @@ mod tests {
     #[async_trait]
     impl SlackClientTrait for FakeSlackClient {
         // A fake implementation of send_batch that just records the batch.
-        async fn send_batch(&self, alerts: &[Alert]) -> anyhow::Result<()> {
+        async fn send_batch(&self, alerts: &[AggregatedAlert]) -> anyhow::Result<()> {
             let mut batches = self.sent_batches.lock().unwrap();
             batches.push(alerts.to_vec());
             Ok(())
@@ -171,10 +166,13 @@ mod tests {
         let mut alert1 = Alert::default();
         alert1.domain = "example.com".to_string();
         let mut alert2 = Alert::default();
-        alert2.domain = "example.org".to_string();
+        alert2.domain = "sub.example.com".to_string();
+        let mut alert3 = Alert::default();
+        alert3.domain = "another.com".to_string();
 
         alert_tx.send(alert1).unwrap();
         alert_tx.send(alert2).unwrap();
+        alert_tx.send(alert3).unwrap();
 
         // Allow some time for the manager to process the alerts
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -217,6 +215,7 @@ mod tests {
         let batches = fake_client.get_sent_batches();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0].len(), 1);
+        assert_eq!(batches[0][0].deduplicated_count, 0);
 
         // Cleanup
         manager_handle.abort();

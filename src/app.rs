@@ -8,6 +8,7 @@ use crate::{
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     internal_metrics::logging_recorder::LoggingRecorder,
     network::{CertStreamClient, WebSocketConnection},
+    notification::slack::SlackClientTrait,
     outputs::{OutputManager, StdoutOutput},
     rules::{EnrichmentLevel, RuleMatcher},
     types::AlertSender,
@@ -83,6 +84,7 @@ pub struct AppBuilder {
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
     notification_tx: Option<broadcast::Sender<Alert>>,
+    slack_client_override: Option<Arc<dyn SlackClientTrait>>,
 }
 
 impl AppBuilder {
@@ -96,6 +98,7 @@ impl AppBuilder {
             dns_resolver_override: None,
             enrichment_provider_override: None,
             notification_tx: None,
+            slack_client_override: None,
         }
     }
 
@@ -132,6 +135,12 @@ impl AppBuilder {
     /// Overrides the notification sender channel for testing.
     pub fn notification_tx(mut self, tx: broadcast::Sender<Alert>) -> Self {
         self.notification_tx = Some(tx);
+        self
+    }
+
+    /// Overrides the Slack client for testing.
+    pub fn slack_client_override(mut self, client: Arc<dyn SlackClientTrait>) -> Self {
+        self.slack_client_override = Some(client);
         self
     }
 

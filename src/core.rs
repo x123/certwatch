@@ -141,3 +141,12 @@ pub trait Output: Send + Sync {
     /// * `Err` if sending failed (network error, formatting error, etc.)
     async fn send_alert(&self, alert: &Alert) -> Result<()>;
 }
+
+/// Represents an alert that has been aggregated with other similar alerts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AggregatedAlert {
+    /// The representative alert for the group.
+    pub alert: Alert,
+    /// The number of other alerts that were deduplicated into this one.
+    pub deduplicated_count: usize,
+}

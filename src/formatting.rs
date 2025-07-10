@@ -1,12 +1,13 @@
 // src/formatting.rs
 
-use crate::core::Alert;
 use std::cmp::Ordering;
 use std::net::IpAddr;
 
 /// A trait for formatting a batch of alerts into a single string.
+use crate::core::AggregatedAlert;
+
 pub trait TextFormatter: Send + Sync {
-    fn format_batch(&self, alerts: &[Alert]) -> String;
+    fn format_batch(&self, alerts: &[AggregatedAlert]) -> String;
 }
 
 /// A formatter for Slack that creates a rich, readable, and actionable message.
@@ -22,7 +23,8 @@ impl SlackTextFormatter {
         domain.as_ref()
     }
 
-    fn format_line(&self, alert: &Alert) -> String {
+    fn format_line(&self, aggregated_alert: &AggregatedAlert) -> String {
+        let alert = &aggregated_alert.alert;
         let base_domain = self.get_base_domain(&alert.domain);
 
         // Tag part
@@ -33,11 +35,16 @@ impl SlackTextFormatter {
             "<https://urlscan.io/search/#page.domain%3A{}|{}>",
             base_domain, alert.domain
         );
+        let dedupe_part = if aggregated_alert.deduplicated_count > 0 {
+            format!(" (+{} more)", aggregated_alert.deduplicated_count)
+        } else {
+            "".to_string()
+        };
         let other_domain_links = format!(
             "(<https://www.shodan.io/search?query=hostname%3A{0}|shodan>|<https://www.virustotal.com/gui/domain/{0}|vt>)",
             base_domain
         );
-        let domain_part = format!("{} {}", domain_urlscan_link, other_domain_links);
+        let domain_part = format!("{}{}{}", domain_urlscan_link, dedupe_part, other_domain_links);
 
         // IP part
         let all_ips: Vec<_> = alert.dns.a_records.iter().chain(alert.dns.aaaa_records.iter()).collect();
@@ -57,9 +64,11 @@ impl SlackTextFormatter {
                 .join("%20OR%20");
 
             let ip_urlscan_link_text = if all_ips.len() > 1 {
-                format!("{} (+{} others)", all_ips[0], all_ips.len() - 1)
-            } else {
+                format!("{} (+{} more)", all_ips[0], all_ips.len() - 1)
+            } else if !all_ips.is_empty() {
                 all_ips[0].to_string()
+            } else {
+                "".to_string()
             };
 
             let ip_urlscan_link = format!(
@@ -81,6 +90,8 @@ impl SlackTextFormatter {
             let country_code = info.country_code.as_deref().unwrap_or("??");
             let asn_org = &info.as_name;
             format!(" @ {}/{}, {}", info.as_number, asn_org, country_code)
+        } else if !all_ips.is_empty() {
+            " @ /?, ??".to_string()
         } else {
             "".to_string()
         };
@@ -94,7 +105,7 @@ struct SortableAlert<'a> {
     base_domain: Option<&'a str>,
     fqdn: &'a str,
     asn_org: Option<&'a str>,
-    original: &'a Alert,
+    original: &'a AggregatedAlert,
 }
 
 impl<'a> PartialEq for SortableAlert<'a> {
@@ -143,14 +154,15 @@ impl<'a> Ord for SortableAlert<'a> {
 }
 
 impl TextFormatter for SlackTextFormatter {
-    fn format_batch(&self, alerts: &[Alert]) -> String {
+    fn format_batch(&self, alerts: &[AggregatedAlert]) -> String {
         if alerts.is_empty() {
             return String::new();
         }
 
         let mut sortable_alerts: Vec<SortableAlert> = alerts
             .iter()
-            .map(|alert| {
+            .map(|aggregated_alert| {
+                let alert = &aggregated_alert.alert;
                 let base_domain = psl::domain_str(&alert.domain);
                 let asn_org = alert
                     .enrichment
@@ -162,7 +174,7 @@ impl TextFormatter for SlackTextFormatter {
                     base_domain,
                     fqdn: &alert.domain,
                     asn_org,
-                    original: alert,
+                    original: aggregated_alert,
                 }
             })
             .collect();
@@ -229,10 +241,14 @@ mod tests {
             vec!["hasslo.ns.cloudflare.com", "ophelia.ns.cloudflare.com", "ns3.com", "ns4.com"],
             Some(("US", 13335, "CLOUDFLARENET")),
         );
+        let aggregated_alert = AggregatedAlert {
+            alert,
+            deduplicated_count: 5,
+        };
         let formatter = SlackTextFormatter;
-        let line = formatter.format_line(&alert);
+        let line = formatter.format_line(&aggregated_alert);
 
-        let expected = "[phishing] <https://urlscan.io/search/#page.domain%3Acom-etcapo.vip|com-etcapo.vip> (<https://www.shodan.io/search?query=hostname%3Acom-etcapo.vip|shodan>|<https://www.virustotal.com/gui/domain/com-etcapo.vip|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22%20OR%20%222.2.2.2%22%20OR%20%223.3.3.3%22)|1.1.1.1 (+3 others)> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ 13335/CLOUDFLARENET, US";
+        let expected = "[phishing] <https://urlscan.io/search/#page.domain%3Acom-etcapo.vip|com-etcapo.vip> (+5 more)(<https://www.shodan.io/search?query=hostname%3Acom-etcapo.vip|shodan>|<https://www.virustotal.com/gui/domain/com-etcapo.vip|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22%20OR%20%222.2.2.2%22%20OR%20%223.3.3.3%22)|1.1.1.1 (+3 more)> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ 13335/CLOUDFLARENET, US";
         assert_eq!(line, expected);
     }
 
@@ -244,10 +260,14 @@ mod tests {
             vec!["ns1.example.com"],
             None,
         );
+        let aggregated_alert = AggregatedAlert {
+            alert,
+            deduplicated_count: 0,
+        };
         let formatter = SlackTextFormatter;
-        let line = formatter.format_line(&alert);
+        let line = formatter.format_line(&aggregated_alert);
 
-        let expected = "[phishing] <https://urlscan.io/search/#page.domain%3Acom-xxtfr.vip|com-xxtfr.vip> (<https://www.shodan.io/search?query=hostname%3Acom-xxtfr.vip|shodan>|<https://www.virustotal.com/gui/domain/com-xxtfr.vip|vt>)";
+        let expected = "[phishing] <https://urlscan.io/search/#page.domain%3Acom-xxtfr.vip|com-xxtfr.vip>(<https://www.shodan.io/search?query=hostname%3Acom-xxtfr.vip|shodan>|<https://www.virustotal.com/gui/domain/com-xxtfr.vip|vt>)";
         assert_eq!(line, expected);
     }
 
@@ -259,8 +279,12 @@ mod tests {
             vec![],
             Some(("US", 16509, "AMAZON-02")),
         );
+        let aggregated_alert = AggregatedAlert {
+            alert,
+            deduplicated_count: 0,
+        };
         let formatter = SlackTextFormatter;
-        let line = formatter.format_line(&alert);
+        let line = formatter.format_line(&aggregated_alert);
 
         let expected_domain_link = "<https://urlscan.io/search/#page.domain%3Acom-locateiphone.us|ww25.hostmaster.hostmaster.icloud.com-locateiphone.us>";
         let expected_other_links = "(<https://www.shodan.io/search?query=hostname%3Acom-locateiphone.us|shodan>|<https://www.virustotal.com/gui/domain/com-locateiphone.us|vt>)";
@@ -272,12 +296,20 @@ mod tests {
     fn test_format_batch() {
         let alert1 = create_test_alert("site1.com", vec!["1.1.1.1"], vec!["ns1.site1.com"], Some(("AU", 1, "APNIC")));
         let alert2 = create_test_alert("site2.com", vec!["8.8.8.8"], vec![], None);
+        let aggregated_alert1 = AggregatedAlert {
+            alert: alert1,
+            deduplicated_count: 0,
+        };
+        let aggregated_alert2 = AggregatedAlert {
+            alert: alert2,
+            deduplicated_count: 0,
+        };
         let formatter = SlackTextFormatter;
-        let batch = formatter.format_batch(&[alert1, alert2]);
+        let batch = formatter.format_batch(&[aggregated_alert1, aggregated_alert2]);
 
         // With sorting, site1 should come before site2.
-        let expected_line1 = "[phishing] <https://urlscan.io/search/#page.domain%3Asite1.com|site1.com> (<https://www.shodan.io/search?query=hostname%3Asite1.com|shodan>|<https://www.virustotal.com/gui/domain/site1.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22)|1.1.1.1> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ 1/APNIC, AU";
-        let expected_line2 = "[phishing] <https://urlscan.io/search/#page.domain%3Asite2.com|site2.com> (<https://www.shodan.io/search?query=hostname%3Asite2.com|shodan>|<https://www.virustotal.com/gui/domain/site2.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%228.8.8.8%22)|8.8.8.8> (<https://www.shodan.io/search?query=ip%3A8.8.8.8|shodan>|<https://www.virustotal.com/gui/ip-address/8.8.8.8|vt>)";
+        let expected_line1 = "[phishing] <https://urlscan.io/search/#page.domain%3Asite1.com|site1.com>(<https://www.shodan.io/search?query=hostname%3Asite1.com|shodan>|<https://www.virustotal.com/gui/domain/site1.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%221.1.1.1%22)|1.1.1.1> (<https://www.shodan.io/search?query=ip%3A1.1.1.1|shodan>|<https://www.virustotal.com/gui/ip-address/1.1.1.1|vt>) @ 1/APNIC, AU";
+        let expected_line2 = "[phishing] <https://urlscan.io/search/#page.domain%3Asite2.com|site2.com>(<https://www.shodan.io/search?query=hostname%3Asite2.com|shodan>|<https://www.virustotal.com/gui/domain/site2.com|vt>) | <https://urlscan.io/search/#page.ip%3A(%228.8.8.8%22)|8.8.8.8> (<https://www.shodan.io/search?query=ip%3A8.8.8.8|shodan>|<https://www.virustotal.com/gui/ip-address/8.8.8.8|vt>) @ /?, ??";
         let expected = format!("```\n{}\n{}\n```", expected_line1, expected_line2);
 
         assert_eq!(batch, expected);
@@ -298,12 +330,12 @@ mod tests {
             create_test_alert("example.com", vec![], vec![], Some(("US", 16509, "AMAZON-02")));
 
         let alerts = vec![
-            alert_c_example_no_asn,
-            alert_unparsable,
-            alert_a_example_cloudflare,
-            alert_z_another,
-            alert_b_example_google,
-            alert_example_amazon,
+            AggregatedAlert { alert: alert_c_example_no_asn, deduplicated_count: 0 },
+            AggregatedAlert { alert: alert_unparsable, deduplicated_count: 0 },
+            AggregatedAlert { alert: alert_a_example_cloudflare, deduplicated_count: 0 },
+            AggregatedAlert { alert: alert_z_another, deduplicated_count: 0 },
+            AggregatedAlert { alert: alert_b_example_google, deduplicated_count: 0 },
+            AggregatedAlert { alert: alert_example_amazon, deduplicated_count: 0 },
         ];
         let formatter = SlackTextFormatter;
         let batch = formatter.format_batch(&alerts);

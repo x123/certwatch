@@ -50,6 +50,7 @@ pub struct TestAppBuilder {
     dns_resolver: Option<std::sync::Arc<dyn certwatch::core::DnsResolver>>,
     enrichment_provider: Option<std::sync::Arc<dyn certwatch::core::EnrichmentProvider>>,
     alert_tx: Option<broadcast::Sender<Alert>>,
+    slack_client: Option<Arc<dyn certwatch::notification::slack::SlackClientTrait>>,
 }
 
 impl TestAppBuilder {
@@ -73,6 +74,7 @@ impl TestAppBuilder {
                 crate::helpers::fake_enrichment::FakeEnrichmentProvider::new(),
             )),
             alert_tx: None,
+            slack_client: None,
         }
     }
 
@@ -132,6 +134,14 @@ impl TestAppBuilder {
 
     /// Builds the application components but does not spawn it.
     /// Returns the TestApp handle and a future that runs the app.
+    pub fn with_slack_client(
+        mut self,
+        client: Arc<dyn certwatch::notification::slack::SlackClientTrait>,
+    ) -> Self {
+        self.slack_client = Some(client);
+        self
+    }
+
     pub async fn build(self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {
         // Ensure the dummy ASN file exists to prevent startup errors
         if let Some(path) = &self.config.enrichment.asn_tsv_path {
@@ -166,6 +176,9 @@ impl TestAppBuilder {
             }
             if let Some(tx) = self.alert_tx {
                 builder = builder.notification_tx(tx);
+            }
+            if let Some(sc) = self.slack_client {
+                builder = builder.slack_client_override(sc);
             }
 
             let app = builder.build(shutdown_rx).await?;

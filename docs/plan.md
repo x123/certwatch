@@ -179,8 +179,19 @@
 
 ### Epic #50: Ensure Clean JSON Output for Pipelining
 *   **User Story:** As a command-line user, I want `certwatch` to send only JSON data to standard output (`stdout`), so that I can reliably pipe the output to other tools like `jq` for filtering and analysis without encountering parsing errors.
+*   **Status:** Completed
+*   **Tasks:**
+    *   [x] **#223 - Reconfigure Tracing Subscriber:** Modify the `tracing_subscriber` in `main.rs` to write all logs to `stderr` instead of `stdout`.
+    *   [x] **#224 - Audit `println!` Usage:** Perform a codebase-wide audit to find and replace any `println!` macros used for logging with appropriate `tracing` macros.
+    *   [x] **#225 - Create Output Verification Test:** Implement a new integration test that runs the application with JSON output, captures both `stdout` and `stderr`, and asserts that only valid JSON is written to `stdout` and logs are correctly written to `stderr`.
+
+---
+
+### Epic #51: Enhance Slack Alerts with Deduplicated Domain Counts
+*   **User Story:** As a security analyst receiving CertWatch alerts, I want to see a count of suppressed subdomains and IPs in a compact format, so that I can quickly gauge the magnitude of an alert without unnecessary verbosity.
 *   **Status:** Not Started
 *   **Tasks:**
-    *   [ ] **#223 - Reconfigure Tracing Subscriber:** Modify the `tracing_subscriber` in `main.rs` to write all logs to `stderr` instead of `stdout`.
-    *   [ ] **#224 - Audit `println!` Usage:** Perform a codebase-wide audit to find and replace any `println!` macros used for logging with appropriate `tracing` macros.
-    *   [ ] **#225 - Create Output Verification Test:** Implement a new integration test that runs the application with JSON output, captures both `stdout` and `stderr`, and asserts that only valid JSON is written to `stdout` and logs are correctly written to `stderr`.
+    *   [ ] **#226 - Update Slack Formatting Logic:** Modify the Slack notification formatting to include a `(+x more)` count for both deduplicated subdomains and aggregated IP addresses.
+    *   [ ] **#227 - Refactor IP Aggregation Text:** Change the existing `(+x others)` for IPs to `(+x more)` for consistency.
+    *   [ ] **#228 - Add Conditional Display Logic:** Ensure the `(+x more)` text only appears when the count of additional items is greater than zero.
+    *   [ ] **#229 - Update Integration Tests:** Modify existing Slack notification tests to assert the new format, including cases with and without the `(+x more)` text.

@@ -1,5 +1,6 @@
 //! A client for sending notifications to Slack.
 
+use crate::core::AggregatedAlert;
 use crate::formatting::TextFormatter;
 use async_trait::async_trait;
 use serde_json::json;
@@ -9,7 +10,7 @@ use tracing::{error, info, instrument};
 #[async_trait]
 pub trait SlackClientTrait: Send + Sync {
     /// Sends a batch of alerts.
-    async fn send_batch(&self, alerts: &[crate::core::Alert]) -> anyhow::Result<()>;
+    async fn send_batch(&self, alerts: &[AggregatedAlert]) -> anyhow::Result<()>;
 }
 
 /// A client for sending messages to a Slack webhook.
@@ -39,9 +40,9 @@ impl SlackClientTrait for SlackClient {
     /// Formats and sends a batch of alerts to the configured Slack webhook.
     ///
     /// # Arguments
-    /// * `alerts` - A slice of `Alert`s to send.
+    /// * `alerts` - A slice of `AggregatedAlert`s to send.
     #[instrument(skip(self, alerts), fields(count = alerts.len()))]
-    async fn send_batch(&self, alerts: &[crate::core::Alert]) -> anyhow::Result<()> {
+    async fn send_batch(&self, alerts: &[AggregatedAlert]) -> anyhow::Result<()> {
         if alerts.is_empty() {
             return Ok(());
         }
@@ -94,10 +95,13 @@ mod slack_client_tests {
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn create_test_alert(domain: &str) -> Alert {
-        Alert {
-            domain: domain.to_string(),
-            ..Default::default()
+    fn create_test_alert(domain: &str) -> AggregatedAlert {
+        AggregatedAlert {
+            alert: Alert {
+                domain: domain.to_string(),
+                ..Default::default()
+            },
+            deduplicated_count: 0,
         }
     }
 
