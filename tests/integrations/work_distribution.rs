@@ -38,7 +38,8 @@ rules:
         })
         .with_test_domains_channel()
         .with_rules(rules)
-        .await;
+        .await
+        .with_skipped_health_check();
 
     let (mut test_app, app_future) = builder
         .build()
@@ -73,10 +74,11 @@ rules:
         .expect("App should shut down gracefully");
 
     // Account for the startup health check.
+    // The startup health check was skipped, so the periodic check should run once.
     assert_eq!(
         resolver.get_resolve_count("google.com"),
         1,
-        "Startup health check should have resolved the recovery domain exactly once."
+        "Periodic health check should have resolved the check domain exactly once."
     );
 
     // Now, verify the work distribution for our test domains.

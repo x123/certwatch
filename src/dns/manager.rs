@@ -1,7 +1,7 @@
 use crate::{
     config::PerformanceConfig,
     core::{DnsInfo, DnsResolver},
-    dns::{DnsError, DnsHealthMonitor, DnsRetryConfig},
+    dns::{DnsError, DnsHealth, DnsRetryConfig},
     internal_metrics::Metrics,
 };
 use std::{sync::Arc, time::Duration};
@@ -37,7 +37,7 @@ impl DnsResolutionManager {
         resolver: Arc<dyn DnsResolver>,
         retry_config: DnsRetryConfig,
         performance_config: &PerformanceConfig,
-        health_monitor: Arc<DnsHealthMonitor>,
+        health_monitor: Arc<DnsHealth>,
         shutdown_rx: watch::Receiver<()>,
         _metrics: Arc<Metrics>,
     ) -> (
@@ -122,7 +122,7 @@ impl DnsResolutionManager {
         mut dns_request_rx: mpsc::Receiver<(String, String)>,
         nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>,
         resolved_tx: async_channel::Sender<ResolvedDomain>,
-        health_monitor: Arc<DnsHealthMonitor>,
+        _health_monitor: Arc<DnsHealth>, // Health is now checked periodically, not per-request
         shutdown_rx: &mut watch::Receiver<()>,
         semaphore: Arc<Semaphore>,
     ) {
@@ -137,7 +137,6 @@ impl DnsResolutionManager {
                 Some((domain, source_tag)) = dns_request_rx.recv() => {
                     let resolver_clone = resolver.clone();
                     let nxdomain_retry_tx_clone = nxdomain_retry_tx.clone();
-                    let health_monitor_clone = health_monitor.clone();
                     let config_clone = config.clone();
                     let semaphore_clone = semaphore.clone();
                     let resolved_tx_clone = resolved_tx.clone();
@@ -161,7 +160,6 @@ impl DnsResolutionManager {
                             resolver_clone,
                             config_clone,
                             nxdomain_retry_tx_clone,
-                            health_monitor_clone,
                         )
                         .await
                         {
@@ -187,7 +185,6 @@ impl DnsResolutionManager {
         resolver: Arc<dyn DnsResolver>,
         config: DnsRetryConfig,
         nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>,
-        health_monitor: Arc<DnsHealthMonitor>,
     ) -> Result<DnsInfo, DnsError> {
         let retries = config.retries.unwrap_or(3);
         let backoff_ms = config.backoff_ms.unwrap_or(500);
@@ -198,12 +195,11 @@ impl DnsResolutionManager {
         for attempt in 0..=retries {
             match resolver.resolve(domain).await {
                 Ok(dns_info) => {
-                    health_monitor.record_outcome(true);
+                    // Health is now managed by the periodic checker, not per-request.
                     // The success metric is now recorded in the resolver itself.
                     return Ok(dns_info);
                 }
                 Err(DnsError::Resolution(e)) => {
-                    health_monitor.record_outcome(false);
                     metrics::counter!("dns_queries_total", "status" => "failure").increment(1);
                     debug!(error = %e, "Handling resolution error");
 

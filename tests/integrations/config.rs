@@ -38,10 +38,8 @@ fn test_load_full_valid_config() {
         nxdomain_retries = 10
         nxdomain_backoff_ms = 10000
         [dns.health]
-        failure_threshold = 0.8
-        window_seconds = 60
-        recovery_check_domain = "test.com"
-        recovery_check_interval_seconds = 5
+        interval_seconds = 15
+        check_domain = "test.com"
         [enrichment]
         asn_tsv_path = "/var/db/ip-to-asn.tsv"
         [output]
@@ -83,16 +81,8 @@ fn test_load_full_valid_config() {
             config.dns.retry_config.nxdomain_backoff_ms,
             Some(10000)
         );
-        assert_eq!(config.dns.health.failure_threshold, 0.8);
-        assert_eq!(config.dns.health.window_seconds, 60);
-        assert_eq!(
-            config.dns.health.recovery_check_domain,
-            "test.com".to_string()
-        );
-        assert_eq!(
-            config.dns.health.recovery_check_interval_seconds,
-            5
-        );
+        assert_eq!(config.dns.health.interval_seconds, 15);
+        assert_eq!(config.dns.health.check_domain, "test.com".to_string());
         assert_eq!(
             config.enrichment.asn_tsv_path,
             Some(PathBuf::from("/var/db/ip-to-asn.tsv"))

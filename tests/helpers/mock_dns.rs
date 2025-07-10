@@ -11,12 +11,15 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub struct MockDnsResolver {
     responses: Arc<Mutex<HashMap<String, Result<DnsInfo, DnsError>>>>,
     resolve_counts: Arc<Mutex<HashMap<String, u32>>>,
     metrics: Arc<Metrics>,
+    /// A channel to signal when a resolve attempt has been made.
+    resolve_attempts_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
 }
 
 impl MockDnsResolver {
@@ -25,7 +28,15 @@ impl MockDnsResolver {
             responses: Arc::new(Mutex::new(HashMap::new())),
             resolve_counts: Arc::new(Mutex::new(HashMap::new())),
             metrics,
+            resolve_attempts_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Returns a receiver that will get a message every time `resolve` is called.
+    pub fn get_resolve_attempts_rx(&self) -> mpsc::Receiver<String> {
+        let (tx, rx) = mpsc::channel(100);
+        *self.resolve_attempts_tx.lock().unwrap() = Some(tx);
+        rx
     }
 
     pub fn add_response(&self, domain: &str, response: Result<DnsInfo, DnsError>) {
@@ -52,6 +63,11 @@ impl MockDnsResolver {
 #[async_trait]
 impl DnsResolver for MockDnsResolver {
     async fn resolve(&self, domain: &str) -> Result<DnsInfo, DnsError> {
+        // Signal that a resolve attempt was made.
+        if let Some(tx) = self.resolve_attempts_tx.lock().unwrap().as_ref() {
+            let _ = tx.try_send(domain.to_string());
+        }
+
         // Increment the resolve count for this domain.
         let mut counts = self.resolve_counts.lock().unwrap();
         *counts.entry(domain.to_string()).or_insert(0) += 1;

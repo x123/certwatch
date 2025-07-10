@@ -150,19 +150,17 @@ impl Default for DnsConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct DnsHealthConfig {
-    pub failure_threshold: f64,
-    pub window_seconds: u64,
-    pub recovery_check_domain: String,
-    pub recovery_check_interval_seconds: u64,
+    pub enabled: bool,
+    pub interval_seconds: u64,
+    pub check_domain: String,
 }
 
 impl Default for DnsHealthConfig {
     fn default() -> Self {
         Self {
-            failure_threshold: 0.95,
-            window_seconds: 120,
-            recovery_check_domain: "google.com".to_string(),
-            recovery_check_interval_seconds: 10,
+            enabled: true,
+            interval_seconds: 30,
+            check_domain: "google.com".to_string(),
         }
     }
 }

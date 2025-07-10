@@ -273,4 +273,9 @@ impl TestAppBuilder {
         self.skip_health_check = true;
         self
     }
+
+    pub fn with_disabled_periodic_health_check(mut self) -> Self {
+        self.config.dns.health.enabled = false;
+        self
+    }
 }

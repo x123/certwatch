@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     core::{Alert, DnsResolver, EnrichmentProvider, Output},
     deduplication::Deduplicator,
-    dns::{DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
+    dns::{DnsHealth, DnsResolutionManager, HickoryDnsResolver},
     internal_metrics::{Metrics, MetricsBuilder},
     network::{CertStreamClient, WebSocketConnection},
     notification::slack::SlackClientTrait,
@@ -198,7 +198,7 @@ impl AppBuilder {
         // =========================================================================
         let (dns_resolver, dns_health_monitor) = match self.dns_resolver_override {
             Some(resolver) => {
-                let health_monitor = DnsHealthMonitor::new(
+                let health_monitor = DnsHealth::new(
                     config.dns.health.clone(),
                     resolver.clone(),
                     shutdown_rx.clone(),
@@ -211,7 +211,7 @@ impl AppBuilder {
                 let (resolver, nameservers) =
                     HickoryDnsResolver::from_config(&config.dns, metrics.clone())?;
                 let resolver = Arc::new(resolver) as Arc<dyn DnsResolver>;
-                let health_monitor = DnsHealthMonitor::new(
+                let health_monitor = DnsHealth::new(
                     config.dns.health.clone(),
                     resolver.clone(),
                     shutdown_rx.clone(),
@@ -223,7 +223,7 @@ impl AppBuilder {
         };
 
         if !self.skip_health_check {
-            DnsHealthMonitor::startup_check(&*dns_resolver, &config.dns.health).await?;
+            DnsHealth::startup_check(&*dns_resolver, &config.dns.health).await?;
         }
 
         // =========================================================================

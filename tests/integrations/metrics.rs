@@ -74,14 +74,15 @@ async fn dns_failure_metric_is_incremented() -> Result<()> {
     // We use a non-routable address to guarantee a DNS timeout/failure.
     let invalid_resolver = "10.255.255.1:53";
 
-    let mut builder = TestAppBuilder::new()
+    let builder = TestAppBuilder::new()
         .with_metrics()
-        .with_test_domains_channel();
-
-    // Override the DNS config to use the invalid resolver and a short timeout
-    builder.config.dns.resolver = Some(invalid_resolver.to_string());
-    builder.config.dns.timeout_ms = 100; // Short timeout to make the test run faster
-    builder.config.dns.retry_config.retries = Some(0); // Disable retries for this test
+        .with_test_domains_channel()
+        .with_disabled_periodic_health_check()
+        .with_config_modifier(|c| {
+            c.dns.resolver = Some(invalid_resolver.to_string());
+            c.dns.timeout_ms = 100;
+            c.dns.retry_config.retries = Some(1);
+        });
 
     let test_app = builder
         .with_skipped_health_check()
@@ -103,6 +104,7 @@ async fn dns_failure_metric_is_incremented() -> Result<()> {
             .send()
             .await?;
         body = response.text().await?;
+        // With one retry, we expect 2 failures total.
         if body.contains("dns_queries_total{status=\"failure\"} 2") {
             break;
         }

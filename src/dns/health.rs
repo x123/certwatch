@@ -1,21 +1,21 @@
 //! DNS Health Monitoring Service
 //!
 //! This module provides a stateful health monitor for the DNS resolution system.
-//! It tracks the failure rate over a configurable time window and can declare the
-//! system "unhealthy" if the rate exceeds a threshold.
+//! It periodically checks a known domain to determine if the configured DNS
+//! resolver is operational.
 
 use crate::{config::DnsHealthConfig, core::DnsResolver, internal_metrics::Metrics};
-use crate::utils::heartbeat::run_heartbeat;
 use anyhow::Result;
 use std::{
-    collections::VecDeque,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
-use tokio::sync::{mpsc, watch};
-use tokio::time::Instant;
-use tracing::{debug, info};
+use tokio::sync::watch;
+use tracing::{debug, error, info, warn};
 
 /// Represents the health state of the DNS resolver.
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -24,31 +24,14 @@ pub enum HealthState {
     Unhealthy,
 }
 
-/// A recent resolution attempt outcome.
-pub struct Outcome {
-    pub timestamp: Instant,
-    pub is_success: bool,
+/// Monitors the health of the DNS resolution system via periodic checks.
+pub struct DnsHealth {
+    is_healthy: Arc<AtomicBool>,
+    nameservers: Vec<SocketAddr>,
+    _metrics: Arc<Metrics>,
 }
 
-/// Holds the mutable state of the health monitor, protected by a single Mutex.
-pub struct MonitorState {
-    pub health: HealthState,
-    pub outcomes: VecDeque<Outcome>,
-    #[cfg(test)]
-    pub health_updated_tx: watch::Sender<()>,
-}
-
-/// Monitors the health of the DNS resolution system.
-pub struct DnsHealthMonitor {
-    pub config: DnsHealthConfig,
-    pub monitor_state: Mutex<MonitorState>,
-    pub resolver: Arc<dyn DnsResolver>,
-    pub outcome_tx: mpsc::UnboundedSender<bool>,
-    pub metrics: Arc<Metrics>,
-    pub nameservers: Vec<SocketAddr>,
-}
-
-impl DnsHealthMonitor {
+impl DnsHealth {
     /// Performs a quick, one-off health check to ensure the configured DNS
     /// resolver is responsive before starting the main application.
     pub async fn startup_check(
@@ -56,8 +39,7 @@ impl DnsHealthMonitor {
         config: &DnsHealthConfig,
     ) -> Result<()> {
         info!("Performing startup DNS health check...");
-
-        let check_domain = &config.recovery_check_domain;
+        let check_domain = &config.check_domain;
         debug!(domain = check_domain, "Performing startup DNS health check");
 
         match resolver.resolve(check_domain).await {
@@ -71,207 +53,86 @@ impl DnsHealthMonitor {
         }
     }
 
-    /// Creates a new DNS health monitor and starts its background tasks.
+    /// Creates a new DNS health monitor and starts its background check task.
     pub fn new(
         config: DnsHealthConfig,
         resolver: Arc<dyn DnsResolver>,
-        shutdown_rx: watch::Receiver<()>,
+        mut shutdown_rx: watch::Receiver<()>,
         metrics: Arc<Metrics>,
         nameservers: Vec<SocketAddr>,
     ) -> Arc<Self> {
-        let (outcome_tx, outcome_rx) = mpsc::unbounded_channel();
+        let is_healthy = Arc::new(AtomicBool::new(true));
         let monitor = Arc::new(Self {
-            config,
-            monitor_state: Mutex::new(MonitorState {
-                health: HealthState::Healthy,
-                outcomes: VecDeque::new(),
-                #[cfg(test)]
-                health_updated_tx: watch::channel(()).0,
-            }),
-            resolver,
-            outcome_tx,
-            metrics,
+            is_healthy: is_healthy.clone(),
             nameservers,
+            _metrics: metrics,
         });
 
         // Set initial health for all nameservers to healthy
-        monitor.update_health_gauge(HealthState::Healthy);
+        monitor.update_health_gauge(true);
 
-        // Start the state update task
-        let monitor_clone = Arc::clone(&monitor);
-        let mut update_shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
-            tracing::debug!("Spawning DNS health monitor state update task.");
-            tokio::select! {
-                _ = monitor_clone.process_outcomes_task(outcome_rx) => {},
-                _ = update_shutdown_rx.changed() => {
-                    tracing::info!("DNS health monitor state update task received shutdown signal.");
+        if config.enabled {
+            // Start the background health check task
+            let monitor_clone = Arc::clone(&monitor);
+            tokio::spawn(async move {
+                debug!("Spawning DNS periodic health check task.");
+                let mut interval = tokio::time::interval(Duration::from_secs(config.interval_seconds));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown_rx.changed() => {
+                            info!("DNS health monitor task received shutdown signal.");
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            monitor_clone.perform_health_check(&*resolver, &config.check_domain).await;
+                        }
+                    }
                 }
-            }
-        });
-
-        // Start the background recovery task
-        let recovery_monitor_clone = Arc::clone(&monitor);
-        let mut recovery_shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
-            recovery_monitor_clone
-                .recovery_check_task(&mut recovery_shutdown_rx)
-                .await;
-        });
-
-        // Start the heartbeat task
-        let heartbeat_shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
-            run_heartbeat("DnsHealthMonitor", heartbeat_shutdown_rx).await;
-        });
+                info!("DNS health monitor task finished.");
+            });
+        }
 
         monitor
     }
 
-    /// Records a resolution outcome by sending it to the state update task.
-    pub fn record_outcome(&self, is_success: bool) {
-        tracing::debug!(is_success, "Recording outcome");
-        if let Err(e) = self.outcome_tx.send(is_success) {
-            tracing::error!(error = %e, "Failed to send DNS health outcome to channel");
+    /// Returns `true` if the DNS resolver is currently considered healthy.
+    pub fn is_healthy(&self) -> bool {
+        self.is_healthy.load(Ordering::Relaxed)
+    }
+
+    /// Performs a single health check by resolving a domain.
+    async fn perform_health_check(&self, resolver: &dyn DnsResolver, check_domain: &str) {
+        let current_health = self.is_healthy();
+        match resolver.resolve(check_domain).await {
+            Ok(_) => {
+                if !current_health {
+                    self.is_healthy.store(true, Ordering::Relaxed);
+                    self.update_health_gauge(true);
+                    info!(domain = %check_domain, "DNS resolver has RECOVERED and is now HEALTHY.");
+                }
+            }
+            Err(e) => {
+                if current_health {
+                    self.is_healthy.store(false, Ordering::Relaxed);
+                    self.update_health_gauge(false);
+                    error!(domain = %check_domain, error = %e, "DNS health check failed. Resolver is now UNHEALTHY.");
+                } else {
+                    warn!(domain = %check_domain, error = %e, "DNS health check failed. Resolver remains UNHEALTHY.");
+                }
+            }
         }
     }
 
-    /// Gets the current health state.
-    pub fn current_state(&self) -> HealthState {
-        self.monitor_state.lock().unwrap().health.clone()
-    }
-
-    /// Updates the health state based on the current outcomes.
-    fn update_health_gauge(&self, health: HealthState) {
-        let value = if health == HealthState::Healthy {
-            1.0
-        } else {
-            0.0
-        };
+    /// Updates the health state gauge metric.
+    fn update_health_gauge(&self, is_healthy: bool) {
+        let value = if is_healthy { 1.0 } else { 0.0 };
         for ns in &self.nameservers {
             metrics::gauge!("dns_resolver_health_status", "resolver_ip" => ns.to_string())
                 .set(value);
         }
-    }
-
-    fn update_health_state(&self, state: &mut MonitorState) {
-        if state.outcomes.is_empty() {
-            return; // Not enough data, remain in the current state
-        }
-
-        let total = state.outcomes.len();
-        let failures = state.outcomes.iter().filter(|o| !o.is_success).count();
-        let failure_rate = failures as f64 / total as f64;
-
-        let failure_threshold = self.config.failure_threshold;
-        let window_seconds = self.config.window_seconds;
-
-        if failure_rate >= failure_threshold && state.health == HealthState::Healthy {
-            state.health = HealthState::Unhealthy;
-            self.update_health_gauge(HealthState::Unhealthy);
-            tracing::error!(
-                failure_rate = failure_rate * 100.0,
-                window_seconds,
-                failures,
-                total,
-                "DNS resolver is now UNHEALTHY."
-            );
-        } else if failure_rate < failure_threshold && state.health == HealthState::Unhealthy {
-            // Recovery is handled by the dedicated recovery task to ensure stability
-        }
-    }
-
-    /// Performs a single recovery check.
-    /// If the check is successful, it atomically updates the state to Healthy and
-    /// clears the outcome history.
-    async fn perform_single_recovery_check(&self) {
-        if self.current_state() != HealthState::Unhealthy {
-            return;
-        }
-
-        let check_domain = &self.config.recovery_check_domain;
-        tracing::info!(domain = check_domain, "DNS resolver is unhealthy, attempting recovery check...");
-        match self.resolver.resolve(check_domain).await {
-            Ok(_) => {
-                // SAFETY: The lock is held for the entire state transition to ensure
-                // that the health status is updated and the outcomes are cleared
-                // in a single atomic operation. This prevents a race condition where
-                // a new failure could be recorded after the state is set to Healthy
-                // but before the outcomes are cleared.
-                let mut state = self.monitor_state.lock().unwrap();
-                if state.health == HealthState::Unhealthy {
-                    state.health = HealthState::Healthy;
-                    // Clear old failure outcomes to reset the failure rate calculation
-                    state.outcomes.clear();
-                    self.update_health_gauge(HealthState::Healthy);
-                    tracing::info!("DNS resolver has RECOVERED and is now HEALTHY.");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    domain = %check_domain,
-                    error = %e,
-                    "DNS recovery check failed. Remaining in unhealthy state."
-                );
-            }
-        }
-    }
-
-    /// Background task to periodically check for recovery when the system is unhealthy.
-    async fn recovery_check_task(&self, shutdown_rx: &mut watch::Receiver<()>) {
-        let check_interval = self.config.recovery_check_interval_seconds;
-        debug!(check_interval, "Starting DNS recovery check task.");
-        loop {
-            tokio::select! {
-                _ = self.perform_single_recovery_check() => {
-                    // After a check, wait before the next one.
-                    tokio::time::sleep(Duration::from_secs(check_interval)).await;
-                }
-                _ = shutdown_rx.changed() => {
-                    tracing::info!("DNS health monitor recovery task received shutdown signal, exiting.");
-                    break;
-                }
-            }
-        }
-    }
-    /// Synchronously processes a single resolution outcome.
-    /// This is the core logic, extracted for deterministic testing.
-    pub fn process_outcome(&self, is_success: bool) {
-        tracing::debug!(is_success, "Processing outcome");
-        let mut state = self.monitor_state.lock().unwrap();
-        tracing::debug!("Acquired monitor state lock");
-        let now = Instant::now();
-
-        // Add the new outcome
-        state.outcomes.push_back(Outcome {
-            timestamp: now,
-            is_success,
-        });
-
-        // Prune old outcomes that are outside the time window
-        let window_seconds = self.config.window_seconds;
-        let window_start = now - Duration::from_secs(window_seconds);
-        while let Some(outcome) = state.outcomes.front() {
-            if outcome.timestamp < window_start {
-                state.outcomes.pop_front();
-            } else {
-                break;
-            }
-        }
-
-        // Recalculate health state
-        self.update_health_state(&mut state);
-        #[cfg(test)]
-        state.health_updated_tx.send(()).ok();
-    }
-
-    /// Background task that processes resolution outcomes from the channel.
-    async fn process_outcomes_task(&self, mut outcome_rx: mpsc::UnboundedReceiver<bool>) {
-        tracing::debug!("Starting outcome processing loop.");
-        while let Some(is_success) = outcome_rx.recv().await {
-            self.process_outcome(is_success);
-        }
-        tracing::debug!("Outcome processing loop finished.");
     }
 }
 
@@ -282,316 +143,77 @@ mod tests {
     use crate::internal_metrics::Metrics;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::watch::Sender;
-
-    /// A simple guard to ensure the shutdown signal is sent when the test scope ends.
-    struct ShutdownGuard(Sender<()>);
-
-    impl Drop for ShutdownGuard {
-        fn drop(&mut self) {
-            tracing::debug!("ShutdownGuard dropped, sending shutdown signal.");
-            self.0.send(()).ok();
-        }
-    }
+    use tokio::sync::watch;
 
     #[tokio::test(start_paused = true)]
-    async fn test_state_transitions_to_unhealthy() {
+    async fn test_health_state_transitions() {
         let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let resolver = Arc::new(FakeDnsResolver::new());
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
-            ..Default::default()
+            enabled: true,
+            interval_seconds: 5,
+            check_domain: "google.com".to_string(),
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(
-            config,
-            resolver,
-            shutdown_rx,
-            Arc::new(Metrics::new_for_test()),
-            vec![],
-        );
 
-        // Subscribe to health changes *before* making changes
-        let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
-
-        assert_eq!(monitor.current_state(), HealthState::Healthy);
-
-        // Report 4 successes and 6 failures -> 60% failure rate
-        tracing::debug!("Recording 4 successes and 6 failures");
-        for _ in 0..4 {
-            monitor.record_outcome(true);
-        }
-        for _ in 0..6 {
-            monitor.record_outcome(false);
-        }
-
-        // Wait for the background task to process the outcomes and update the state.
-        // This is now deterministic and instant due to the paused clock and signaling.
-        health_rx.changed().await.expect("Health update signal was not received");
-
-        assert_eq!(monitor.current_state(), HealthState::Unhealthy);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_state_remains_healthy_below_threshold() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        let resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsHealthConfig {
-            failure_threshold: 0.8,
-            window_seconds: 10,
-            ..Default::default()
-        };
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(
-            config,
-            resolver,
-            shutdown_rx,
-            Arc::new(Metrics::new_for_test()),
-            vec![],
-        );
-
-        let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
-
-        assert_eq!(monitor.current_state(), HealthState::Healthy);
-
-        // Report 5 successes and 5 failures -> 50% failure rate
-        tracing::debug!("Recording 5 successes and 5 failures");
-        for _ in 0..5 {
-            monitor.record_outcome(true);
-        }
-        for _ in 0..5 {
-            monitor.record_outcome(false);
-        }
-
-        // Wait for the background task to process.
-        health_rx.changed().await.expect("Health update signal was not received");
-
-        // The state should remain healthy as the failure rate is below the threshold.
-        assert_eq!(monitor.current_state(), HealthState::Healthy);
-    }
-
-    #[tokio::test]
-    async fn test_recovery_to_healthy_state() {
-        let resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
-            recovery_check_domain: "google.com".to_string(),
-            ..Default::default()
-        };
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(
-            config,
-            resolver.clone(),
-            shutdown_rx,
-            Arc::new(Metrics::new_for_test()),
-            vec![],
-        );
-
-        // Make state unhealthy
-        monitor.process_outcome(false);
-        monitor.process_outcome(false);
-        assert_eq!(monitor.current_state(), HealthState::Unhealthy);
-        assert_eq!(monitor.monitor_state.lock().unwrap().outcomes.len(), 2);
-
-        // Configure recovery domain to succeed
+        // Add a success response for the initial health check that runs upon creation.
         resolver.add_success_response("google.com", Default::default());
 
-        // Manually trigger a single recovery check, simulating the background task's action
-        monitor.perform_single_recovery_check().await;
-
-        // State should be healthy and outcomes cleared
-        let state = monitor.monitor_state.lock().unwrap();
-        assert_eq!(state.health, HealthState::Healthy);
-        assert!(state.outcomes.is_empty());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_outcome_window_pruning() {
-        let resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 2,
-            ..Default::default()
-        };
-        let (_shutdown_tx, shutdown_rx) = watch::channel(());
-        let monitor = DnsHealthMonitor::new(
-            config,
-            resolver,
-            shutdown_rx,
-            Arc::new(Metrics::new_for_test()),
-            vec![],
-        );
-
-        // Record an outcome
-        monitor.process_outcome(false);
-        assert_eq!(monitor.monitor_state.lock().unwrap().outcomes.len(), 1);
-
-        // Advance time by more than the window duration
-        tokio::time::advance(Duration::from_secs(3)).await;
-
-        // Record another outcome, which should trigger pruning of the old one
-        monitor.process_outcome(true);
-        let state = monitor.monitor_state.lock().unwrap();
-        assert_eq!(state.outcomes.len(), 1, "Old outcome should have been pruned");
-        assert!(state.outcomes.front().unwrap().is_success, "The new outcome should be the only one remaining");
-    }
-    #[tokio::test(start_paused = true)]
-    async fn test_no_state_change_when_unhealthy() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        let resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
-            ..Default::default()
-        };
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(
-            config,
-            resolver,
-            shutdown_rx,
-            Arc::new(Metrics::new_for_test()),
-            vec![],
-        );
-        let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
-
-        // Transition to Unhealthy
-        tracing::debug!("Recording two failures to become unhealthy");
-        monitor.record_outcome(false);
-        monitor.record_outcome(false);
-
-        // Wait for the state to become unhealthy
-        health_rx.changed().await.expect("Health update signal was not received");
-        assert_eq!(monitor.current_state(), HealthState::Unhealthy);
-
-        // Add successes, bringing the failure rate below the threshold
-        tracing::debug!("Recording two successes");
-        monitor.record_outcome(true);
-        monitor.record_outcome(true);
-
-        // Wait for the background task to process the new outcomes
-        health_rx.changed().await.expect("Health update signal was not received after successes");
-
-        // State should remain Unhealthy because recovery is handled by a separate task
-        assert_eq!(
-            monitor.current_state(),
-            HealthState::Unhealthy,
-            "State should not change back to Healthy automatically"
-        );
-    }
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_record_outcome_is_non_blocking() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        let resolver = Arc::new(FakeDnsResolver::new());
-        let config = DnsHealthConfig {
-            // Disable the recovery task to prevent it from interfering.
-            recovery_check_interval_seconds: 3600,
-            ..Default::default()
-        };
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(
-            config,
+        let monitor = DnsHealth::new(
+            config.clone(),
             resolver.clone(),
             shutdown_rx,
             Arc::new(Metrics::new_for_test()),
             vec![],
         );
 
-        // Spawn a task that takes the lock and holds it.
-        let lock_holder_monitor = monitor.clone();
-        let lock_task = tokio::spawn(async move {
-            {
-                tracing::debug!("[Lock Task] Acquiring lock...");
-                let _lock = lock_holder_monitor.monitor_state.lock().unwrap();
-                tracing::debug!("[Lock Task] Lock acquired. Holding for 2s.");
-                // The lock is held inside this block.
-            }
-            // The lock is dropped here, before the await point.
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            tracing::debug!("[Lock Task] Finished sleeping.");
-        });
+        // Let the initial check run.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(monitor.is_healthy(), "Should be healthy initially");
 
-        // Give the lock task a moment to start and acquire the lock.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // --- Transition to Unhealthy ---
+        // Add a failure response for the next scheduled check.
+        resolver.add_error_response("google.com", "Simulated NXDOMAIN");
 
-        // Now, call record_outcome. It should not block.
-        tracing::debug!("[Test] Calling record_outcome while lock is held elsewhere.");
-        let start = Instant::now();
-        monitor.record_outcome(true);
-        let duration = start.elapsed();
-        tracing::debug!("[Test] record_outcome returned in {:?}", duration);
+        // Advance time to trigger the next health check.
+        tokio::time::advance(Duration::from_secs(6)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await; // Allow background task to run.
 
-        assert!(
-            duration < Duration::from_millis(100),
-            "record_outcome took {:?} which indicates it blocked",
-            duration
-        );
+        assert!(!monitor.is_healthy(), "Should become unhealthy after check fails");
 
-        // Clean up the lock task
-        lock_task.await.unwrap();
+        // --- Transition back to Healthy ---
+        // Add a success response for the next scheduled check.
+        resolver.add_success_response("google.com", Default::default());
+
+        // Advance time for the next check.
+        tokio::time::advance(Duration::from_secs(6)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await; // Allow background task to run.
+
+        assert!(monitor.is_healthy(), "Should recover to healthy after check succeeds");
+
+        // Ensure shutdown works.
+        drop(shutdown_tx);
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     #[tokio::test]
-    async fn test_health_monitor_concurrent_updates() {
-        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
-        let resolver = Arc::new(FakeDnsResolver::new());
+    async fn test_startup_check() {
+        let resolver = FakeDnsResolver::new();
         let config = DnsHealthConfig {
-            failure_threshold: 0.5,
-            window_seconds: 10,
-            ..Default::default()
+            enabled: true,
+            interval_seconds: 5,
+            check_domain: "google.com".to_string(),
         };
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(
-            config,
-            resolver.clone(),
-            shutdown_rx,
-            Arc::new(Metrics::new_for_test()),
-            vec![],
-        );
-        let num_updates = 1000;
 
-        // Subscribe *before* spawning tasks to avoid a race condition
-        let mut rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
+        // Test success
+        resolver.add_success_response("google.com", Default::default());
+        let result = DnsHealth::startup_check(&resolver, &config).await;
+        assert!(result.is_ok());
 
-        tracing::debug!("Spawning {} update tasks", num_updates);
-        let mut tasks = Vec::new();
-        for i in 0..num_updates {
-            let monitor_clone = monitor.clone();
-            tasks.push(tokio::spawn(async move {
-                tracing::debug!("Task {} recording outcome", i);
-                monitor_clone.record_outcome(true);
-            }));
-        }
-
-        tracing::debug!("Awaiting all update tasks");
-        for task in tasks {
-            task.await.unwrap();
-        }
-        tracing::debug!("All update tasks completed");
-
-        // Wait for the state update task to process all the messages
-        tracing::debug!("Waiting for state updates to be processed");
-        for i in 0..num_updates {
-            tracing::debug!("Waiting for update #{}", i + 1);
-            if let Err(e) = tokio::time::timeout(Duration::from_secs(5), rx.changed()).await {
-                // It's possible the channel is closed if the test finishes quickly.
-                // The final assertion on the number of outcomes is the source of truth.
-                tracing::warn!("Error waiting for health update #{}: {}. This might be okay if the task is already done.", i + 1, e);
-                break;
-            }
-        }
-        tracing::debug!("Finished waiting for state updates.");
-
-        assert_eq!(
-            monitor.monitor_state.lock().unwrap().outcomes.len(),
-            num_updates
-        );
+        // Test failure
+        resolver.add_error_response("google.com", "Simulated failure");
+        let result = DnsHealth::startup_check(&resolver, &config).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("DNS health check failed"));
     }
 }

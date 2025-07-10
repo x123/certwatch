@@ -4,7 +4,7 @@ use anyhow::Result;
 use certwatch::{
     config::PerformanceConfig,
     core::DnsInfo,
-    dns::{DnsHealthMonitor, DnsResolutionManager, DnsRetryConfig, test_utils::FakeDnsResolver},
+    dns::{DnsHealth, DnsResolutionManager, DnsRetryConfig, test_utils::FakeDnsResolver},
     internal_metrics::Metrics,
 };
 use std::{sync::Arc, time::Duration};
@@ -26,7 +26,7 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
     };
 
     let (_tx, shutdown_rx) = watch::channel(());
-    let health_monitor = DnsHealthMonitor::new(
+    let health_monitor = DnsHealth::new(
         Default::default(),
         fake_resolver.clone(),
         shutdown_rx.clone(),
