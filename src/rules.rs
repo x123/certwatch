@@ -8,53 +8,19 @@ use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{collections::HashMap, fs, path::PathBuf};
 
-/// A pre-emptive filter that uses a `RegexSet` to quickly discard domains
-/// that match a global ignore list.
-#[derive(Debug, Clone)]
-pub struct PreFilter {
-    ignore_set: Option<RegexSet>,
-    metric_domains_ignored: metrics::Counter,
-}
+// --- Public Structs ---
 
-impl PreFilter {
-    /// Creates a new `PreFilter` from a list of ignore patterns.
-    ///
-    /// If the list of patterns is empty or `None`, it creates a filter that
-    /// will never match.
-    pub fn new(patterns: Option<Vec<String>>) -> Result<Self> {
-        let ignore_set = if let Some(patterns) = patterns {
-            if patterns.is_empty() {
-                None
-            } else {
-                Some(RegexSet::new(patterns)?)
-            }
-        } else {
-            None
-        };
-
-        Ok(Self {
-            ignore_set,
-            metric_domains_ignored: metrics::counter!("certwatch_domains_ignored_total"),
-        })
-    }
-
-    /// Checks if a domain should be ignored.
-    ///
-    /// Returns `true` if the domain matches the ignore list, `false` otherwise.
-    pub fn is_match(&self, domain: &str) -> bool {
-        if let Some(set) = &self.ignore_set {
-            let is_match = set.is_match(domain);
-            if is_match {
-                self.metric_domains_ignored.increment(1);
-                tracing::debug!(domain, "Domain matched ignore list");
-            }
-            is_match
-        } else {
-            false
-        }
-    }
+/// A container for the staged rule sets and associated metadata.
+#[derive(Debug, Clone, Default)]
+pub struct RuleSet {
+    /// A map from file paths to the number of rules loaded from that file.
+    pub file_stats: HashMap<PathBuf, usize>,
+    /// All compiled rules.
+    pub rules: Vec<Rule>,
+    /// All ignore patterns.
+    pub ignore_patterns: Vec<String>,
 }
 
 /// A container for the staged rule sets.
@@ -68,17 +34,42 @@ pub struct RuleMatcher {
     pre_filter: PreFilter,
 }
 
-impl RuleMatcher {
-    /// Loads rules and ignore patterns from the config, returning a `RuleMatcher`
-    /// that contains all compiled rules and the pre-filter.
-    pub fn load(config: &RulesConfig) -> Result<Self> {
-        let (all_rules, ignore_patterns) = Rule::load_from_files(config)?;
+// --- Public Enums ---
 
-        let (stage_2_rules, stage_1_rules) = all_rules
+/// The level of data enrichment required to evaluate a rule or condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EnrichmentLevel {
+    /// Requires only the base alert data (domain name).
+    None,
+    /// Requires standard enrichment (DNS, ASN).
+    Standard,
+}
+
+/// A recursive enum representing the boolean logic of a rule.
+/// This is used for deserializing from the YAML files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleExpression {
+    All(Vec<RuleExpression>),
+    Any(Vec<RuleExpression>),
+    DomainRegex(String),
+    Asns(Vec<u32>),
+    IpNetworks(Vec<IpNetwork>),
+    NotAsns(Vec<u32>),
+    NotIpNetworks(Vec<IpNetwork>),
+}
+
+// --- Implementations ---
+
+impl RuleMatcher {
+    /// Creates a new `RuleMatcher` from a fully-loaded `RuleSet`.
+    pub fn new(rule_set: RuleSet) -> Result<Self> {
+        let (stage_2_rules, stage_1_rules) = rule_set
+            .rules
             .into_iter()
             .partition(|rule| rule.required_level == EnrichmentLevel::Standard);
 
-        let pre_filter = PreFilter::new(Some(ignore_patterns))?;
+        let pre_filter = PreFilter::new(Some(rule_set.ignore_patterns))?;
 
         Ok(Self {
             stage_1_rules,
@@ -120,15 +111,6 @@ impl RuleMatcher {
             pre_filter: PreFilter::new(None).unwrap(),
         }
     }
-}
-
-/// The level of data enrichment required to evaluate a rule or condition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum EnrichmentLevel {
-    /// Requires only the base alert data (domain name).
-    None,
-    /// Requires standard enrichment (DNS, ASN).
-    Standard,
 }
 
 /// A single, named filtering rule that has been compiled for efficient matching.
@@ -183,87 +165,21 @@ impl Rule {
             }
             RuleExpression::IpNetworks(networks) => {
                 let all_ips = alert.all_ips();
-                networks.iter().any(|net| all_ips.iter().any(|ip| net.contains(*ip)))
+                networks
+                    .iter()
+                    .any(|net| all_ips.iter().any(|ip| net.contains(*ip)))
             }
             RuleExpression::NotIpNetworks(networks) => {
                 let all_ips = alert.all_ips();
                 if all_ips.is_empty() {
                     return false; // Cannot satisfy a 'not' if there's nothing to check.
                 }
-                !networks.iter().any(|net| all_ips.iter().any(|ip| net.contains(*ip)))
+                !networks
+                    .iter()
+                    .any(|net| all_ips.iter().any(|ip| net.contains(*ip)))
             }
         }
     }
-
-    /// Loads all rules from the file paths specified in the configuration.
-    pub fn load_from_files(config: &RulesConfig) -> Result<(Vec<Rule>, Vec<String>)> {
-        let mut compiled_rules = Vec::new();
-        let mut ignore_patterns = Vec::new();
-
-        if let Some(rule_files) = &config.rule_files {
-            for file_path in rule_files {
-                let file_content = fs::read_to_string(file_path)
-                    .with_context(|| format!("Failed to read rule file: {}", file_path.display()))?;
-
-                let rules_file: RulesFile = serde_yml::from_str(&file_content).with_context(|| {
-                    format!(
-                        "Failed to parse YAML from rule file: {}",
-                        file_path.display()
-                    )
-                })?;
-
-                if let Some(patterns) = rules_file.ignore {
-                    ignore_patterns.extend(patterns);
-                }
-
-                for file_rule in rules_file.rules {
-                    // Basic validation for now. A more robust validation step can be added.
-                    // For example, ensuring regexes are valid.
-                    let required_level = file_rule.expression.required_level();
-                    compiled_rules.push(Rule {
-                        name: file_rule.name,
-                        expression: file_rule.expression,
-                        required_level,
-                    });
-                }
-            }
-        }
-
-        Ok((compiled_rules, ignore_patterns))
-    }
-}
-
-// --- Deserialization-only structs ---
-
-/// Represents the top-level structure of a rule file.
-#[derive(Debug, Serialize, Deserialize)]
-struct RulesFile {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    ignore: Option<Vec<String>>,
-    #[serde(default)]
-    rules: Vec<FileRule>,
-}
-
-/// A temporary struct that represents a rule as defined in the YAML file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FileRule {
-    name: String,
-    #[serde(flatten)]
-    expression: RuleExpression,
-}
-
-/// A recursive enum representing the boolean logic of a rule.
-/// This is used for deserializing from the YAML files.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RuleExpression {
-    All(Vec<RuleExpression>),
-    Any(Vec<RuleExpression>),
-    DomainRegex(String),
-    Asns(Vec<u32>),
-    IpNetworks(Vec<IpNetwork>),
-    NotAsns(Vec<u32>),
-    NotIpNetworks(Vec<IpNetwork>),
 }
 
 impl RuleExpression {
@@ -282,4 +198,130 @@ impl RuleExpression {
             RuleExpression::DomainRegex(_) => EnrichmentLevel::None,
         }
     }
+}
+
+// --- Rule Loading ---
+
+/// A dedicated loader for parsing rule files and constructing a `RuleSet`.
+pub struct RuleLoader;
+
+impl RuleLoader {
+    /// Loads all rules from the file paths specified in the configuration.
+    ///
+    /// This function reads each file, logs the number of rules loaded from it,
+    /// and aggregates them into a single `RuleSet`.
+    pub fn load_from_files(config: &RulesConfig) -> Result<RuleSet> {
+        let mut rule_set = RuleSet::default();
+        let rule_files = match &config.rule_files {
+            Some(files) if !files.is_empty() => files,
+            _ => {
+                tracing::warn!("No rule files configured. No rules will be loaded.");
+                return Ok(rule_set);
+            }
+        };
+
+        for file_path in rule_files {
+            let file_content = fs::read_to_string(file_path)
+                .with_context(|| format!("Failed to read rule file: {}", file_path.display()))?;
+
+            let rules_file: RulesFile = serde_yml::from_str(&file_content).with_context(|| {
+                format!(
+                    "Failed to parse YAML from rule file: {}",
+                    file_path.display()
+                )
+            })?;
+
+            let num_rules = rules_file.rules.len();
+            tracing::info!(
+                path = %file_path.display(),
+                count = num_rules,
+                "Loaded rule file."
+            );
+            rule_set.file_stats.insert(file_path.clone(), num_rules);
+
+            if let Some(patterns) = rules_file.ignore {
+                rule_set.ignore_patterns.extend(patterns);
+            }
+
+            for file_rule in rules_file.rules {
+                let required_level = file_rule.expression.required_level();
+                rule_set.rules.push(Rule {
+                    name: file_rule.name,
+                    expression: file_rule.expression,
+                    required_level,
+                });
+            }
+        }
+
+        let total_rules: usize = rule_set.file_stats.values().sum();
+        let total_files = rule_set.file_stats.len();
+        tracing::info!(
+            total_rules = total_rules,
+            total_files = total_files,
+            "Finished loading all rule files."
+        );
+
+        Ok(rule_set)
+    }
+}
+
+// --- Pre-filter and Deserialization Structs ---
+
+/// A pre-emptive filter that uses a `RegexSet` to quickly discard domains
+/// that match a global ignore list.
+#[derive(Debug, Clone)]
+pub struct PreFilter {
+    ignore_set: Option<RegexSet>,
+    metric_domains_ignored: metrics::Counter,
+}
+
+impl PreFilter {
+    /// Creates a new `PreFilter` from a list of ignore patterns.
+    pub fn new(patterns: Option<Vec<String>>) -> Result<Self> {
+        let ignore_set = if let Some(patterns) = patterns {
+            if patterns.is_empty() {
+                None
+            } else {
+                Some(RegexSet::new(patterns)?)
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            ignore_set,
+            metric_domains_ignored: metrics::counter!("certwatch_domains_ignored_total"),
+        })
+    }
+
+    /// Checks if a domain should be ignored.
+    pub fn is_match(&self, domain: &str) -> bool {
+        if let Some(set) = &self.ignore_set {
+            let is_match = set.is_match(domain);
+            if is_match {
+                self.metric_domains_ignored.increment(1);
+                tracing::debug!(domain, "Domain matched ignore list");
+            }
+            is_match
+        } else {
+            false
+        }
+    }
+}
+
+/// Represents the top-level structure of a rule file.
+#[derive(Debug, Serialize, Deserialize)]
+struct RulesFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ignore: Option<Vec<String>>,
+    #[serde(default)]
+    rules: Vec<FileRule>,
+}
+
+/// A temporary struct that represents a rule as defined in the YAML file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FileRule {
+    name: String,
+    #[serde(flatten)]
+    expression: RuleExpression,
 }

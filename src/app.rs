@@ -10,7 +10,7 @@ use crate::{
     network::{CertStreamClient, WebSocketConnection},
     notification::slack::SlackClientTrait,
     outputs::{OutputManager, StdoutOutput},
-    rules::{EnrichmentLevel, RuleMatcher},
+    rules::{EnrichmentLevel, RuleLoader, RuleMatcher},
     types::AlertSender,
     utils::heartbeat::run_heartbeat,
 };
@@ -184,7 +184,8 @@ impl AppBuilder {
         // =========================================================================
         // 3. Instantiate Remaining Services
         // =========================================================================
-        let rule_matcher = Arc::new(RuleMatcher::load(&config.rules)?);
+        let rule_set = RuleLoader::load_from_files(&config.rules)?;
+        let rule_matcher = Arc::new(RuleMatcher::new(rule_set)?);
 
         let enrichment_provider = self
             .enrichment_provider_override

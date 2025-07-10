@@ -1,7 +1,7 @@
 use certwatch::{
     config::RulesConfig,
     core::{Alert, DnsInfo},
-    rules::{EnrichmentLevel, RuleMatcher},
+    rules::{EnrichmentLevel, RuleLoader, RuleMatcher},
 };
 
 #[path = "../helpers/mod.rs"]
@@ -32,7 +32,8 @@ rules:
     let config = RulesConfig {
         rule_files: vec![rule_file].into(),
     };
-    let matcher = RuleMatcher::load(&config).unwrap();
+    let rule_set = RuleLoader::load_from_files(&config).unwrap();
+    let matcher = RuleMatcher::new(rule_set).unwrap();
 
     assert_eq!(matcher.stage_1_rules.len(), 1);
     assert_eq!(matcher.stage_1_rules[0].name, "Stage 1 Rule");
@@ -67,7 +68,8 @@ rules:
     let config = RulesConfig {
         rule_files: vec![rule_file].into(),
     };
-    let matcher = RuleMatcher::load(&config).unwrap();
+    let rule_set = RuleLoader::load_from_files(&config).unwrap();
+    let matcher = RuleMatcher::new(rule_set).unwrap();
 
     let mut alert = create_test_alert("test.com");
     alert.enrichment.push(certwatch::core::EnrichmentInfo {
@@ -107,7 +109,8 @@ rules:
     let config = RulesConfig {
         rule_files: vec![rule_file].into(),
     };
-    let matcher = RuleMatcher::load(&config).unwrap();
+    let rule_set = RuleLoader::load_from_files(&config).unwrap();
+    let matcher = RuleMatcher::new(rule_set).unwrap();
 
     assert!(
         matcher.is_ignored("sub.ignored.com"),
@@ -135,7 +138,8 @@ rules:
     let config = RulesConfig {
         rule_files: vec![rule_file].into(),
     };
-    let matcher = RuleMatcher::load(&config).unwrap();
+    let rule_set = RuleLoader::load_from_files(&config).unwrap();
+    let matcher = RuleMatcher::new(rule_set).unwrap();
 
     assert!(!matcher.is_ignored("anything.com"));
 }
@@ -153,7 +157,8 @@ rules:
     let config = RulesConfig {
         rule_files: vec![rule_file].into(),
     };
-    let matcher = RuleMatcher::load(&config).unwrap();
+    let rule_set = RuleLoader::load_from_files(&config).unwrap();
+    let matcher = RuleMatcher::new(rule_set).unwrap();
 
     assert!(!matcher.is_ignored("anything.com"));
 }
@@ -169,6 +174,7 @@ rules: []
     let config = RulesConfig {
         rule_files: vec![rule_file].into(),
     };
-    let result = RuleMatcher::load(&config);
+    let rule_set = RuleLoader::load_from_files(&config).unwrap();
+    let result = RuleMatcher::new(rule_set);
     assert!(result.is_err());
 }

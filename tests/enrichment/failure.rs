@@ -7,7 +7,7 @@ use certwatch::{
     core::DnsInfo,
     dns::{test_utils::FakeDnsResolver, DnsHealthMonitor, DnsResolutionManager},
     enrichment::fake::FakeEnrichmentProvider,
-    rules::RuleMatcher,
+    rules::{RuleLoader, RuleMatcher},
 };
 use std::{fs::File, io::Write, path::PathBuf, sync::Arc};
 use tempfile::tempdir;
@@ -55,16 +55,19 @@ async fn test_process_domain_propagates_enrichment_error() -> Result<()> {
         "example.com".to_string(),
         0, // worker_id
         Arc::new(
-            RuleMatcher::load(&RulesConfig {
-                rule_files: Some(vec![create_rule_file(
-                    r#"
+            RuleMatcher::new(
+                RuleLoader::load_from_files(&RulesConfig {
+                    rule_files: Some(vec![create_rule_file(
+                        r#"
 rules:
-  - name: "Always Match"
-    all:
-      - domain_regex: ".*"
+    - name: "Always Match"
+      all:
+        - domain_regex: ".*"
 "#,
-                )]),
-            })
+                    )]),
+                })
+                .unwrap(),
+            )
             .unwrap(),
         ),
         dns_manager,
