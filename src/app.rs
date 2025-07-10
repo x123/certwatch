@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc, watch, Mutex};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, trace};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
@@ -290,12 +290,12 @@ impl AppBuilder {
             let in_flight_deduplicator = in_flight_deduplicator.clone();
 
             let handle = tokio::spawn(async move {
-                debug!("Worker {} started", i);
+                trace!("Worker {} started", i);
                 loop {
                     let domain_to_process = tokio::select! {
                         biased;
                         _ = shutdown_rx.changed() => {
-                            debug!("Worker {} received shutdown signal, exiting.", i);
+                            trace!("Worker {} received shutdown signal, exiting.", i);
                             None
                         }
                         domain_opt = async { domains_rx.lock().await.recv().await } => {
@@ -306,7 +306,7 @@ impl AppBuilder {
                     let domain = match domain_to_process {
                         Some(domain) => domain,
                         None => {
-                            debug!(
+                            trace!(
                                 "Domain channel closed or shutdown triggered, worker {} shutting down.",
                                 i
                             );
@@ -314,19 +314,19 @@ impl AppBuilder {
                         }
                     };
 
-                    debug!(worker_id = i, domain = %domain, "Worker picked up domain");
+                    trace!(worker_id = i, domain = %domain, "Worker picked up domain");
 
                     if in_flight_deduplicator.is_duplicate(&domain) {
-                        debug!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
+                        trace!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
                         metrics::counter!("domains_skipped_inflight", "worker_id" => i.to_string())
                             .increment(1);
                         continue;
                     }
 
-                    debug!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
+                    trace!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
 
                     if rule_matcher.is_ignored(&domain) {
-                        debug!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
+                        trace!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
                         continue;
                     }
 
@@ -342,17 +342,17 @@ impl AppBuilder {
                     tokio::select! {
                         biased;
                         _ = shutdown_rx.changed() => {
-                            debug!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
+                            trace!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
                         }
                         result = process_fut => {
-                            debug!(worker_id = i, domain = %domain, "Worker finished processing domain");
+                            trace!(worker_id = i, domain = %domain, "Worker finished processing domain");
                             match result {
                                 Ok(_) => {
                                     metrics::counter!("cert_processing_successes").increment(1);
                                 }
                                 Err(e) => {
                                     metrics::counter!("cert_processing_failures").increment(1);
-                                    debug!("Failed to process certificate update for domain {}: {}", domain, e);
+                                    trace!("Failed to process certificate update for domain {}: {}", domain, e);
                                 }
                             }
                         }
@@ -468,7 +468,7 @@ async fn output_task_logic(
 
 
 /// Processes a single domain: matches, resolves, enriches, and sends alerts.
-#[instrument(skip_all, fields(domain = %domain, worker_id = worker_id))]
+#[instrument(level = "trace", skip_all, fields(domain = %domain, worker_id = worker_id))]
 pub async fn process_domain(
     domain: String,
     worker_id: usize,
@@ -477,28 +477,28 @@ pub async fn process_domain(
     enrichment_provider: Arc<dyn EnrichmentProvider>,
     alerts_tx: AlertSender,
 ) -> Result<()> {
-    debug!("process_domain: Starting Stage 1 (pre-enrichment) filtering");
+    trace!("process_domain: Starting Stage 1 (pre-enrichment) filtering");
     // STAGE 1: Pre-enrichment filtering (rules only)
     let stage_1_rule_matches = {
         let _span = tracing::info_span!("stage_1_rule_matching").entered();
         let base_alert = Alert::new_minimal(&domain);
         rule_matcher.matches(&base_alert, EnrichmentLevel::None)
     };
-    debug!(?stage_1_rule_matches, "process_domain: Stage 1 results");
+    trace!(?stage_1_rule_matches, "process_domain: Stage 1 results");
 
     // If there's no match from Stage 1 rules, we can stop.
     if stage_1_rule_matches.is_empty() {
-        debug!("Domain did not match any pre-enrichment rules.");
+        trace!("Domain did not match any pre-enrichment rules.");
         return Ok(());
     }
-    debug!("Domain matched pre-enrichment checks. Proceeding to enrichment.");
+    trace!("Domain matched pre-enrichment checks. Proceeding to enrichment.");
 
     // STAGE 2: Enrichment and Post-enrichment filtering
-    debug!("process_domain: Starting DNS resolution");
+    trace!("process_domain: Starting DNS resolution");
     let result = dns_manager
         .resolve_with_retry(&domain, "enrichment_candidate")
         .await;
-    debug!(?result, "process_domain: DNS resolution result");
+    trace!(?result, "process_domain: DNS resolution result");
 
     let dns_info = match result {
         Ok(ref info) => info.clone(),
@@ -506,18 +506,18 @@ pub async fn process_domain(
             DnsInfo::default()
         }
         Err(DnsError::Resolution(e)) => {
-            debug!(error = %e, "DNS resolution failed");
+            trace!(error = %e, "DNS resolution failed");
             anyhow::bail!("DNS resolution failed: {}", e);
         }
         Err(DnsError::Shutdown) => {
-            debug!("DNS resolution cancelled by shutdown.");
+            trace!("DNS resolution cancelled by shutdown.");
             return Ok(());
         }
     };
 
     let resolved_after_nxdomain = result.is_ok() && dns_info.is_empty();
 
-    debug!("process_domain: Building alert and performing enrichment");
+    trace!("process_domain: Building alert and performing enrichment");
     let mut alert = build_alert(
         domain,
         "placeholder".to_string(), // Source will be replaced with combined rule names
@@ -527,13 +527,13 @@ pub async fn process_domain(
     )
     .await
     .context("Failed to build alert")?;
-    debug!("process_domain: Alert built. Starting Stage 2 (post-enrichment) filtering");
+    trace!("process_domain: Alert built. Starting Stage 2 (post-enrichment) filtering");
 
     let stage_2_rule_matches = {
         let _span = tracing::info_span!("stage_2_rule_matching").entered();
         rule_matcher.matches(&alert, EnrichmentLevel::Standard)
     };
-    debug!(?stage_2_rule_matches, "process_domain: Stage 2 results");
+    trace!(?stage_2_rule_matches, "process_domain: Stage 2 results");
 
     // FINAL DECISION: Combine all matches to determine if we should alert.
     let mut all_matches_set: HashSet<String> = stage_1_rule_matches.into_iter().collect();
@@ -543,7 +543,7 @@ pub async fn process_domain(
         // This can happen if a domain matched a legacy pattern, but the rules engine
         // logic (which is now the source of truth) doesn't have a corresponding rule.
         // Or if a Stage 1 rule was a false positive that was correctly filtered by Stage 2.
-        debug!("Domain was enriched but did not match any final rules. Discarding.");
+        trace!("Domain was enriched but did not match any final rules. Discarding.");
         return Ok(());
     }
 
@@ -554,11 +554,11 @@ pub async fn process_domain(
     // Update the alert with the final, combined source tags.
     alert.source_tag = all_matches.join(", ");
 
-    debug!(source = %alert.source_tag, "Domain passed all checks. Sending alert.");
+    trace!(source = %alert.source_tag, "Domain passed all checks. Sending alert.");
     if alerts_tx.send(alert.clone()).is_err() {
         anyhow::bail!("Alerts channel closed, worker {} exiting.", worker_id);
     }
-    debug!(source = %alert.source_tag, "process_domain: Alert sent to output channel");
+    trace!(source = %alert.source_tag, "process_domain: Alert sent to output channel");
 
     Ok(())
 }
