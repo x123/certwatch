@@ -33,6 +33,7 @@ rules:
         .with_failing_enrichment(true)
         .with_rules(rules)
         .await
+        .with_test_domains_channel()
         .build()
         .await
         .unwrap();
@@ -41,10 +42,7 @@ rules:
     app.app_handle = Some(tokio::spawn(app_future));
 
     // 5. Act: Send a domain that matches the regex part of the rule
-    app.domains_tx
-        .send("example.com".to_string())
-        .await
-        .unwrap();
+    app.send_domain("example.com").await.unwrap();
 
     // 6. Assert: Check that NO alert is received
     // With the buggy logic, the enrichment failure would cause the `not_asns`

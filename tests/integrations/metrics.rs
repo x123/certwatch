@@ -22,14 +22,15 @@ async fn metrics_endpoint_is_available() -> Result<()> {
 }
 
 #[tokio::test]
-async fn metrics_are_updated_on_domain_processing() -> Result<()> {
+async fn test_domain_counting_metrics() -> Result<()> {
     let mock_dns = Arc::new(MockDnsResolver::new());
     mock_dns.add_response("google.com", Ok(Default::default())); // Health check
     mock_dns.add_response("matching.com", Ok(Default::default())); // Test domain
 
     let builder = TestAppBuilder::new()
         .with_dns_resolver(mock_dns)
-        .with_metrics();
+        .with_metrics()
+        .with_test_domains_channel();
 
     let test_app = builder
         .with_rules("rules:\n  - name: test-rule\n    domain_regex: 'matching.com'")
@@ -41,18 +42,15 @@ async fn metrics_are_updated_on_domain_processing() -> Result<()> {
 
     test_app.send_domain("matching.com").await?;
 
-    let mut body = String::new();
-    for _ in 0..10 {
-        let response = client
-            .get(format!("http://{}/metrics", test_app.metrics_addr()))
-            .send()
-            .await?;
-        body = response.text().await?;
-        if body.contains("domains_processed_total 1") {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+    // Wait for the metrics to be updated
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let body = client
+        .get(format!("http://{}/metrics", test_app.metrics_addr()))
+        .send()
+        .await?
+        .text()
+        .await?;
 
     assert!(
         body.contains("domains_processed_total 1"),
@@ -77,7 +75,8 @@ async fn dns_failure_metric_is_incremented() -> Result<()> {
 
     let builder = TestAppBuilder::new()
         .with_dns_resolver(mock_dns.clone())
-        .with_metrics();
+        .with_metrics()
+        .with_test_domains_channel();
 
     let test_app = builder
         .with_rules("rules:\n  - name: test-rule\n    domain_regex: 'failing-domain.com'")

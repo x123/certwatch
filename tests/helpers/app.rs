@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 
 #[derive(Debug)]
 pub struct TestApp {
-    pub domains_tx: mpsc::Sender<String>,
+    pub domains_tx: Option<mpsc::Sender<String>>,
     pub shutdown_tx: watch::Sender<()>,
     pub app_handle: Option<JoinHandle<Result<()>>>,
     metrics_addr: Option<SocketAddr>,
@@ -24,7 +24,11 @@ pub struct TestApp {
 
 impl TestApp {
     pub async fn send_domain(&self, domain: &str) -> Result<()> {
-        self.domains_tx.send(domain.to_string()).await?;
+        self.domains_tx
+            .as_ref()
+            .expect("domains_tx is only available when using with_test_domains_channel")
+            .send(domain.to_string())
+            .await?;
         Ok(())
     }
 
@@ -58,6 +62,8 @@ impl TestApp {
 #[derive(Default)]
 pub struct TestAppBuilder {
     pub config: Config,
+    domains_tx_for_test: Option<mpsc::Sender<String>>,
+    domains_rx_for_test: Option<mpsc::Receiver<String>>,
     outputs: Option<Vec<std::sync::Arc<dyn certwatch::core::Output>>>,
     websocket: Option<Box<dyn certwatch::network::WebSocketConnection>>,
     dns_resolver: Option<std::sync::Arc<dyn certwatch::core::DnsResolver>>,
@@ -77,6 +83,8 @@ impl TestAppBuilder {
 
         Self {
             config,
+            domains_tx_for_test: None,
+            domains_rx_for_test: None,
             outputs: Some(vec![Arc::new(
                 crate::helpers::mock_output::CountingOutput::new(),
             )]),
@@ -86,6 +94,15 @@ impl TestAppBuilder {
             alert_tx: None,
             slack_client: None,
         }
+    }
+
+    /// Sets up a direct MPSC channel for domain injection, bypassing the network client.
+    /// The sender part of the channel is returned in the `TestApp` struct.
+    pub fn with_test_domains_channel(mut self) -> Self {
+        let (tx, rx) = mpsc::channel(1000);
+        self.domains_tx_for_test = Some(tx);
+        self.domains_rx_for_test = Some(rx);
+        self
     }
 
     pub fn with_alert_tx(mut self, alert_tx: broadcast::Sender<Alert>) -> Self {
@@ -192,15 +209,16 @@ impl TestAppBuilder {
         }
 
         let (shutdown_tx, shutdown_rx) = watch::channel(());
-        let (domains_tx, domains_rx) =
-            mpsc::channel(self.config.performance.queue_capacity);
 
         let mut builder = certwatch::app::App::builder(self.config)
-            .domains_rx_for_test(domains_rx)
             .enrichment_provider_override(
                 self.enrichment_provider
                     .expect("Enrichment provider must be set in test builder"),
             );
+
+        if let Some(rx) = self.domains_rx_for_test {
+            builder = builder.domains_rx_for_test(rx);
+        }
 
         if let Some(outputs) = self.outputs {
             builder = builder.output_override(outputs);
@@ -224,7 +242,7 @@ impl TestAppBuilder {
         let app_future = async move { app.run().await };
 
         let test_app = TestApp {
-            domains_tx,
+            domains_tx: self.domains_tx_for_test,
             shutdown_tx,
             app_handle: None, // The app is not running yet
             metrics_addr,

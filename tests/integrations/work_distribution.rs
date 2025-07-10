@@ -39,6 +39,7 @@ rules:
         })
         .with_rules(rules)
         .await
+        .with_test_domains_channel()
         .build()
         .await
         .expect("TestApp should build successfully");
@@ -51,8 +52,7 @@ rules:
     for i in 0..domains_to_send {
         let domain = format!("test-domain-{}.com", i);
         test_app
-            .domains_tx
-            .send(domain)
+            .send_domain(&domain)
             .await
             .expect("Failed to send domain to worker pool");
     }

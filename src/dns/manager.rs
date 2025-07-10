@@ -26,7 +26,6 @@ pub struct DnsResolutionManager {
     nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>, // (domain, source_tag, retry_time)
     health_monitor: Arc<DnsHealthMonitor>,
     shutdown_rx: watch::Receiver<()>,
-    metrics: Arc<Metrics>,
 }
 
 impl DnsResolutionManager {
@@ -38,7 +37,7 @@ impl DnsResolutionManager {
         config: DnsRetryConfig,
         health_monitor: Arc<DnsHealthMonitor>,
         shutdown_rx: watch::Receiver<()>,
-        metrics: Arc<Metrics>,
+        _metrics: Arc<Metrics>,
     ) -> (Self, mpsc::UnboundedReceiver<ResolvedNxDomain>) {
         let (nxdomain_retry_tx, nxdomain_retry_rx) = mpsc::unbounded_channel();
         let (resolved_nxdomain_tx, resolved_nxdomain_rx) = mpsc::unbounded_channel();
@@ -47,14 +46,12 @@ impl DnsResolutionManager {
         let resolver_clone = Arc::clone(&resolver);
         let config_clone = config.clone();
         let nx_shutdown_rx = shutdown_rx.clone();
-        let metrics_clone = metrics.clone();
         tokio::spawn(Self::nxdomain_retry_task(
             resolver_clone,
             config_clone,
             nxdomain_retry_rx,
             resolved_nxdomain_tx,
             nx_shutdown_rx,
-            metrics_clone,
         ));
 
         // Start the heartbeat task, but not during tests, as it interferes with paused time.
@@ -73,7 +70,6 @@ impl DnsResolutionManager {
             nxdomain_retry_tx,
             health_monitor,
             shutdown_rx,
-            metrics,
         };
 
         (manager, resolved_nxdomain_rx)
@@ -177,7 +173,6 @@ impl DnsResolutionManager {
         mut rx: mpsc::UnboundedReceiver<(String, String, Instant)>,
         resolved_tx: mpsc::UnboundedSender<ResolvedNxDomain>,
         mut shutdown_rx: tokio::sync::watch::Receiver<()>,
-        metrics: Arc<Metrics>,
     ) {
         // Use a min-heap to keep the next retry item at the top.
         // We store (Reverse(next_retry_time), domain, source_tag, attempt)
@@ -236,9 +231,6 @@ impl DnsResolutionManager {
                         if let Some((_, domain, source_tag, attempt)) = retry_heap.pop() {
                             match resolver.resolve(&domain).await {
                                 Ok(dns_info) => {
-                                    metrics
-                                        .clone()
-                                        .increment_dns_query("nxdomain_recovery");
                                     info!(%domain, %source_tag, "Domain now resolves after NXDOMAIN");
                                     if let Err(e) = resolved_tx.send((domain, source_tag, dns_info)) {
                                         error!(error = %e, "Failed to send resolved NXDOMAIN to channel");
@@ -249,9 +241,6 @@ impl DnsResolutionManager {
                                         if is_nxdomain_error_str(&res_err)
                                             && attempt < nxdomain_retries
                                         {
-                                            metrics
-                                                .clone()
-                                                .increment_dns_query("nxdomain_retry");
                                             let backoff_ms =
                                                 nxdomain_backoff_ms * 2_u64.pow(attempt + 1);
                                             let next_retry = now + Duration::from_millis(backoff_ms);
