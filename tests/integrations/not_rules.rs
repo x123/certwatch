@@ -1,8 +1,8 @@
 #[path = "../helpers/mod.rs"]
 mod helpers;
 
-use helpers::{app::TestAppBuilder, fake_enrichment::FakeEnrichmentProvider};
-use std::{sync::Arc, time::Duration};
+use helpers::app::TestAppBuilder;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 

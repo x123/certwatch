@@ -6,7 +6,7 @@ use certwatch::{config::Config, core::Alert};
 use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{broadcast, mpsc, watch, Mutex},
+    sync::{broadcast, mpsc, watch},
     task::JoinHandle,
     time::timeout,
 };
@@ -147,7 +147,7 @@ impl TestAppBuilder {
     pub fn with_slack_notification(
         mut self,
         client: Arc<dyn certwatch::notification::slack::SlackClientTrait>,
-        channel: &str,
+        _channel: &str,
     ) -> Self {
         self.slack_client = Some(client);
         self.config.output.slack = Some(certwatch::config::SlackConfig {

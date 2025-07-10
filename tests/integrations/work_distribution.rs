@@ -8,10 +8,7 @@ use tokio::time::timeout;
 // Import test helpers from the `tests` module.
 #[path = "../helpers/mod.rs"]
 mod helpers;
-use helpers::{
-    app::TestAppBuilder, mock_dns::MockDnsResolver, mock_output::CountingOutput,
-    test_utils::create_rule_file,
-};
+use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver, mock_output::CountingOutput};
 
 #[tokio::test]
 async fn test_domain_is_processed_by_one_worker() {

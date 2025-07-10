@@ -1,3 +1,28 @@
+### Epic #54: Code Cleanup and Warning Resolution
+
+*   **User Story:** As a developer, I want a codebase that compiles without any warnings, so that I can maintain high code quality, improve readability, and ensure that potential issues are not being masked by noise.
+
+*   **Architecture:** The approach will be to methodically address each warning category identified by the Rust compiler. This involves removing unused imports, variables, and functions from the test helper modules and integration tests. Each change will be small, targeted, and validated by running the test suite to ensure no regressions are introduced.
+
+*   **Status:** Completed
+
+*   **Tasks:**
+    *   [x] **#238 - Clean up `tests/helpers/app.rs`:**
+        *   **Subtask:** Remove the unused `Mutex` import.
+        *   **Subtask:** Prefix the unused `channel` variable in `with_slack` with an underscore (`_channel`) to silence the warning.
+
+    *   [x] **#239 - Clean up `tests/helpers/mock_slack.rs`:**
+        *   **Subtask:** Remove the unused `new` and `get_sent_batches` functions, as they are no longer required by any tests.
+
+    *   [x] **#240 - Clean up integration tests:**
+        *   **Subtask:** Remove the unused `create_rule_file` import from `tests/integrations/work_distribution.rs`.
+        *   **Subtask:** Remove the unused `FakeEnrichmentProvider` and `Arc` imports from `tests/integrations/not_rules.rs`.
+
+    *   [x] **#241 - Final Verification:**
+        *   **Subtask:** Run the full test suite (`just test`) one final time to ensure the project compiles cleanly with zero warnings and all tests pass.
+
+---
+
 ### Epic #53: Decouple Slack Client from Tokio Runtime
 
 *   **User Story:** As a developer, I want to ensure that slow or unresponsive Slack API calls do not interfere with the core application's network stability, so that the CertStream websocket connection remains stable and responsive.

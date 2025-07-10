@@ -11,15 +11,8 @@ pub struct MockSlackClient {
 }
 
 impl MockSlackClient {
-    pub fn new() -> Self {
-        Self {
-            sent_batches: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub fn get_sent_batches(&self) -> Vec<Vec<AggregatedAlert>> {
-        self.sent_batches.lock().unwrap().clone()
-    }
+    // The `new` and `get_sent_batches` functions were removed as they are no longer used.
+    // The struct is now instantiated directly in the tests.
 }
 
 #[async_trait]
