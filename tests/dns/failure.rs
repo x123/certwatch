@@ -33,7 +33,7 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
         vec![],
     );
 
-    let (manager, mut resolved_rx) = DnsResolutionManager::new(
+    let (manager, mut resolved_rx) = DnsResolutionManager::start(
         fake_resolver.clone(),
         retry_config,
         health_monitor,
@@ -47,12 +47,14 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
     success_dns_info.a_records.push("5.5.5.5".parse().unwrap());
     fake_resolver.add_success_response("newly-active.com", success_dns_info.clone());
 
-    // Act: First call should fail immediately and queue the domain for retry
-    let initial_result = manager.resolve_with_retry("newly-active.com", "test-tag").await;
+    // Act: Send the domain for resolution. This is non-blocking.
+    manager
+        .resolve("newly-active.com".to_string(), "test-tag".to_string())
+        .unwrap();
 
-    // Assert: Check that the initial call failed with NXDOMAIN
-    assert!(initial_result.is_err());
-    assert!(initial_result.unwrap_err().to_string().contains("NXDOMAIN"));
+    // Assert: The first call to the resolver should happen almost immediately.
+    // We give it a moment to be processed by the spawned task.
+    tokio::time::sleep(Duration::from_millis(5)).await;
     assert_eq!(fake_resolver.get_call_count("newly-active.com"), 1);
 
     // Assert: Wait for the retry task to process and check for the resolved domain

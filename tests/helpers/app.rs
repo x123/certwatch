@@ -2,7 +2,7 @@
 //! Test helpers for running the full application instance.
 
 use anyhow::Result;
-use certwatch::{config::Config, core::Alert};
+use certwatch::{config::Config, core::Alert, internal_metrics::Metrics};
 use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -70,6 +70,7 @@ pub struct TestAppBuilder {
     enrichment_provider: Option<std::sync::Arc<dyn certwatch::core::EnrichmentProvider>>,
     alert_tx: Option<broadcast::Sender<Alert>>,
     slack_client: Option<Arc<dyn certwatch::notification::slack::SlackClientTrait>>,
+    metrics: Option<Metrics>,
 }
 
 impl TestAppBuilder {
@@ -93,6 +94,7 @@ impl TestAppBuilder {
             enrichment_provider: Some(Arc::new(crate::helpers::fake_enrichment::FakeEnrichmentProvider::new())),
             alert_tx: None,
             slack_client: None,
+            metrics: None,
         }
     }
 
@@ -193,6 +195,12 @@ impl TestAppBuilder {
         self
     }
 
+    pub fn with_metrics_override(mut self, metrics: Metrics) -> Self {
+        self.config.metrics.enabled = true;
+        self.metrics = Some(metrics);
+        self
+    }
+
     pub async fn build(mut self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {
         // Ensure the dummy ASN file exists to prevent startup errors
         if let Some(path) = &self.config.enrichment.asn_tsv_path {
@@ -211,10 +219,7 @@ impl TestAppBuilder {
         let (shutdown_tx, shutdown_rx) = watch::channel(());
 
         let mut builder = certwatch::app::App::builder(self.config)
-            .enrichment_provider_override(
-                self.enrichment_provider
-                    .expect("Enrichment provider must be set in test builder"),
-            );
+            .enrichment_provider_override(self.enrichment_provider);
 
         if let Some(rx) = self.domains_rx_for_test {
             builder = builder.domains_rx_for_test(rx);
@@ -234,6 +239,9 @@ impl TestAppBuilder {
         }
         if let Some(sc) = self.slack_client {
             builder = builder.slack_client_override(sc);
+        }
+        if let Some(metrics) = self.metrics {
+            builder = builder.metrics_override(metrics);
         }
 
         let app = builder.build(shutdown_rx).await?;

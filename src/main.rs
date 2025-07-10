@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
 
     // Build and run the main application
     let app_builder = certwatch::app::App::builder(config)
-        .enrichment_provider_override(enrichment_provider);
+        .enrichment_provider_override(Some(enrichment_provider));
 
     let app_builder = if let Some(tx) = alert_tx {
         app_builder.notification_tx(tx)
@@ -94,7 +94,10 @@ async fn main() -> Result<()> {
 fn log_config_settings(config: &Config) {
     info!("-------------------- Configuration --------------------");
     info!("Log Level: {}", config.core.log_level);
-    info!("Concurrency: {}", config.core.concurrency);
+    info!(
+        "DNS Workers: {}, Rules Workers: {}",
+        config.performance.dns_worker_concurrency, config.performance.rules_worker_concurrency
+    );
     info!("Domain Queue Capacity: {}", config.performance.queue_capacity);
     info!("CertStream URL: {}", config.network.certstream_url);
     let sample_rate = config.network.sample_rate;

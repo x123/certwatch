@@ -20,8 +20,9 @@ fn test_load_full_valid_config() {
     let toml_content = r#"
         [core]
         log_level = "debug"
-        concurrency = 4
         [performance]
+        dns_worker_concurrency = 4
+        rules_worker_concurrency = 4
         queue_capacity = 50000
         [network]
         certstream_url = "ws://example.com/certstream"
@@ -60,7 +61,8 @@ fn test_load_full_valid_config() {
         let config = Config::load_from_cli(cli).unwrap();
 
         assert_eq!(config.core.log_level, "debug".to_string());
-        assert_eq!(config.core.concurrency, 4);
+        assert_eq!(config.performance.dns_worker_concurrency, 4);
+        assert_eq!(config.performance.rules_worker_concurrency, 4);
         assert_eq!(config.performance.queue_capacity, 50000);
         assert_eq!(
             config.network.certstream_url,
@@ -128,7 +130,7 @@ fn test_load_partial_config_uses_defaults() {
         assert_eq!(config.dns.resolver, Some("8.8.8.8:53".to_string()));
 
         // Values from Default
-        assert_eq!(config.core.concurrency, num_cpus::get());
+        assert_eq!(config.performance.dns_worker_concurrency, num_cpus::get());
         assert_eq!(config.performance.queue_capacity, 100_000);
         assert_eq!(
             config.network.certstream_url,
@@ -142,8 +144,8 @@ fn test_load_partial_config_uses_defaults() {
 #[test]
 fn test_invalid_value_type() {
     let toml_content = r#"
-        [core]
-        concurrency = "four" # Invalid type
+        [performance]
+        dns_worker_concurrency = "four" # Invalid type
     "#;
 
     with_config_file(toml_content, |path| {
@@ -151,7 +153,7 @@ fn test_invalid_value_type() {
         let config_result = Config::load_from_cli(cli);
         assert!(config_result.is_err());
         let error_string = config_result.unwrap_err().to_string();
-        assert!(error_string.contains("invalid type: found string \"four\", expected usize for key \"default.core.concurrency\""));
+        assert!(error_string.contains("invalid type: found string \"four\", expected usize for key \"default.performance.dns_worker_concurrency\""));
     });
 }
 

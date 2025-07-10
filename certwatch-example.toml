@@ -16,17 +16,20 @@
 # Default: "info"
 log_level = "info"
 
-# concurrency: The number of concurrent worker tasks for processing domains.
-# A higher number can improve performance on multi-core systems but will
-# increase resource usage.
-# Default: The number of logical CPU cores on the system.
-# concurrency = 16
-
-
 # ==============================================================================
 # [performance] - Performance Tuning
 # ==============================================================================
 [performance]
+
+# dns_worker_concurrency: The number of concurrent tasks dedicated to DNS resolution.
+# A higher value increases the number of simultaneous DNS queries.
+# Default: 8
+dns_worker_concurrency = 8
+
+# rules_worker_concurrency: The number of concurrent tasks dedicated to applying
+# matching rules and enrichment.
+# Default: The number of logical CPU cores.
+# rules_worker_concurrency = 16
 
 # queue_capacity: The maximum number of items to hold in internal channels.
 # This includes the channel for incoming domains from CertStream and the

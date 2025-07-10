@@ -80,20 +80,28 @@ impl Output for StdoutOutput {
     }
 
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        match self.format {
-            OutputFormat::Json => {
-                serde_json::to_writer(&mut handle, alert)
-                    .context("Failed to serialize alert to stdout")?;
-                writeln!(&mut handle).context("Failed to write newline to stdout")?;
+        let alert = alert.clone();
+        let format = self.format.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            match format {
+                OutputFormat::Json => {
+                    serde_json::to_writer(&mut handle, &alert)
+                        .context("Failed to serialize alert to stdout")?;
+                    writeln!(&mut handle).context("Failed to write newline to stdout")
+                }
+                OutputFormat::PlainText => {
+                    let formatted_string = format_plain_text(&alert);
+                    writeln!(&mut handle, "{}", formatted_string)
+                        .context("Failed to write formatted alert to stdout")
+                }
             }
-            OutputFormat::PlainText => {
-                let formatted_string = format_plain_text(alert);
-                writeln!(&mut handle, "{}", formatted_string)
-                    .context("Failed to write formatted alert to stdout")?;
-            }
-        }
+        })
+        .await
+        .context("Blocking task for stdout panicked")??;
+
         Ok(())
     }
 }

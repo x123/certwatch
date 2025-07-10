@@ -2,6 +2,7 @@
 mod helpers;
 
 use anyhow::Result;
+use certwatch::internal_metrics::Metrics;
 use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver};
 
 #[tokio::test]
@@ -23,7 +24,8 @@ async fn metrics_endpoint_is_available() -> Result<()> {
 
 #[tokio::test]
 async fn test_domain_counting_metrics() -> Result<()> {
-    let mock_dns = Arc::new(MockDnsResolver::new());
+    let metrics = Arc::new(Metrics::new_for_test());
+    let mock_dns = Arc::new(MockDnsResolver::new(metrics));
     mock_dns.add_response("google.com", Ok(Default::default())); // Health check
     mock_dns.add_response("matching.com", Ok(Default::default())); // Test domain
 
@@ -69,7 +71,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn dns_failure_metric_is_incremented() -> Result<()> {
-    let mock_dns = Arc::new(MockDnsResolver::new());
+    let metrics = Arc::new(Metrics::new_for_test());
+    let mock_dns = Arc::new(MockDnsResolver::new(metrics));
     mock_dns.add_response("google.com", Ok(Default::default())); // Health check
     mock_dns.add_failure("failing-domain.com").await;
 

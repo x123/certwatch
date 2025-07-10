@@ -68,14 +68,12 @@ impl Default for Config {
 #[serde(default)]
 pub struct CoreConfig {
     pub log_level: String,
-    pub concurrency: usize,
 }
 
 impl Default for CoreConfig {
     fn default() -> Self {
         Self {
             log_level: "info".to_string(),
-            concurrency: num_cpus::get(),
         }
     }
 }
@@ -84,12 +82,17 @@ impl Default for CoreConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct PerformanceConfig {
+    pub dns_worker_concurrency: usize,
+    pub rules_worker_concurrency: usize,
     pub queue_capacity: usize,
 }
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
+        let worker_count = num_cpus::get();
         Self {
+            dns_worker_concurrency: worker_count,
+            rules_worker_concurrency: worker_count,
             queue_capacity: 100_000,
         }
     }
@@ -135,7 +138,7 @@ impl Default for DnsConfig {
     fn default() -> Self {
         Self {
             resolver: None,
-            timeout_ms: 5000,
+            timeout_ms: 2000,
             retry_config: DnsRetryConfig::default(),
             health: DnsHealthConfig::default(),
         }
@@ -171,7 +174,7 @@ pub struct EnrichmentConfig {
 }
 
 /// The format for stdout output.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]
+#[derive(Debug, Deserialize, Serialize, Copy, Clone, PartialEq, Default)]
 pub enum OutputFormat {
     #[default]
     Json,

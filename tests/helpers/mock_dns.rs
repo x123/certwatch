@@ -5,23 +5,26 @@ use async_trait::async_trait;
 use certwatch::{
     core::{DnsInfo, DnsResolver},
     dns::DnsError,
+    internal_metrics::Metrics,
 };
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MockDnsResolver {
     responses: Arc<Mutex<HashMap<String, Result<DnsInfo, DnsError>>>>,
     resolve_counts: Arc<Mutex<HashMap<String, u32>>>,
+    metrics: Arc<Metrics>,
 }
 
 impl MockDnsResolver {
-    pub fn new() -> Self {
+    pub fn new(metrics: Arc<Metrics>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(HashMap::new())),
             resolve_counts: Arc::new(Mutex::new(HashMap::new())),
+            metrics,
         }
     }
 
@@ -53,15 +56,25 @@ impl DnsResolver for MockDnsResolver {
         let mut counts = self.resolve_counts.lock().unwrap();
         *counts.entry(domain.to_string()).or_insert(0) += 1;
 
-        if let Some(response) = self.responses.lock().unwrap().get(domain) {
-            response.clone()
-        } else {
-            // Default behavior for unconfigured domains: return an error
-            // to prevent tests from accidentally passing due to unexpected success.
-            Err(DnsError::Resolution(format!(
-                "MockDnsResolver: No response configured for domain '{}'",
-                domain
-            )))
+        let response = self
+            .responses
+            .lock()
+            .unwrap()
+            .get(domain)
+            .cloned()
+            .unwrap_or_else(|| {
+                Err(DnsError::Resolution(format!(
+                    "MockDnsResolver: No response configured for domain '{}'",
+                    domain
+                )))
+            });
+
+        // Simulate metric recording
+        match &response {
+            Ok(_) => self.metrics.increment_dns_query("success"),
+            Err(_) => self.metrics.increment_dns_query("failure"),
         }
+
+        response
     }
 }

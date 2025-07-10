@@ -184,6 +184,26 @@ system_metrics_enabled = true
 *   `system_metrics_enabled`: If `true`, the server will also collect and
     expose system-level metrics like CPU and memory usage.
 
+**e. Configure Performance (Optional):**
+
+`certwatch` allows tuning performance-related settings in the `[performance]`
+section of `certwatch.toml`.
+
+```toml
+# certwatch.toml - Performance Configuration
+[performance]
+# The number of concurrent tasks for DNS resolution.
+dns_worker_concurrency = 8
+# The number of concurrent tasks for rule matching.
+rules_worker_concurrency = 16
+# The capacity of internal queues.
+queue_capacity = 100000
+```
+
+*   `dns_worker_concurrency`: Controls how many domains can be resolved at the same time.
+*   `rules_worker_concurrency`: Controls how many domains can be processed by the rules engine simultaneously.
+*   `queue_capacity`: Defines the size of the buffers between processing stages.
+
 ### 4. Run the Application
 
 Once configured, you can run the application. All configuration is handled

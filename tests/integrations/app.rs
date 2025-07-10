@@ -3,11 +3,13 @@ use std::{sync::Arc, time::Duration};
 
 #[path = "../helpers/mod.rs"]
 mod helpers;
+use certwatch::internal_metrics::Metrics;
 use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver};
 
 #[tokio::test]
 async fn test_app_startup_succeeds_with_healthy_resolver() {
-    let mock_resolver = Arc::new(MockDnsResolver::new());
+    let metrics = Arc::new(Metrics::new_for_test());
+    let mock_resolver = Arc::new(MockDnsResolver::new(metrics));
     mock_resolver.add_response("google.com", Ok(DnsInfo::default()));
 
     let (mut test_app, app_future) = TestAppBuilder::new()
@@ -30,7 +32,8 @@ async fn test_app_startup_succeeds_with_healthy_resolver() {
 
 #[tokio::test]
 async fn test_app_startup_fails_with_unhealthy_resolver() {
-    let mock_resolver = Arc::new(MockDnsResolver::new());
+    let metrics = Arc::new(Metrics::new_for_test());
+    let mock_resolver = Arc::new(MockDnsResolver::new(metrics));
     mock_resolver.add_response(
         "google.com",
         Err(DnsError::Resolution("Timeout".to_string())),

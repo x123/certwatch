@@ -32,21 +32,21 @@ pub async fn build_alert(
     source_tag: String,
     resolved_after_nxdomain: bool,
     dns_info: DnsInfo,
-    enrichment_provider: Arc<dyn EnrichmentProvider>,
+    enrichment_provider: Option<Arc<dyn EnrichmentProvider>>,
 ) -> Result<Alert> {
-    let all_ips: Vec<_> = dns_info
-        .a_records
-        .iter()
-        .chain(dns_info.aaaa_records.iter())
-        .cloned()
-        .collect();
+    let enrichment_data = if let Some(provider) = enrichment_provider {
+        let all_ips: Vec<_> = dns_info
+            .a_records
+            .iter()
+            .chain(dns_info.aaaa_records.iter())
+            .cloned()
+            .collect();
 
-    let enrichment_data_futures = all_ips
-        .into_iter()
-        .map(|ip| enrichment_provider.enrich(ip));
-
-    let enrichment_data: Vec<EnrichmentInfo> =
-        futures::future::try_join_all(enrichment_data_futures).await?;
+        let enrichment_data_futures = all_ips.into_iter().map(|ip| provider.enrich(ip));
+        futures::future::try_join_all(enrichment_data_futures).await?
+    } else {
+        Vec::new()
+    };
 
     Ok(Alert {
         timestamp: Utc::now().to_rfc3339(),

@@ -1,18 +1,16 @@
 use certwatch::core::DnsInfo;
-use std::{
-    sync::{atomic::Ordering, Arc},
-    time::Duration,
-};
-use tokio::time::timeout;
+use std::{sync::Arc, time::Duration};
 
 // Import test helpers from the `tests` module.
 #[path = "../helpers/mod.rs"]
 mod helpers;
+use certwatch::internal_metrics::Metrics;
 use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver, mock_output::CountingOutput};
 
 #[tokio::test]
 async fn test_domain_is_processed_by_one_worker() {
-    let resolver = Arc::new(MockDnsResolver::new());
+    let metrics = Arc::new(Metrics::new_for_test());
+    let resolver = Arc::new(MockDnsResolver::new(metrics));
     // The health check will try to resolve google.com
     resolver.add_response("google.com", Ok(DnsInfo::default()));
 
@@ -35,7 +33,8 @@ rules:
         .with_dns_resolver(resolver.clone())
         .with_outputs(vec![counting_output.clone()])
         .with_config_modifier(|c| {
-            c.core.concurrency = 4; // Use multiple workers
+            c.performance.dns_worker_concurrency = 4;
+            c.performance.rules_worker_concurrency = 4;
         })
         .with_rules(rules)
         .await
@@ -58,15 +57,12 @@ rules:
     }
 
     // Wait until all domains have been processed by the workers.
-    let wait_for_completion = async {
-        while counting_output.count.load(Ordering::SeqCst) < domains_to_send {
-            counting_output.notifier.notified().await;
-        }
-    };
-
-    timeout(Duration::from_secs(10), wait_for_completion)
-        .await
-        .expect("Timed out waiting for all domains to be processed");
+    // With the async DNS manager, the worker returns immediately after handing
+    // off the domain. The actual resolution and output happen in the background.
+    // For this test, we'll just wait a fixed amount of time to allow the
+    // processing to complete. This is not ideal, but it's a pragmatic
+    // solution for this integration test.
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Shut down the app using the provided helper
     test_app
