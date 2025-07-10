@@ -70,9 +70,7 @@ impl TestAppBuilder {
             )]),
             websocket: None,
             dns_resolver: None,
-            enrichment_provider: Some(Arc::new(
-                crate::helpers::fake_enrichment::FakeEnrichmentProvider::new(),
-            )),
+            enrichment_provider: Some(Arc::new(crate::helpers::fake_enrichment::FakeEnrichmentProvider::new())),
             alert_tx: None,
             slack_client: None,
         }
@@ -116,6 +114,18 @@ impl TestAppBuilder {
         self
     }
 
+    pub fn with_failing_enrichment(self, fail: bool) -> Self {
+        if let Some(provider_arc) = &self.enrichment_provider {
+            if let Some(fake_provider) = provider_arc
+                .as_any()
+                .downcast_ref::<crate::helpers::fake_enrichment::FakeEnrichmentProvider>()
+            {
+                fake_provider.set_fail(fail);
+            }
+        }
+        self
+    }
+
 
     pub fn with_config_modifier(mut self, modifier: impl FnOnce(&mut Config)) -> Self {
         modifier(&mut self.config);
@@ -134,11 +144,18 @@ impl TestAppBuilder {
 
     /// Builds the application components but does not spawn it.
     /// Returns the TestApp handle and a future that runs the app.
-    pub fn with_slack_client(
+    pub fn with_slack_notification(
         mut self,
         client: Arc<dyn certwatch::notification::slack::SlackClientTrait>,
+        channel: &str,
     ) -> Self {
         self.slack_client = Some(client);
+        self.config.output.slack = Some(certwatch::config::SlackConfig {
+            enabled: Some(true),
+            webhook_url: Some("https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX".to_string()),
+            batch_size: Some(10),
+            batch_timeout_seconds: Some(1),
+        });
         self
     }
 

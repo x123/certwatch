@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use tracing::{debug, info};
 use rangemap::RangeMap;
 use serde::Deserialize;
+use std::any::Any;
 use std::net::IpAddr;
 use std::path::Path;
 
@@ -86,6 +87,10 @@ impl EnrichmentProvider for TsvAsnLookup {
             ip,
             asn_info: self.find(ip),
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

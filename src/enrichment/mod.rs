@@ -11,7 +11,7 @@ pub use tsv_lookup::TsvAsnLookup;
 use crate::core::{EnrichmentInfo, EnrichmentProvider};
 use anyhow::Result;
 use async_trait::async_trait;
-use std::net::IpAddr;
+use std::{any::Any, net::IpAddr};
 
 /// An `EnrichmentProvider` that does nothing.
 #[derive(Debug, Clone)]
@@ -21,6 +21,10 @@ pub struct NoOpEnrichmentProvider;
 impl EnrichmentProvider for NoOpEnrichmentProvider {
     async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo> {
         Ok(EnrichmentInfo { ip, asn_info: None })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

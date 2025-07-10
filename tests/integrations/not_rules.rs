@@ -27,14 +27,10 @@ rules:
       - not_asns: [15169] # Google LLC
 "#;
 
-    // 2. Configure an enrichment provider that will always fail
-    let fake_enrichment_provider = Arc::new(FakeEnrichmentProvider::new());
-    fake_enrichment_provider.set_fail(true);
-
-    // 3. Build the test application
+    // 2. Build the test application, configuring the enrichment provider to fail
     let (mut app, app_future) = TestAppBuilder::new()
         .with_alert_tx(alerts_tx)
-        .with_enrichment_provider(fake_enrichment_provider)
+        .with_failing_enrichment(true)
         .with_rules(rules)
         .await
         .build()

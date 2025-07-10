@@ -28,20 +28,20 @@ async fn test_domain_is_processed_by_one_worker() {
         resolver.add_response(&domain, Ok(DnsInfo::default()));
     }
 
+    let rules = r#"
+rules:
+  - name: "Test Domain Matcher"
+    all:
+      - domain_regex: "^test-domain-.*\\.com$"
+"#;
     let (mut test_app, app_future) = TestAppBuilder::new()
         .with_dns_resolver(resolver.clone())
         .with_outputs(vec![counting_output.clone()])
         .with_config_modifier(|c| {
             c.core.concurrency = 4; // Use multiple workers
-            c.rules.rule_files = Some(vec![create_rule_file(
-                r#"
-rules:
-  - name: "Test Domain Matcher"
-    all:
-      - domain_regex: "^test-domain-.*\\.com$"
-"#,
-            )]);
         })
+        .with_rules(rules)
+        .await
         .build()
         .await
         .expect("TestApp should build successfully");

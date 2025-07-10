@@ -4,6 +4,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use certwatch::core::{EnrichmentInfo, EnrichmentProvider};
+use std::any::Any;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -36,5 +37,8 @@ impl EnrichmentProvider for FakeEnrichmentProvider {
                 asn_info: None,
             })
         }
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

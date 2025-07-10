@@ -3,6 +3,7 @@
 use crate::core::{EnrichmentInfo, EnrichmentProvider};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use std::any::Any;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
@@ -43,6 +44,10 @@ impl EnrichmentProvider for FakeEnrichmentProvider {
                 ..Default::default()
             }), // Return empty info if not configured
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

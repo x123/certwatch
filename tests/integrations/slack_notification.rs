@@ -12,9 +12,8 @@ async fn test_slack_alert_aggregation() -> Result<()> {
 
     // 2. Build the TestApp with the mock client and a rule
     let test_app_builder = TestAppBuilder::new()
-        .with_slack_client(mock_slack_client.clone())
+        .with_slack_notification(mock_slack_client.clone(), "#test")
         .with_config_modifier(|config| {
-            config.notification.slack_channel = Some("#test".to_string());
             config.notification.aggregation_time = Duration::from_millis(100);
         });
 

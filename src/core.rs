@@ -7,6 +7,7 @@ use crate::dns::DnsError;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::net::IpAddr;
 
 /// Represents a security alert for a suspicious domain
@@ -126,6 +127,9 @@ pub trait EnrichmentProvider: Send + Sync {
     /// * `Ok(EnrichmentInfo)` containing all data that could be found
     /// * `Err` only if a critical, unrecoverable error occurs
     async fn enrich(&self, ip: IpAddr) -> Result<EnrichmentInfo>;
+
+    /// Returns this trait as an `Any` object, to allow for downcasting.
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// Sends alerts to output destinations
