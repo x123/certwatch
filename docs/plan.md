@@ -194,4 +194,69 @@
     *   [ ] **#226 - Update Slack Formatting Logic:** Modify the Slack notification formatting to include a `(+x more)` count for both deduplicated subdomains and aggregated IP addresses.
     *   [ ] **#227 - Refactor IP Aggregation Text:** Change the existing `(+x others)` for IPs to `(+x more)` for consistency.
     *   [ ] **#228 - Add Conditional Display Logic:** Ensure the `(+x more)` text only appears when the count of additional items is greater than zero.
-    *   [ ] **#229 - Update Integration Tests:** Modify existing Slack notification tests to assert the new format, including cases with and without the `(+x more)` text.
+
+---
+
+### Epic #52: Formalize the Extensible Enrichment Framework
+
+*   **User Story:** As a developer, I want to refactor the hardcoded two-stage filtering pipeline into a generic, multi-level pipeline, so that new, high-cost enrichment stages can be added in the future with minimal code changes and without impacting performance unnecessarily.
+
+*   **Vision & Justification:**
+    The current implementation in `process_domain` is a rigid, two-stage process. It first checks rules that require no enrichment (`EnrichmentLevel::None`), and if they match, it *always* proceeds to perform DNS and ASN enrichment before checking the next stage of rules (`EnrichmentLevel::Standard`).
+
+    This architecture has two key weaknesses:
+    1.  **Inextensible:** Adding a new, more expensive enrichment stage (e.g., a hypothetical HTTP lookup for `EnrichmentLevel::HighCost`) would require invasive changes to the core `process_domain` function, adding more `if/else` blocks and further coupling the application logic.
+    2.  **Inefficient:** It lacks the granularity to support multiple enrichment levels beyond the current one. It cannot, for example, run a cheap DNS check for one set of rules and a more expensive ASN lookup only for a smaller subset.
+
+    This refactoring will replace the hardcoded logic with a generic, iterative pipeline. This new design will be driven by an ordered `EnrichmentLevel` enum, ensuring that we only perform the minimum work necessary at each stage. This makes the system highly extensible and more efficient, paving the way for future features without requiring complex rewrites.
+
+*   **Architecture:**
+    The core of the new design is a loop within `process_domain` that iterates through the `EnrichmentLevel` enum.
+    1.  A new `EnrichmentManager` will be created to hold all available `EnrichmentProvider` implementations, mapped to the level they provide.
+    2.  The `process_domain` loop will start at `EnrichmentLevel::None`.
+    3.  In each iteration, it will ask the `RuleMatcher` for rules matching the *current* level.
+    4.  If no rules match, the process stops for that domain.
+    5.  If rules *do* match, the loop advances to the *next* enrichment level. It asks the `EnrichmentManager` for the appropriate provider, executes it, and merges the new data into the `Alert`.
+    6.  The loop continues until all enrichment levels have been processed or the domain has been filtered out.
+
+    ```mermaid
+    graph TD
+        A[Start: Domain Received] --> B{Loop: Current Level = None};
+        B --> C{"Match Rules at Current Level?"};
+        C -- No --> X[Discard Domain];
+        C -- Yes --> D{Get Next Enrichment Level};
+        D -- No More Levels --> J[Final Alert Sent];
+        D -- Next Level Exists --> E[Get Provider from EnrichmentManager];
+        E --> F[Execute Enrichment];
+        F --> G[Merge Data into Alert];
+        G --> B;
+    ```
+
+*   **Status:** Not Started
+
+*   **Tasks:**
+    *   [ ] **#230 - Foundational Type & Trait Enhancements**
+        *   **Subtask:** Add the `strum` and `strum_macros` crates to `Cargo.toml` to make the `EnrichmentLevel` enum easily iterable.
+        *   **Subtask:** Derive `EnumIter` for `EnrichmentLevel` in `src/rules.rs` and ensure its variants are ordered correctly (`None`, `Standard`, etc.).
+        *   **Subtask:** Create a new `EnrichmentProvider` trait method, `provides_level() -> EnrichmentLevel`, to allow providers to declare what level of data they supply.
+
+    *   [ ] **#231 - Create the `EnrichmentManager`**
+        *   **Subtask:** Create a new file `src/enrichment/manager.rs`.
+        *   **Subtask:** Implement the `EnrichmentManager` struct, which will hold a `HashMap<EnrichmentLevel, Arc<dyn EnrichmentProvider>>`.
+        *   **Subtask:** Implement a `new()` or `build()` function for the manager that takes the application `Config` and instantiates all required providers (e.g., `TsvAsnLookup`).
+        *   **Subtask:** Implement a `get_provider_for(&self, level: EnrichmentLevel) -> Option<...>` method.
+
+    *   [ ] **#232 - Implement the Generic Pipeline in `app.rs`**
+        *   **Subtask:** In `AppBuilder`, replace the single `enrichment_provider_override` with the new `EnrichmentManager`.
+        *   **Subtask:** In `process_domain`, remove the existing two-stage logic.
+        *   **Subtask:** Implement the new iterative loop as described in the architecture diagram.
+        *   **Subtask:** The loop should maintain a set of matched rule names and only proceed to the next enrichment level if there are matching rules from the current level.
+
+    *   [ ] **#233 - Write Focused Unit Tests**
+        *   **Subtask:** In `src/app.rs`'s test module, create a new test to verify that a domain that doesn't match `Level::None` rules is correctly discarded without any enrichment.
+        *   **Subtask:** Create a test to verify that a domain matching `Level::None` rules proceeds to `Level::Standard` enrichment.
+        *   **Subtask:** Create a test to verify that a domain matching both `Level::None` and `Level::Standard` rules results in a final alert with all rule names.
+
+    *   [ ] **#234 - Update Integration Tests**
+        *   **Subtask:** Update the `TestAppBuilder` in `tests/helpers/app.rs` to construct and use the new `EnrichmentManager`.
+        *   **Subtask:** Review and update existing integration tests (e.g., `tests/integrations/not_rules.rs`) to ensure they are compatible with the new pipeline logic. The `with_failing_enrichment` helper may need to be adapted.
