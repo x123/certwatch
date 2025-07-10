@@ -14,7 +14,8 @@ use crate::{
     utils::heartbeat::run_heartbeat,
 };
 use anyhow::Result;
-use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use async_channel::{Receiver, Sender};
+use tokio::sync::{broadcast, watch};
 use tracing::{debug, error, info, instrument, trace};
 use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
@@ -85,7 +86,7 @@ impl App {
 /// a convenient way to override components for testing purposes.
 pub struct AppBuilder {
     config: Config,
-    domains_rx_for_test: Option<mpsc::Receiver<String>>,
+    domains_rx_for_test: Option<Receiver<String>>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
@@ -112,7 +113,7 @@ impl AppBuilder {
     }
 
     /// Overrides the domain receiver channel for testing.
-    pub fn domains_rx_for_test(mut self, rx: mpsc::Receiver<String>) -> Self {
+    pub fn domains_rx_for_test(mut self, rx: Receiver<String>) -> Self {
         self.domains_rx_for_test = Some(rx);
         self
     }
@@ -249,7 +250,7 @@ impl AppBuilder {
         let (domains_rx, certstream_task) = if let Some(rx) = self.domains_rx_for_test {
             (rx, None)
         } else {
-            let (tx, rx) = mpsc::channel::<String>(500_000);
+            let (tx, rx) = async_channel::unbounded();
             let certstream_url = config.network.certstream_url.clone();
             let sample_rate = config.network.sample_rate;
             let allow_invalid_certs = config.network.allow_invalid_certs;
@@ -288,11 +289,8 @@ impl AppBuilder {
         // =========================================================================
         // 6. Build the Pipeline
         // =========================================================================
-        let (resolved_tx, resolved_rx) =
-            mpsc::channel(config.performance.queue_capacity);
-        let (alerts_tx, alerts_rx) = mpsc::channel(config.performance.queue_capacity);
-
-        let domains_rx = Arc::new(Mutex::new(domains_rx));
+        let (resolved_tx, resolved_rx): (Sender<(String, crate::core::DnsInfo)>, Receiver<(String, crate::core::DnsInfo)>) = async_channel::unbounded();
+        let (alerts_tx, alerts_rx) = async_channel::unbounded();
 
         // =========================================================================
         // STAGE 2: DNS Resolution
@@ -317,8 +315,8 @@ impl AppBuilder {
                             trace!("DNS Worker {} received shutdown signal, exiting.", i);
                             None
                         }
-                        domain_opt = async { domains_rx.lock().await.recv().await } => {
-                            domain_opt
+                        domain_opt = domains_rx.recv() => {
+                            domain_opt.ok()
                         }
                     };
 
@@ -356,14 +354,12 @@ impl AppBuilder {
             rules_worker_concurrency
         );
 
-        let resolved_rx = Arc::new(Mutex::new(resolved_rx));
         for i in 0..rules_worker_concurrency {
             let mut shutdown_rx = shutdown_rx.clone();
             let resolved_rx = resolved_rx.clone();
             let alerts_tx = alerts_tx.clone();
             let rule_matcher = rule_matcher.clone();
             let enrichment_provider = enrichment_provider.clone();
-            let metrics = metrics.clone();
             let handle = tokio::spawn(async move {
                 trace!("Rules Worker {} started", i);
                 loop {
@@ -373,8 +369,8 @@ impl AppBuilder {
                             trace!("Rules Worker {} received shutdown signal, exiting.", i);
                             None
                         }
-                        resolved_opt = async { resolved_rx.lock().await.recv().await } => {
-                            resolved_opt
+                        resolved_opt = resolved_rx.recv() => {
+                            resolved_opt.ok()
                         }
                     };
 
@@ -452,7 +448,7 @@ impl AppBuilder {
 #[instrument(skip_all)]
 async fn output_task_logic(
     mut shutdown_rx: watch::Receiver<()>,
-    mut alerts_rx: mpsc::Receiver<Alert>,
+    alerts_rx: Receiver<Alert>,
     deduplicator: Arc<Deduplicator>,
     output_manager: Arc<OutputManager>,
     notification_tx: Option<broadcast::Sender<Alert>>,
@@ -467,7 +463,7 @@ async fn output_task_logic(
                 info!("Output task received shutdown signal.");
                 break;
             }
-            Some(alert) = alerts_rx.recv() => {
+            Ok(alert) = alerts_rx.recv() => {
                 debug!("Output task received alert for domain: {}", &alert.domain);
                 if !deduplicator.is_duplicate(&alert).await {
                     debug!("Domain {} is not a duplicate. Processing.", &alert.domain);

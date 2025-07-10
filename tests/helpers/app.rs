@@ -6,7 +6,7 @@ use certwatch::{config::Config, core::Alert, internal_metrics::Metrics};
 use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{broadcast, mpsc, watch},
+    sync::{broadcast, watch},
     task::JoinHandle,
     time::timeout,
 };
@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 
 #[derive(Debug)]
 pub struct TestApp {
-    pub domains_tx: Option<mpsc::Sender<String>>,
+    pub domains_tx: Option<async_channel::Sender<String>>,
     pub shutdown_tx: watch::Sender<()>,
     pub app_handle: Option<JoinHandle<Result<()>>>,
     metrics_addr: Option<SocketAddr>,
@@ -62,8 +62,8 @@ impl TestApp {
 #[derive(Default)]
 pub struct TestAppBuilder {
     pub config: Config,
-    domains_tx_for_test: Option<mpsc::Sender<String>>,
-    domains_rx_for_test: Option<mpsc::Receiver<String>>,
+    domains_tx_for_test: Option<async_channel::Sender<String>>,
+    domains_rx_for_test: Option<async_channel::Receiver<String>>,
     outputs: Option<Vec<std::sync::Arc<dyn certwatch::core::Output>>>,
     websocket: Option<Box<dyn certwatch::network::WebSocketConnection>>,
     dns_resolver: Option<std::sync::Arc<dyn certwatch::core::DnsResolver>>,
@@ -101,7 +101,7 @@ impl TestAppBuilder {
     /// Sets up a direct MPSC channel for domain injection, bypassing the network client.
     /// The sender part of the channel is returned in the `TestApp` struct.
     pub fn with_test_domains_channel(mut self) -> Self {
-        let (tx, rx) = mpsc::channel(1000);
+        let (tx, rx) = async_channel::unbounded();
         self.domains_tx_for_test = Some(tx);
         self.domains_rx_for_test = Some(rx);
         self

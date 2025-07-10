@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use rand::Rng;
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use async_channel::Sender;
+use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message;
 
 /// Parses a raw certstream JSON message and extracts domain names
@@ -47,7 +48,7 @@ pub trait WebSocketConnection: Send + Sync {
 /// and processes incoming certificate transparency log entries
 pub struct CertStreamClient {
     url: String,
-    output_tx: mpsc::Sender<String>,
+    output_tx: Sender<String>,
     sample_rate: f64,
     allow_invalid_certs: bool,
     metrics: Arc<Metrics>,
@@ -63,7 +64,7 @@ impl CertStreamClient {
     /// * `allow_invalid_certs` - Whether to allow self-signed TLS certificates
     pub fn new(
         url: String,
-        output_tx: mpsc::Sender<String>,
+        output_tx: Sender<String>,
         sample_rate: f64,
         allow_invalid_certs: bool,
         metrics: Arc<Metrics>,
@@ -282,6 +283,7 @@ mod tests {
     use super::*;
     use crate::internal_metrics::Metrics;
     use std::sync::Arc;
+    use async_channel;
 
     fn create_test_metrics() -> Arc<Metrics> {
         // The metrics system uses a global recorder, so we can't easily
@@ -333,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_sample_domains() {
-        let (tx, _) = mpsc::channel(1);
+        let (tx, _) = async_channel::unbounded();
         let metrics = create_test_metrics();
         let domains: Vec<String> = (0..10000).map(|i| format!("domain{}.com", i)).collect();
 

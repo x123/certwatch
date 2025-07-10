@@ -7,7 +7,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use certwatch::{internal_metrics::Metrics, network::{CertStreamClient, WebSocketConnection}};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
+use async_channel;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
 /// Fake WebSocket implementation for testing
@@ -68,7 +69,7 @@ async fn test_certstream_client_basic_functionality() -> Result<()> {
         Some(Ok(sample_message.to_string())),
         None, // Simulate connection close
     ]);
-    let (tx, mut rx) = mpsc::channel::<String>(10);
+    let (tx, mut rx) = async_channel::unbounded();
     let metrics = Arc::new(Metrics::new());
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx.clone(), 1.0, false, metrics);
 
@@ -83,7 +84,7 @@ async fn test_certstream_client_basic_functionality() -> Result<()> {
     let mut received_domains = Vec::new();
     // Close the sender to signal the end of the stream
     drop(tx);
-    while let Some(domain) = rx.recv().await {
+    while let Ok(domain) = rx.recv().await {
         received_domains.push(domain);
     }
 
@@ -103,7 +104,7 @@ async fn test_certstream_client_handles_invalid_messages() -> Result<()> {
         Some(Ok(invalid_message.to_string())),
         None, // Simulate connection close
     ]);
-    let (tx, mut rx) = mpsc::channel::<String>(10);
+    let (tx, rx) = async_channel::unbounded();
     let metrics = Arc::new(Metrics::new());
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0, false, metrics);
 

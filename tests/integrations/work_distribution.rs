@@ -36,9 +36,9 @@ rules:
             c.performance.dns_worker_concurrency = 4;
             c.performance.rules_worker_concurrency = 4;
         })
+        .with_test_domains_channel()
         .with_rules(rules)
         .await
-        .with_test_domains_channel()
         .build()
         .await
         .expect("TestApp should build successfully");
