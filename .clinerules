@@ -23,12 +23,13 @@ allowing critical components (like the network client, DNS resolver, etc.) to
 be replaced with mocks. **DO NOT** attempt to re-implement this functionality
 with bespoke mocks.
 
--   **Direct Input via MPSC Channel:** Crucially, the `TestAppBuilder`'s
-`build()` method returns a `TestApp` struct which contains a `domains_tx:
-mpsc::Sender<String>`. This channel is plumbed directly into the application's
-worker distribution logic, completely bypassing the `CertStreamClient` and the
-`WebSocketConnection`. This is the **ONLY** approved "backdoor" for injecting
-test data directly into the system.
+-   **Direct Input via Test Channel:** The `TestAppBuilder` provides a
+`domains_tx: mpsc::Sender<String>` for feeding test data directly into the
+application's worker pool. This is achieved by configuring the underlying
+`AppBuilder` with the `domains_rx_for_test()` method, which bypasses the
+live `CertStreamClient` entirely. This is the **ONLY** approved method for
+injecting test data. Avoids the complexity of the previous `Arc<Mutex<>>`
+channel override pattern.
 
 -   **Signal-Based Completion:** Tests like `certstream_client.rs` use
 `tokio::sync::oneshot` channels to signal when a task has completed its work.

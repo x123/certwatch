@@ -23,9 +23,8 @@ use tokio::task::JoinHandle;
 
 /// A handle to the running application, containing all its task handles.
 pub struct App {
-    _config: Config,
     shutdown_rx: watch::Receiver<()>,
-    certstream_task: JoinHandle<()>,
+    certstream_task: Option<JoinHandle<()>>,
     worker_handles: Vec<JoinHandle<()>>,
     nxdomain_feedback_task: JoinHandle<()>,
     output_task: JoinHandle<()>,
@@ -46,8 +45,10 @@ impl App {
         info!("Shutdown signal received in run function. Waiting for tasks to complete...");
 
         // Wait for all tasks to complete
-        if let Err(e) = self.certstream_task.await {
-            error!("CertStream task panicked: {:?}", e);
+        if let Some(handle) = self.certstream_task {
+            if let Err(e) = handle.await {
+                error!("CertStream task panicked: {:?}", e);
+            }
         }
         for handle in self.worker_handles {
             if let Err(e) = handle.await {
@@ -78,7 +79,7 @@ impl App {
 /// a convenient way to override components for testing purposes.
 pub struct AppBuilder {
     config: Config,
-    domains_rx_override: Option<Arc<Mutex<mpsc::Receiver<String>>>>,
+    domains_rx_for_test: Option<mpsc::Receiver<String>>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
     dns_resolver_override: Option<Arc<dyn DnsResolver>>,
@@ -92,7 +93,7 @@ impl AppBuilder {
     pub fn new(config: Config) -> Self {
         Self {
             config,
-            domains_rx_override: None,
+            domains_rx_for_test: None,
             output_override: None,
             websocket_override: None,
             dns_resolver_override: None,
@@ -103,8 +104,8 @@ impl AppBuilder {
     }
 
     /// Overrides the domain receiver channel for testing.
-    pub fn domains_rx_override(mut self, rx: Arc<Mutex<mpsc::Receiver<String>>>) -> Self {
-        self.domains_rx_override = Some(rx);
+    pub fn domains_rx_for_test(mut self, rx: mpsc::Receiver<String>) -> Self {
+        self.domains_rx_for_test = Some(rx);
         self
     }
 
@@ -218,13 +219,42 @@ impl AppBuilder {
         // 5. Create Channels for the Pipeline
         // =========================================================================
         let (internal_alerts_tx, _) = broadcast::channel::<Alert>(1000);
-        let (domains_tx, domains_rx) = if let Some(rx_override) = self.domains_rx_override {
-            let (tx, _) = mpsc::channel::<String>(1000);
-            (tx, rx_override)
+
+        // If a test receiver is provided, use it. Otherwise, create a new channel
+        // and spawn the CertStream client to populate it.
+        let (domains_rx, certstream_task) = if let Some(rx) = self.domains_rx_for_test {
+            (rx, None)
         } else {
             let (tx, rx) = mpsc::channel::<String>(1000);
-            (tx, Arc::new(Mutex::new(rx)))
+            let certstream_url = config.network.certstream_url.clone();
+            let sample_rate = config.network.sample_rate;
+            let allow_invalid_certs = config.network.allow_invalid_certs;
+            debug!(
+                certstream_url,
+                sample_rate,
+                allow_invalid_certs,
+                "Initializing CertStream client"
+            );
+            let certstream_client =
+                CertStreamClient::new(certstream_url, tx, sample_rate, allow_invalid_certs);
+
+            let task = {
+                let shutdown_rx_clone = shutdown_rx.clone();
+                tokio::spawn(async move {
+                    let result = if let Some(ws) = self.websocket_override {
+                        certstream_client.run_with_connection(ws).await
+                    } else {
+                        certstream_client.run(shutdown_rx_clone).await
+                    };
+
+                    if let Err(e) = result {
+                        error!("CertStream client failed: {}", e);
+                    }
+                })
+            };
+            (rx, Some(task))
         };
+        let domains_rx = Arc::new(Mutex::new(domains_rx));
 
         // =========================================================================
         // 6. Start the DNS Resolution Manager
@@ -241,39 +271,6 @@ impl AppBuilder {
             shutdown_rx.clone(),
         );
         let dns_manager = Arc::new(dns_manager);
-
-        // =========================================================================
-        // 7. Start the CertStream Client
-        // =========================================================================
-        let certstream_url = config.network.certstream_url.clone();
-        let sample_rate = config.network.sample_rate;
-        let allow_invalid_certs = config.network.allow_invalid_certs;
-        debug!(
-            certstream_url,
-            sample_rate,
-            allow_invalid_certs,
-            "Initializing CertStream client"
-        );
-        let certstream_client = CertStreamClient::new(
-            certstream_url,
-            domains_tx,
-            sample_rate,
-            allow_invalid_certs,
-        );
-        let certstream_task = {
-            let shutdown_rx_clone = shutdown_rx.clone();
-            tokio::spawn(async move {
-                let result = if let Some(ws) = self.websocket_override {
-                    certstream_client.run_with_connection(ws).await
-                } else {
-                    certstream_client.run(shutdown_rx_clone).await
-                };
-
-                if let Err(e) = result {
-                    error!("CertStream client failed: {}", e);
-                }
-            })
-        };
 
         // =========================================================================
         // 8. Main Processing Loop (Worker Pool)
@@ -413,7 +410,6 @@ impl AppBuilder {
         info!("CertWatch initialized successfully. Monitoring for domains...");
 
         Ok(App {
-            _config: config,
             shutdown_rx,
             certstream_task,
             worker_handles,

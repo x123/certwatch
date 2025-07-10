@@ -155,11 +155,9 @@ impl TestAppBuilder {
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let (domains_tx, domains_rx) =
             mpsc::channel(self.config.performance.queue_capacity);
-        let domains_rx_mutex = Arc::new(Mutex::new(domains_rx));
-
         let app_future = async move {
             let mut builder = certwatch::app::App::builder(self.config)
-                .domains_rx_override(domains_rx_mutex)
+                .domains_rx_for_test(domains_rx)
                 .enrichment_provider_override(
                     self.enrichment_provider
                         .expect("Enrichment provider must be set in test builder"),
