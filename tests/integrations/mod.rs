@@ -3,6 +3,7 @@ mod certstream_client;
 mod config;
 mod core_logic;
 mod live_certstream_client;
+mod metrics;
 mod not_rules;
 mod output_failure;
 mod output_separation;

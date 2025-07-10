@@ -1,8 +1,10 @@
 use certwatch::{
     config::RulesConfig,
     core::{Alert, DnsInfo},
+    internal_metrics::Metrics,
     rules::{EnrichmentLevel, RuleLoader, RuleMatcher},
 };
+use std::sync::Arc;
 
 #[path = "../helpers/mod.rs"]
 mod helpers;
@@ -33,7 +35,7 @@ rules:
         rule_files: vec![rule_file].into(),
     };
     let rule_set = RuleLoader::load_from_files(&config).unwrap();
-    let matcher = RuleMatcher::new(rule_set).unwrap();
+    let matcher = RuleMatcher::new(rule_set, Arc::new(Metrics::new_for_test())).unwrap();
 
     assert_eq!(matcher.stage_1_rules.len(), 1);
     assert_eq!(matcher.stage_1_rules[0].name, "Stage 1 Rule");
@@ -69,7 +71,7 @@ rules:
         rule_files: vec![rule_file].into(),
     };
     let rule_set = RuleLoader::load_from_files(&config).unwrap();
-    let matcher = RuleMatcher::new(rule_set).unwrap();
+    let matcher = RuleMatcher::new(rule_set, Arc::new(Metrics::new_for_test())).unwrap();
 
     let mut alert = create_test_alert("test.com");
     alert.enrichment.push(certwatch::core::EnrichmentInfo {
@@ -110,7 +112,7 @@ rules:
         rule_files: vec![rule_file].into(),
     };
     let rule_set = RuleLoader::load_from_files(&config).unwrap();
-    let matcher = RuleMatcher::new(rule_set).unwrap();
+    let matcher = RuleMatcher::new(rule_set, Arc::new(Metrics::new_for_test())).unwrap();
 
     assert!(
         matcher.is_ignored("sub.ignored.com"),
@@ -139,7 +141,7 @@ rules:
         rule_files: vec![rule_file].into(),
     };
     let rule_set = RuleLoader::load_from_files(&config).unwrap();
-    let matcher = RuleMatcher::new(rule_set).unwrap();
+    let matcher = RuleMatcher::new(rule_set, Arc::new(Metrics::new_for_test())).unwrap();
 
     assert!(!matcher.is_ignored("anything.com"));
 }
@@ -158,7 +160,7 @@ rules:
         rule_files: vec![rule_file].into(),
     };
     let rule_set = RuleLoader::load_from_files(&config).unwrap();
-    let matcher = RuleMatcher::new(rule_set).unwrap();
+    let matcher = RuleMatcher::new(rule_set, Arc::new(Metrics::new_for_test())).unwrap();
 
     assert!(!matcher.is_ignored("anything.com"));
 }
@@ -175,6 +177,6 @@ rules: []
         rule_files: vec![rule_file].into(),
     };
     let rule_set = RuleLoader::load_from_files(&config).unwrap();
-    let result = RuleMatcher::new(rule_set);
+    let result = RuleMatcher::new(rule_set, Arc::new(Metrics::new_for_test()));
     assert!(result.is_err());
 }

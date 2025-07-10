@@ -3,12 +3,12 @@
 //! This module contains the data structures and logic for parsing, validating,
 //! and evaluating complex filtering rules.
 
-use crate::{config::RulesConfig, core::Alert};
+use crate::{config::RulesConfig, core::Alert, internal_metrics::Metrics};
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 // --- Public Structs ---
 
@@ -32,6 +32,8 @@ pub struct RuleMatcher {
     pub stage_2_rules: Vec<Rule>,
     /// The pre-emptive filter for ignoring domains.
     pre_filter: PreFilter,
+    /// A handle to the metrics system.
+    metrics: Arc<Metrics>,
 }
 
 // --- Public Enums ---
@@ -63,7 +65,7 @@ pub enum RuleExpression {
 
 impl RuleMatcher {
     /// Creates a new `RuleMatcher` from a fully-loaded `RuleSet`.
-    pub fn new(rule_set: RuleSet) -> Result<Self> {
+    pub fn new(rule_set: RuleSet, metrics: Arc<Metrics>) -> Result<Self> {
         let (stage_2_rules, stage_1_rules) = rule_set
             .rules
             .into_iter()
@@ -75,6 +77,7 @@ impl RuleMatcher {
             stage_1_rules,
             stage_2_rules,
             pre_filter,
+            metrics,
         })
     }
 
@@ -94,13 +97,19 @@ impl RuleMatcher {
 
         rules_to_check
             .iter()
-            .filter(|rule| rule.is_match(alert))
-            .map(|rule| rule.name.clone())
+            .filter_map(|rule| {
+                if rule.is_match(alert) {
+                    self.metrics.increment_rule_match(&rule.name);
+                    Some(rule.name.clone())
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
     #[cfg(test)]
-    pub fn new_for_test(rules: Vec<Rule>) -> Self {
+    pub fn new_for_test(rules: Vec<Rule>, metrics: Arc<Metrics>) -> Self {
         let (stage_2_rules, stage_1_rules) = rules
             .into_iter()
             .partition(|rule| rule.required_level == EnrichmentLevel::Standard);
@@ -109,6 +118,7 @@ impl RuleMatcher {
             stage_1_rules,
             stage_2_rules,
             pre_filter: PreFilter::new(None).unwrap(),
+            metrics,
         }
     }
 }

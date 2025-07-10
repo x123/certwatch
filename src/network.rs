@@ -3,11 +3,12 @@
 // This module handles connecting to the certstream websocket, parsing
 // messages, and managing reconnection logic.
 
-use crate::utils::heartbeat::run_heartbeat;
+use crate::{internal_metrics::Metrics, utils::heartbeat::run_heartbeat};
 use anyhow::Result;
 use async_trait::async_trait;
 use rand::Rng;
 use serde::Deserialize;
+use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -49,6 +50,7 @@ pub struct CertStreamClient {
     output_tx: mpsc::Sender<String>,
     sample_rate: f64,
     allow_invalid_certs: bool,
+    metrics: Arc<Metrics>,
 }
 
 impl CertStreamClient {
@@ -64,6 +66,7 @@ impl CertStreamClient {
         output_tx: mpsc::Sender<String>,
         sample_rate: f64,
         allow_invalid_certs: bool,
+        metrics: Arc<Metrics>,
     ) -> Self {
         assert!(
             (0.0..=1.0).contains(&sample_rate),
@@ -74,6 +77,7 @@ impl CertStreamClient {
             output_tx,
             sample_rate,
             allow_invalid_certs,
+            metrics,
         }
     }
 
@@ -135,10 +139,14 @@ impl CertStreamClient {
                         }
                         Err(e) => {
                             tracing::error!("Connection failed: {}", e);
+                            self.metrics.increment_websocket_disconnects();
                         }
                     }
                 }
             }
+
+            // Before retrying, mark the connection as down.
+            self.metrics.set_websocket_connection_status(0);
 
             // Wait for the backoff period, but also listen for shutdown.
             tokio::select! {
@@ -178,6 +186,7 @@ impl CertStreamClient {
                 .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", self.url, e))?;
 
         tracing::info!("Connected to {}", self.url);
+        self.metrics.set_websocket_connection_status(1);
         self.process_messages(ws_stream).await
     }
 
@@ -217,10 +226,12 @@ impl CertStreamClient {
             Message::Text(text) => {
                 match parse_message(&text) {
                     Ok(domains) => {
-
                         if domains.is_empty() {
                             return Ok(());
                         }
+
+                        // Before sampling, record the total number of domains ingested.
+                        self.metrics.domains_ingested_total.increment(domains.len() as u64);
 
                         let sampled_domains = self.sample_domains(domains);
 
@@ -268,6 +279,15 @@ impl CertStreamClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::internal_metrics::Metrics;
+    use std::sync::Arc;
+
+    fn create_test_metrics() -> Arc<Metrics> {
+        // The metrics system uses a global recorder, so we can't easily
+        // isolate it for tests. For unit tests, we just need a valid
+        // `Metrics` instance that doesn't panic.
+        Arc::new(Metrics::new_for_test())
+    }
 
     #[test]
     fn test_parse_message_success() {
@@ -313,10 +333,12 @@ mod tests {
     #[test]
     fn test_sample_domains() {
         let (tx, _) = mpsc::channel(1);
+        let metrics = create_test_metrics();
         let domains: Vec<String> = (0..10000).map(|i| format!("domain{}.com", i)).collect();
 
         // Test case 1: sample_rate = 0.5 (50%)
-        let client_half = CertStreamClient::new("".to_string(), tx.clone(), 0.5, false);
+        let client_half =
+            CertStreamClient::new("".to_string(), tx.clone(), 0.5, false, metrics.clone());
         let sampled_half = client_half.sample_domains(domains.clone());
         // Check if the sampled count is roughly 50% +/- 5%
         let count_half = sampled_half.len();
@@ -327,7 +349,8 @@ mod tests {
         );
 
         // Test case 2: sample_rate = 1.0 (100%)
-        let client_full = CertStreamClient::new("".to_string(), tx.clone(), 1.0, false);
+        let client_full =
+            CertStreamClient::new("".to_string(), tx.clone(), 1.0, false, metrics.clone());
         let sampled_full = client_full.sample_domains(domains.clone());
         assert_eq!(
             sampled_full.len(),
@@ -336,7 +359,7 @@ mod tests {
         );
 
         // Test case 3: sample_rate = 0.0 (0%)
-        let client_none = CertStreamClient::new("".to_string(), tx, 0.0, false);
+        let client_none = CertStreamClient::new("".to_string(), tx, 0.0, false, metrics);
         let sampled_none = client_none.sample_domains(domains);
         assert_eq!(
             sampled_none.len(),

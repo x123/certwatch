@@ -25,6 +25,10 @@ impl CountingOutput {
 
 #[async_trait]
 impl Output for CountingOutput {
+    fn name(&self) -> &str {
+        "counting_mock"
+    }
+
     async fn send_alert(&self, _alert: &Alert) -> anyhow::Result<()> {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.notifier.notify_one();

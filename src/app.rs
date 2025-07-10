@@ -6,6 +6,7 @@ use crate::{
     core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output},
     deduplication::{Deduplicator, InFlightDeduplicator},
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
+    internal_metrics::{Metrics, MetricsBuilder},
     network::{CertStreamClient, WebSocketConnection},
     notification::slack::SlackClientTrait,
     outputs::{OutputManager, StdoutOutput},
@@ -27,12 +28,18 @@ pub struct App {
     worker_handles: Vec<JoinHandle<()>>,
     nxdomain_feedback_task: JoinHandle<()>,
     output_task: JoinHandle<()>,
+    metrics_server_task: Option<JoinHandle<()>>,
+    metrics_addr: Option<std::net::SocketAddr>,
 }
 
 impl App {
     /// Creates a new `AppBuilder` to construct an `App`.
     pub fn builder(config: Config) -> AppBuilder {
         AppBuilder::new(config)
+    }
+
+    pub fn metrics_addr(&self) -> Option<std::net::SocketAddr> {
+        self.metrics_addr
     }
 
     /// Waits for the shutdown signal and then gracefully shuts down all tasks.
@@ -59,6 +66,11 @@ impl App {
         if let Err(e) = self.output_task.await {
             error!("Output task panicked: {:?}", e);
         }
+        if let Some(handle) = self.metrics_server_task {
+            if let Err(e) = handle.await {
+                error!("Metrics server task panicked: {:?}", e);
+            }
+        }
 
         info!("All tasks shut down.");
         Ok(())
@@ -79,6 +91,7 @@ pub struct AppBuilder {
     enrichment_provider_override: Option<Arc<dyn EnrichmentProvider>>,
     notification_tx: Option<broadcast::Sender<Alert>>,
     slack_client_override: Option<Arc<dyn SlackClientTrait>>,
+    metrics_override: Option<Metrics>,
 }
 
 impl AppBuilder {
@@ -93,6 +106,7 @@ impl AppBuilder {
             enrichment_provider_override: None,
             notification_tx: None,
             slack_client_override: None,
+            metrics_override: None,
         }
     }
 
@@ -138,20 +152,43 @@ impl AppBuilder {
         self
     }
 
+    /// Overrides the metrics system for testing.
+    pub fn metrics_override(mut self, metrics: Metrics) -> Self {
+        self.metrics_override = Some(metrics);
+        self
+    }
+
     /// Builds and initializes all application components, returning a runnable `App`.
     #[instrument(skip_all)]
     pub async fn build(self, shutdown_rx: watch::Receiver<()>) -> Result<App> {
         let config = self.config;
 
+        // =========================================================================
+        // 1. Initialize Metrics
+        // =========================================================================
+        let (metrics, metrics_server_info) = match self.metrics_override {
+            Some(m) => (m, None),
+            None => MetricsBuilder::new(config.metrics.clone()).build(shutdown_rx.clone()),
+        };
+        let metrics = Arc::new(metrics);
+
+        let (metrics_server_task, metrics_addr) = if let Some((server, addr)) = metrics_server_info
+        {
+            (Some(server.task), Some(addr))
+        } else {
+            (None, None)
+        };
+
 
         // =========================================================================
         // 2. Pre-flight Checks & Service Instantiation
         // =========================================================================
-        let dns_resolver = match self.dns_resolver_override {
-            Some(resolver) => resolver,
+        let (dns_resolver, nameservers) = match self.dns_resolver_override {
+            Some(resolver) => (resolver, vec![]), // No nameservers available in override
             None => {
-                let (resolver, _nameservers) = HickoryDnsResolver::from_config(&config.dns)?;
-                Arc::new(resolver)
+                let (resolver, nameservers) =
+                    HickoryDnsResolver::from_config(&config.dns, metrics.clone())?;
+                (Arc::new(resolver) as Arc<dyn DnsResolver>, nameservers)
             }
         };
 
@@ -161,7 +198,8 @@ impl AppBuilder {
         // 3. Instantiate Remaining Services
         // =========================================================================
         let rule_set = RuleLoader::load_from_files(&config.rules)?;
-        let rule_matcher = Arc::new(RuleMatcher::new(rule_set)?);
+        metrics.set_rules_loaded_count(rule_set.rules.len() as u64);
+        let rule_matcher = Arc::new(RuleMatcher::new(rule_set, metrics.clone())?);
 
         let enrichment_provider = self
             .enrichment_provider_override
@@ -172,6 +210,7 @@ impl AppBuilder {
         let deduplicator = Arc::new(Deduplicator::new(
             Duration::from_secs(cache_ttl_seconds),
             cache_size as u64,
+            metrics.clone(),
         ));
         let in_flight_deduplicator = Arc::new(InFlightDeduplicator::new(
             Duration::from_secs(30), // Short TTL for in-flight checks
@@ -182,13 +221,13 @@ impl AppBuilder {
         // 4. Setup Output Manager
         // =========================================================================
         let output_manager = match self.output_override {
-            Some(outputs) => Arc::new(OutputManager::new(outputs)),
+            Some(outputs) => Arc::new(OutputManager::new(outputs, metrics.clone())),
             None => {
                 let output_format = config.output.format.clone().unwrap_or_default();
                 debug!(?output_format, "Initializing StdoutOutput");
                 let outputs: Vec<Arc<dyn Output>> =
                     vec![Arc::new(StdoutOutput::new(output_format))];
-                Arc::new(OutputManager::new(outputs))
+                Arc::new(OutputManager::new(outputs, metrics.clone()))
             }
         };
 
@@ -213,7 +252,13 @@ impl AppBuilder {
                 "Initializing CertStream client"
             );
             let certstream_client =
-                CertStreamClient::new(certstream_url, tx, sample_rate, allow_invalid_certs);
+                CertStreamClient::new(
+                    certstream_url,
+                    tx,
+                    sample_rate,
+                    allow_invalid_certs,
+                    metrics.clone(),
+                );
 
             let task = {
                 let shutdown_rx_clone = shutdown_rx.clone();
@@ -240,12 +285,15 @@ impl AppBuilder {
             config.dns.health.clone(),
             dns_resolver.clone(),
             shutdown_rx.clone(),
+            metrics.clone(),
+            nameservers,
         );
         let (dns_manager, mut resolved_nxdomain_rx) = DnsResolutionManager::new(
             dns_resolver.clone(),
             config.dns.retry_config.clone(),
             dns_health_monitor.clone(),
             shutdown_rx.clone(),
+            metrics.clone(),
         );
         let dns_manager = Arc::new(dns_manager);
 
@@ -264,69 +312,79 @@ impl AppBuilder {
             let alerts_tx = internal_alerts_tx.clone();
             let mut shutdown_rx = shutdown_rx.clone();
             let in_flight_deduplicator = in_flight_deduplicator.clone();
-
-            let handle = tokio::spawn(async move {
-                trace!("Worker {} started", i);
-                loop {
-                    let domain_to_process = tokio::select! {
-                        biased;
-                        _ = shutdown_rx.changed() => {
-                            trace!("Worker {} received shutdown signal, exiting.", i);
-                            None
-                        }
-                        domain_opt = async { domains_rx.lock().await.recv().await } => {
-                            domain_opt
-                        }
-                    };
-
-                    let domain = match domain_to_process {
-                        Some(domain) => domain,
-                        None => {
-                            trace!(
-                                "Domain channel closed or shutdown triggered, worker {} shutting down.",
-                                i
-                            );
-                            break;
-                        }
-                    };
-
-                    trace!(worker_id = i, domain = %domain, "Worker picked up domain");
-
-                    if in_flight_deduplicator.is_duplicate(&domain) {
-                        trace!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
-                        continue;
-                    }
-
-                    trace!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
-
-                    if rule_matcher.is_ignored(&domain) {
-                        trace!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
-                        continue;
-                    }
-
-                    let process_fut = process_domain(
-                        domain.clone(),
-                        i,
-                        rule_matcher.clone(),
-                        dns_manager.clone(),
-                        enrichment_provider.clone(),
-                        alerts_tx.clone(),
-                    );
-
-                    tokio::select! {
-                        biased;
-                        _ = shutdown_rx.changed() => {
-                            trace!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
-                        }
-                        result = process_fut => {
-                            trace!(worker_id = i, domain = %domain, "Worker finished processing domain");
-                            if let Err(e) = result {
-                                trace!("Failed to process certificate update for domain {}: {}", domain, e);
-                            }
-                        }
-                    }
-                }
-            });
+            let metrics = metrics.clone();
+ 
+              let handle = tokio::spawn(async move {
+                  trace!("Worker {} started", i);
+                  loop {
+                      let domain_to_process = tokio::select! {
+                          biased;
+                          _ = shutdown_rx.changed() => {
+                              trace!("Worker {} received shutdown signal, exiting.", i);
+                              None
+                          }
+                          domain_opt = async { domains_rx.lock().await.recv().await } => {
+                              domain_opt
+                          }
+                      };
+  
+                      let domain = match domain_to_process {
+                          Some(domain) => {
+                             metrics::gauge!("in_flight_requests").increment(1.0);
+                              domain
+                          }
+                          None => {
+                              trace!(
+                                  "Domain channel closed or shutdown triggered, worker {} shutting down.",
+                                  i
+                              );
+                              break;
+                          }
+                      };
+  
+                      trace!(worker_id = i, domain = %domain, "Worker picked up domain");
+  
+                      if in_flight_deduplicator.is_duplicate(&domain) {
+                          trace!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
+                         metrics::gauge!("in_flight_requests").decrement(1.0);
+                          continue;
+                      }
+  
+                      trace!(worker_id = i, domain = %domain, "Worker processing domain (pre-ignore check)");
+  
+                      if rule_matcher.is_ignored(&domain) {
+                          trace!(worker_id = i, domain = %domain, "Domain is ignored by rules, skipping");
+                          metrics.domains_ignored_total.increment(1);
+                         metrics::gauge!("in_flight_requests").decrement(1.0);
+                          continue;
+                      }
+  
+                      metrics.domains_processed_total.increment(1);
+  
+                      let process_fut = process_domain(
+                          domain.clone(),
+                          i,
+                          rule_matcher.clone(),
+                          dns_manager.clone(),
+                          enrichment_provider.clone(),
+                          alerts_tx.clone(),
+                      );
+  
+                      tokio::select! {
+                          biased;
+                          _ = shutdown_rx.changed() => {
+                              trace!("Worker {} received shutdown signal during processing, aborting domain {}.", i, domain);
+                          }
+                          result = process_fut => {
+                              trace!(worker_id = i, domain = %domain, "Worker finished processing domain");
+                              if let Err(e) = result {
+                                  trace!("Failed to process certificate update for domain {}: {}", domain, e);
+                              }
+                          }
+                      }
+                     metrics::gauge!("in_flight_requests").decrement(1.0);
+                  }
+              });
             worker_handles.push(handle);
         }
 
@@ -384,6 +442,8 @@ impl AppBuilder {
             worker_handles,
             nxdomain_feedback_task,
             output_task,
+            metrics_server_task,
+            metrics_addr,
         })
     }
 }
@@ -538,6 +598,7 @@ mod tests {
         enrichment::fake::FakeEnrichmentProvider,
         rules::{EnrichmentLevel, Rule, RuleExpression, RuleMatcher},
     };
+    use crate::internal_metrics::Metrics;
     use std::sync::Arc;
     use tokio::sync::{broadcast, watch};
 
@@ -566,12 +627,15 @@ mod tests {
                 Default::default(),
                 resolver.clone(),
                 shutdown_rx.clone(),
+                Arc::new(Metrics::new_for_test()),
+                vec![],
             );
             let (manager, _) = DnsResolutionManager::new(
                 resolver.clone(),
                 Default::default(),
                 health_monitor.clone(),
                 shutdown_rx.clone(),
+                Arc::new(Metrics::new_for_test()),
             );
             (resolver, health_monitor, manager)
         };
@@ -585,7 +649,8 @@ mod tests {
             expression: RuleExpression::DomainRegex(".*".to_string()),
             required_level: EnrichmentLevel::None,
         };
-        let rule_matcher = Arc::new(RuleMatcher::new_for_test(vec![rule]));
+        let metrics = Arc::new(Metrics::new_for_test());
+        let rule_matcher = Arc::new(RuleMatcher::new_for_test(vec![rule], metrics));
 
         // Act
         let result = process_domain(

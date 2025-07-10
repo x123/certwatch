@@ -3,7 +3,9 @@
 use crate::{
     config::OutputFormat,
     core::{Alert, AsnInfo},
+    internal_metrics::Metrics,
 };
+use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::io::Write;
@@ -14,12 +16,12 @@ use crate::core::Output;
 
 /// Manages a collection of output destinations and dispatches alerts to all of them.
 pub struct OutputManager {
-    outputs: Vec<std::sync::Arc<dyn Output>>,
+    outputs: Vec<Arc<dyn Output>>,
 }
 
 impl OutputManager {
     /// Creates a new `OutputManager`.
-    pub fn new(outputs: Vec<std::sync::Arc<dyn Output>>) -> Self {
+    pub fn new(outputs: Vec<Arc<dyn Output>>, _metrics: Arc<Metrics>) -> Self {
         Self { outputs }
     }
 
@@ -28,7 +30,9 @@ impl OutputManager {
     pub async fn send_alert(&self, alert: &Alert) -> Result<()> {
         for output in &self.outputs {
             if let Err(e) = output.send_alert(alert).await {
-                error!(error = %e, "Failed to send alert via an output");
+                error!(error = %e, output_name = %output.name(), "Failed to send alert via an output");
+            } else {
+                metrics::counter!("alerts_sent_total", "output_name" => output.name().to_string()).increment(1);
             }
         }
         Ok(())
@@ -71,6 +75,10 @@ impl StdoutOutput {
 
 #[async_trait]
 impl Output for StdoutOutput {
+    fn name(&self) -> &str {
+        "stdout"
+    }
+
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         let stdout = std::io::stdout();
         let mut handle = stdout.lock();
@@ -164,6 +172,10 @@ impl JsonOutput {
 
 #[async_trait]
 impl Output for JsonOutput {
+    fn name(&self) -> &str {
+        "json_file"
+    }
+
     async fn send_alert(&self, alert: &Alert) -> Result<()> {
         // This is a placeholder. A real implementation would write to the file.
         info!(
@@ -182,9 +194,8 @@ impl Output for JsonOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
     use crate::core::{AsnInfo, DnsInfo, EnrichmentInfo};
-    
+    use crate::internal_metrics::Metrics;
     use std::sync::{Arc, Mutex};
 
     fn create_test_alert() -> Alert {
@@ -235,6 +246,10 @@ mod tests {
 
     #[async_trait]
     impl Output for MockOutput {
+        fn name(&self) -> &str {
+            "mock"
+        }
+
         async fn send_alert(&self, alert: &Alert) -> Result<()> {
             self.alerts.lock().unwrap().push(alert.clone());
             Ok(())
@@ -246,7 +261,8 @@ mod tests {
         let mock1 = Arc::new(MockOutput::new());
         let mock2 = Arc::new(MockOutput::new());
         let outputs: Vec<Arc<dyn Output>> = vec![mock1.clone(), mock2.clone()];
-        let manager = OutputManager::new(outputs);
+        let metrics = Arc::new(Metrics::new());
+        let manager = OutputManager::new(outputs, metrics.clone());
         let alert = create_test_alert();
 
         manager.send_alert(&alert).await.unwrap();
@@ -255,6 +271,8 @@ mod tests {
         assert_eq!(mock2.alerts.lock().unwrap().len(), 1);
         assert_eq!(mock1.alerts.lock().unwrap()[0], alert);
         assert_eq!(mock2.alerts.lock().unwrap()[0], alert);
+
+        // Metric validation is now handled by integration tests that can scrape the endpoint.
     }
 
 

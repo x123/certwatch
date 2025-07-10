@@ -2,6 +2,7 @@ use crate::{
     config::DnsConfig,
     core::{DnsInfo, DnsResolver},
     dns::DnsError,
+    internal_metrics::Metrics,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -10,17 +11,25 @@ use hickory_resolver::{
     proto::xfer::Protocol,
     system_conf, TokioResolver,
 };
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tracing::{trace, warn};
 
 /// DNS resolver implementation using trust-dns-resolver
 pub struct HickoryDnsResolver {
     resolver: TokioResolver,
+    _metrics: Arc<Metrics>,
 }
 
 impl HickoryDnsResolver {
     /// Creates a new DNS resolver from the application's DNS configuration.
-    pub fn from_config(config: &DnsConfig) -> Result<(Self, Vec<SocketAddr>)> {
+    pub fn from_config(
+        config: &DnsConfig,
+        metrics: Arc<Metrics>,
+    ) -> Result<(Self, Vec<SocketAddr>)> {
         let resolver_config = if let Some(resolver_addr_str) = &config.resolver {
             // If a specific resolver is provided, use it exclusively.
             let mut custom_config = ResolverConfig::new();
@@ -66,7 +75,13 @@ impl HickoryDnsResolver {
         .with_options(resolver_opts)
         .build();
 
-        Ok((Self { resolver }, nameservers))
+        Ok((
+            Self {
+                resolver,
+                _metrics: metrics,
+            },
+            nameservers,
+        ))
     }
 }
 
@@ -75,12 +90,17 @@ impl DnsResolver for HickoryDnsResolver {
     async fn resolve(&self, domain: &str) -> Result<DnsInfo, DnsError> {
         use hickory_resolver::proto::rr::RecordType;
 
+        let start_time = Instant::now();
+
         // Perform concurrent lookups for A, AAAA, and NS records
         let (a_result, aaaa_result, ns_result) = tokio::join!(
             self.resolver.lookup(domain, RecordType::A),
             self.resolver.lookup(domain, RecordType::AAAA),
             self.resolver.lookup(domain, RecordType::NS)
         );
+
+        let duration = start_time.elapsed();
+        metrics::histogram!("dns_resolution_duration_seconds").record(duration.as_secs_f64());
 
         let mut dns_info = DnsInfo::default();
         let mut primary_error = None;
@@ -125,6 +145,7 @@ impl DnsResolver for HickoryDnsResolver {
             if let Some(e) = primary_error {
                 trace!(domain, error = %e, "A partial DNS failure occurred but was recovered");
             }
+            metrics::counter!("dns_queries_total", "status" => "success").increment(1);
             return Ok(dns_info);
         }
 
@@ -132,14 +153,29 @@ impl DnsResolver for HickoryDnsResolver {
         // This is a definitive failure for our purposes.
         if let Some(err) = primary_error {
             let err_string = err.to_string();
+            let status = if is_nxdomain_error_str(&err_string) {
+                "nxdomain"
+            } else if err_string.to_lowercase().contains("timeout") {
+                "timeout"
+            } else {
+                "failure"
+            };
+            metrics::counter!("dns_queries_total", "status" => status).increment(1);
             // The original error from hickory is sufficient.
             return Err(DnsError::Resolution(err_string));
         }
 
         // This case means both lookups succeeded but returned no IP records.
+        metrics::counter!("dns_queries_total", "status" => "nxdomain").increment(1);
         Err(DnsError::Resolution(format!(
             "No A or AAAA records found for {}",
             domain
         )))
     }
+}
+
+/// Checks if an `anyhow::Error` is an NXDOMAIN error.
+fn is_nxdomain_error_str(err_str: &str) -> bool {
+    let lower = err_str.to_lowercase();
+    lower.contains("nxdomain") || lower.contains("no records found")
 }

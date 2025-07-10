@@ -12,6 +12,7 @@ use figment::{
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 /// Command-line arguments for the application.
@@ -42,6 +43,7 @@ pub struct Config {
     pub enrichment: EnrichmentConfig,
     pub output: OutputConfig,
     pub deduplication: DeduplicationConfig,
+    pub metrics: MetricsConfig,
 }
 
 impl Default for Config {
@@ -56,6 +58,7 @@ impl Default for Config {
             enrichment: EnrichmentConfig::default(),
             output: OutputConfig::default(),
             deduplication: DeduplicationConfig::default(),
+            metrics: MetricsConfig::default(),
         }
     }
 }
@@ -215,6 +218,25 @@ impl Default for DeduplicationConfig {
             enabled: true,
             cache_size: 100_000,
             cache_ttl_seconds: 3600,
+        }
+    }
+}
+
+/// Configuration for the metrics system.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct MetricsConfig {
+    pub enabled: bool,
+    pub listen_address: SocketAddr,
+    pub system_metrics_enabled: bool,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            listen_address: "127.0.0.1:9090".parse().unwrap(),
+            system_metrics_enabled: true,
         }
     }
 }

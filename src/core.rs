@@ -135,6 +135,10 @@ pub trait EnrichmentProvider: Send + Sync {
 /// Sends alerts to output destinations
 #[async_trait]
 pub trait Output: Send + Sync {
+    /// A unique, descriptive name for the output (e.g., "stdout", "slack").
+    /// Used for logging and metrics.
+    fn name(&self) -> &str;
+
     /// Sends an alert to the configured output destination
     ///
     /// # Arguments

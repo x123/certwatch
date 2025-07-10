@@ -1,0 +1,111 @@
+#[path = "../helpers/mod.rs"]
+mod helpers;
+
+use anyhow::Result;
+use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver};
+
+#[tokio::test]
+async fn metrics_endpoint_is_available() -> Result<()> {
+    let test_app = TestAppBuilder::new().with_metrics().start().await?;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .get(format!("http://{}/metrics", test_app.metrics_addr()))
+        .send()
+        .await?;
+
+    assert!(response.status().is_success());
+    let body = response.text().await?;
+    assert!(body.contains("process_cpu_usage_percent"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn metrics_are_updated_on_domain_processing() -> Result<()> {
+    let mock_dns = Arc::new(MockDnsResolver::new());
+    mock_dns.add_response("google.com", Ok(Default::default())); // Health check
+    mock_dns.add_response("matching.com", Ok(Default::default())); // Test domain
+
+    let builder = TestAppBuilder::new()
+        .with_dns_resolver(mock_dns)
+        .with_metrics();
+
+    let test_app = builder
+        .with_rules("rules:\n  - name: test-rule\n    domain_regex: 'matching.com'")
+        .await
+        .start()
+        .await?;
+
+    let client = reqwest::Client::new();
+
+    test_app.send_domain("matching.com").await?;
+
+    let mut body = String::new();
+    for _ in 0..10 {
+        let response = client
+            .get(format!("http://{}/metrics", test_app.metrics_addr()))
+            .send()
+            .await?;
+        body = response.text().await?;
+        if body.contains("domains_processed_total 1") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    assert!(
+        body.contains("domains_processed_total 1"),
+        "Metric 'domains_processed_total' not found or incorrect."
+    );
+    assert!(
+        body.contains("rule_matches_total{rule=\"test-rule\"} 1"),
+        "Metric 'rule_matches_total' not found or incorrect. Body: {}",
+        body
+    );
+
+    Ok(())
+}
+
+use std::sync::Arc;
+
+#[tokio::test]
+async fn dns_failure_metric_is_incremented() -> Result<()> {
+    let mock_dns = Arc::new(MockDnsResolver::new());
+    mock_dns.add_response("google.com", Ok(Default::default())); // Health check
+    mock_dns.add_failure("failing-domain.com").await;
+
+    let builder = TestAppBuilder::new()
+        .with_dns_resolver(mock_dns.clone())
+        .with_metrics();
+
+    let test_app = builder
+        .with_rules("rules:\n  - name: test-rule\n    domain_regex: 'failing-domain.com'")
+        .await
+        .start()
+        .await?;
+
+    let client = reqwest::Client::new();
+
+    test_app.send_domain("failing-domain.com").await?;
+
+    let mut body = String::new();
+    for _ in 0..10 {
+        let response = client
+            .get(format!("http://{}/metrics", test_app.metrics_addr()))
+            .send()
+            .await?;
+        body = response.text().await?;
+        if body.contains("dns_queries_total{status=\"failure\"} 1") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    assert!(
+        body.contains("dns_queries_total{status=\"failure\"} 1"),
+        "Metric 'dns_queries_total' not found or incorrect."
+    );
+
+    Ok(())
+}

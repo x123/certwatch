@@ -4,19 +4,21 @@
 //! It tracks the failure rate over a configurable time window and can declare the
 //! system "unhealthy" if the rate exceeds a threshold.
 
-use crate::config::DnsHealthConfig;
-use crate::core::DnsResolver;
+use crate::{config::DnsHealthConfig, core::DnsResolver, internal_metrics::Metrics};
 use crate::utils::heartbeat::run_heartbeat;
 use anyhow::Result;
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tracing::{debug, info};
 
 /// Represents the health state of the DNS resolver.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum HealthState {
     Healthy,
     Unhealthy,
@@ -42,6 +44,8 @@ pub struct DnsHealthMonitor {
     pub monitor_state: Mutex<MonitorState>,
     pub resolver: Arc<dyn DnsResolver>,
     pub outcome_tx: mpsc::UnboundedSender<bool>,
+    pub metrics: Arc<Metrics>,
+    pub nameservers: Vec<SocketAddr>,
 }
 
 impl DnsHealthMonitor {
@@ -72,6 +76,8 @@ impl DnsHealthMonitor {
         config: DnsHealthConfig,
         resolver: Arc<dyn DnsResolver>,
         shutdown_rx: watch::Receiver<()>,
+        metrics: Arc<Metrics>,
+        nameservers: Vec<SocketAddr>,
     ) -> Arc<Self> {
         let (outcome_tx, outcome_rx) = mpsc::unbounded_channel();
         let monitor = Arc::new(Self {
@@ -84,7 +90,12 @@ impl DnsHealthMonitor {
             }),
             resolver,
             outcome_tx,
+            metrics,
+            nameservers,
         });
+
+        // Set initial health for all nameservers to healthy
+        monitor.update_health_gauge(HealthState::Healthy);
 
         // Start the state update task
         let monitor_clone = Arc::clone(&monitor);
@@ -131,6 +142,18 @@ impl DnsHealthMonitor {
     }
 
     /// Updates the health state based on the current outcomes.
+    fn update_health_gauge(&self, health: HealthState) {
+        let value = if health == HealthState::Healthy {
+            1.0
+        } else {
+            0.0
+        };
+        for ns in &self.nameservers {
+            metrics::gauge!("dns_resolver_health_status", "resolver_ip" => ns.to_string())
+                .set(value);
+        }
+    }
+
     fn update_health_state(&self, state: &mut MonitorState) {
         if state.outcomes.is_empty() {
             return; // Not enough data, remain in the current state
@@ -145,6 +168,7 @@ impl DnsHealthMonitor {
 
         if failure_rate >= failure_threshold && state.health == HealthState::Healthy {
             state.health = HealthState::Unhealthy;
+            self.update_health_gauge(HealthState::Unhealthy);
             tracing::error!(
                 failure_rate = failure_rate * 100.0,
                 window_seconds,
@@ -179,6 +203,7 @@ impl DnsHealthMonitor {
                     state.health = HealthState::Healthy;
                     // Clear old failure outcomes to reset the failure rate calculation
                     state.outcomes.clear();
+                    self.update_health_gauge(HealthState::Healthy);
                     tracing::info!("DNS resolver has RECOVERED and is now HEALTHY.");
                 }
             }
@@ -254,6 +279,7 @@ impl DnsHealthMonitor {
 mod tests {
     use super::*;
     use crate::dns::test_utils::FakeDnsResolver;
+    use crate::internal_metrics::Metrics;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::watch::Sender;
@@ -279,7 +305,13 @@ mod tests {
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver,
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
 
         // Subscribe to health changes *before* making changes
         let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
@@ -313,7 +345,13 @@ mod tests {
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver,
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
 
         let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
 
@@ -346,7 +384,13 @@ mod tests {
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(config, resolver.clone(), shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver.clone(),
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
 
         // Make state unhealthy
         monitor.process_outcome(false);
@@ -375,7 +419,13 @@ mod tests {
             ..Default::default()
         };
         let (_shutdown_tx, shutdown_rx) = watch::channel(());
-        let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver,
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
 
         // Record an outcome
         monitor.process_outcome(false);
@@ -401,7 +451,13 @@ mod tests {
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(config, resolver, shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver,
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
         let mut health_rx = monitor.monitor_state.lock().unwrap().health_updated_tx.subscribe();
 
         // Transition to Unhealthy
@@ -439,7 +495,13 @@ mod tests {
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(config, resolver.clone(), shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver.clone(),
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
 
         // Spawn a task that takes the lock and holds it.
         let lock_holder_monitor = monitor.clone();
@@ -486,7 +548,13 @@ mod tests {
         };
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let _guard = ShutdownGuard(shutdown_tx);
-        let monitor = DnsHealthMonitor::new(config, resolver.clone(), shutdown_rx);
+        let monitor = DnsHealthMonitor::new(
+            config,
+            resolver.clone(),
+            shutdown_rx,
+            Arc::new(Metrics::new_for_test()),
+            vec![],
+        );
         let num_updates = 1000;
 
         // Subscribe *before* spawning tasks to avoid a race condition

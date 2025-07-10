@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use certwatch::{
+    internal_metrics::Metrics,
     app::process_domain,
     config::RulesConfig,
     core::DnsInfo,
@@ -35,11 +36,19 @@ async fn test_process_domain_propagates_enrichment_error() -> Result<()> {
     dns_info.a_records.push(error_ip);
     dns_resolver.add_success_response("example.com", dns_info);
 
+    let health_monitor = DnsHealthMonitor::new(
+        Default::default(),
+        dns_resolver.clone(),
+        shutdown_rx.clone(),
+        Arc::new(Metrics::new_for_test()),
+        vec![],
+    );
     let (dns_manager, _) = DnsResolutionManager::new(
         dns_resolver.clone(),
         Default::default(),
-        DnsHealthMonitor::new(Default::default(), dns_resolver, shutdown_rx.clone()),
+        health_monitor,
         shutdown_rx,
+        Arc::new(Metrics::new_for_test()),
     );
     let dns_manager = Arc::new(dns_manager);
 
@@ -67,6 +76,7 @@ rules:
                     )]),
                 })
                 .unwrap(),
+                Arc::new(Metrics::new_for_test()),
             )
             .unwrap(),
         ),

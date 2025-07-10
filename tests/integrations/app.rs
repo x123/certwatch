@@ -36,19 +36,18 @@ async fn test_app_startup_fails_with_unhealthy_resolver() {
         Err(DnsError::Resolution("Timeout".to_string())),
     );
 
-    let (_test_app, app_future) = TestAppBuilder::new()
+    let result = TestAppBuilder::new()
         .with_dns_resolver(mock_resolver)
         .build()
-        .await
-        .unwrap();
-
-    let result = app_future.await;
+        .await;
 
     assert!(result.is_err(), "App startup should fail");
-    let err_str = result.unwrap_err().to_string();
-    assert!(
-        err_str.contains("DNS health check failed"),
-        "Error message did not contain expected text: '{}'",
-        err_str
-    );
+    if let Err(e) = result {
+        let err_str = e.to_string();
+        assert!(
+            err_str.contains("DNS health check failed"),
+            "Error message did not contain expected text: '{}'",
+            err_str
+        );
+    }
 }

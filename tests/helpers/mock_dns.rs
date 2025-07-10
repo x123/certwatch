@@ -40,6 +40,10 @@ impl MockDnsResolver {
             .cloned()
             .unwrap_or(0)
     }
+
+    pub async fn add_failure(&self, domain: &str) {
+        self.add_response(domain, Err(DnsError::Resolution("Simulated DNS failure".to_string())));
+    }
 }
 
 #[async_trait]

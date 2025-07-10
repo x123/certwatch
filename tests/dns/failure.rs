@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use certwatch::{
-    dns::{DnsRetryConfig, test_utils::FakeDnsResolver, DnsHealthMonitor, DnsResolutionManager},
     core::DnsInfo,
+    dns::{DnsHealthMonitor, DnsResolutionManager, DnsRetryConfig, test_utils::FakeDnsResolver},
+    internal_metrics::Metrics,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -24,11 +25,21 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
     };
 
     let (_tx, shutdown_rx) = watch::channel(());
-    let health_monitor =
-        DnsHealthMonitor::new(Default::default(), fake_resolver.clone(), shutdown_rx.clone());
+    let health_monitor = DnsHealthMonitor::new(
+        Default::default(),
+        fake_resolver.clone(),
+        shutdown_rx.clone(),
+        Arc::new(Metrics::new_for_test()),
+        vec![],
+    );
 
-    let (manager, mut resolved_rx) =
-        DnsResolutionManager::new(fake_resolver.clone(), retry_config, health_monitor, shutdown_rx);
+    let (manager, mut resolved_rx) = DnsResolutionManager::new(
+        fake_resolver.clone(),
+        retry_config,
+        health_monitor,
+        shutdown_rx,
+        Arc::new(Metrics::new_for_test()),
+    );
 
     // Configure resolver to return NXDOMAIN initially, then a success response
     fake_resolver.add_error_response("newly-active.com", "NXDOMAIN");

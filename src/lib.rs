@@ -16,6 +16,7 @@ pub mod dns;
 pub mod enrichment;
 pub mod formatting;
 pub mod network;
+pub mod internal_metrics;
 pub mod outputs;
 pub mod rules;
 pub mod types;

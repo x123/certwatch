@@ -12,14 +12,27 @@ use tokio::{
 };
 
 /// Represents a running instance of the application for testing purposes.
+use std::net::SocketAddr;
+
 #[derive(Debug)]
 pub struct TestApp {
     pub domains_tx: mpsc::Sender<String>,
     pub shutdown_tx: watch::Sender<()>,
     pub app_handle: Option<JoinHandle<Result<()>>>,
+    metrics_addr: Option<SocketAddr>,
 }
 
 impl TestApp {
+    pub async fn send_domain(&self, domain: &str) -> Result<()> {
+        self.domains_tx.send(domain.to_string()).await?;
+        Ok(())
+    }
+
+    pub fn metrics_addr(&self) -> SocketAddr {
+        self.metrics_addr
+            .expect("Metrics must be enabled to get the address")
+    }
+
     /// Shuts down the application and waits for it to terminate.
     /// Fails if the application does not shut down within the specified timeout.
     pub async fn shutdown(self, timeout_duration: Duration) -> Result<()> {
@@ -158,7 +171,12 @@ impl TestAppBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {
+    pub fn with_metrics(mut self) -> Self {
+        self.config.metrics.enabled = true;
+        self
+    }
+
+    pub async fn build(mut self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {
         // Ensure the dummy ASN file exists to prevent startup errors
         if let Some(path) = &self.config.enrichment.asn_tsv_path {
             if !path.exists() {
@@ -168,43 +186,57 @@ impl TestAppBuilder {
             }
         }
 
+        if self.config.metrics.enabled {
+            // Use a random port for the metrics server in tests
+            self.config.metrics.listen_address = "127.0.0.1:0".parse().unwrap();
+        }
+
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let (domains_tx, domains_rx) =
             mpsc::channel(self.config.performance.queue_capacity);
-        let app_future = async move {
-            let mut builder = certwatch::app::App::builder(self.config)
-                .domains_rx_for_test(domains_rx)
-                .enrichment_provider_override(
-                    self.enrichment_provider
-                        .expect("Enrichment provider must be set in test builder"),
-                );
 
-            if let Some(outputs) = self.outputs {
-                builder = builder.output_override(outputs);
-            }
-            if let Some(ws) = self.websocket {
-                builder = builder.websocket_override(ws);
-            }
-            if let Some(resolver) = self.dns_resolver {
-                builder = builder.dns_resolver_override(resolver);
-            }
-            if let Some(tx) = self.alert_tx {
-                builder = builder.notification_tx(tx);
-            }
-            if let Some(sc) = self.slack_client {
-                builder = builder.slack_client_override(sc);
-            }
+        let mut builder = certwatch::app::App::builder(self.config)
+            .domains_rx_for_test(domains_rx)
+            .enrichment_provider_override(
+                self.enrichment_provider
+                    .expect("Enrichment provider must be set in test builder"),
+            );
 
-            let app = builder.build(shutdown_rx).await?;
-            app.run().await
-        };
+        if let Some(outputs) = self.outputs {
+            builder = builder.output_override(outputs);
+        }
+        if let Some(ws) = self.websocket {
+            builder = builder.websocket_override(ws);
+        }
+        if let Some(resolver) = self.dns_resolver {
+            builder = builder.dns_resolver_override(resolver);
+        }
+        if let Some(tx) = self.alert_tx {
+            builder = builder.notification_tx(tx);
+        }
+        if let Some(sc) = self.slack_client {
+            builder = builder.slack_client_override(sc);
+        }
+
+        let app = builder.build(shutdown_rx).await?;
+        let metrics_addr = app.metrics_addr();
+
+        let app_future = async move { app.run().await };
 
         let test_app = TestApp {
             domains_tx,
             shutdown_tx,
             app_handle: None, // The app is not running yet
+            metrics_addr,
         };
 
         Ok((test_app, Box::pin(app_future)))
+    }
+
+    pub async fn start(self) -> Result<TestApp> {
+        let (mut test_app, app_future) = self.build().await?;
+        let handle = tokio::spawn(app_future);
+        test_app.app_handle = Some(handle);
+        Ok(test_app)
     }
 }

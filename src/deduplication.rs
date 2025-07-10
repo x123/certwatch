@@ -1,15 +1,17 @@
 // Service for filtering duplicate alerts.
 
 use crate::core::Alert;
+use crate::internal_metrics::Metrics;
 use moka::{future::Cache as FutureCache, sync::Cache as SyncCache};
 use psl;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 /// A service that filters out duplicate alerts based on a time-aware cache.
 /// This is used in the final output stage to prevent sending the same alert
 /// multiple times over a longer period.
 pub struct Deduplicator {
     cache: FutureCache<String, ()>,
+    metrics: Arc<Metrics>,
 }
 
 impl Deduplicator {
@@ -18,12 +20,12 @@ impl Deduplicator {
     /// # Arguments
     /// * `ttl` - The time-to-live for an entry in the cache.
     /// * `max_capacity` - The maximum number of entries in the cache.
-    pub fn new(ttl: Duration, max_capacity: u64) -> Self {
+    pub fn new(ttl: Duration, max_capacity: u64, metrics: Arc<Metrics>) -> Self {
         let cache = FutureCache::builder()
             .time_to_live(ttl)
             .max_capacity(max_capacity)
             .build();
-        Self { cache }
+        Self { cache, metrics }
     }
 
     /// Checks if an alert is a duplicate.
@@ -37,11 +39,13 @@ impl Deduplicator {
     pub async fn is_duplicate(&self, alert: &Alert) -> bool {
         let key = self.generate_key(alert);
         let is_dupe = self.cache.contains_key(&key);
-        
-        if !is_dupe {
+
+        if is_dupe {
+            self.metrics.deduplicated_alerts_total.increment(1);
+        } else {
             self.cache.insert(key, ()).await;
         }
-        
+
         is_dupe
     }
 
@@ -110,9 +114,11 @@ impl InFlightDeduplicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{AsnInfo, DnsInfo, EnrichmentInfo};
-    use std::net::Ipv4Addr;
-    use std::time::Duration;
+    use crate::{
+        core::{AsnInfo, DnsInfo, EnrichmentInfo},
+        internal_metrics::Metrics,
+    };
+    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     fn create_test_alert(domain: &str, source_tag: &str, resolved_after_nxdomain: bool) -> Alert {
         Alert {
@@ -134,14 +140,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_alert_is_not_duplicate() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert = create_test_alert("example.com", "phishing", false);
         assert!(!deduplicator.is_duplicate(&alert).await);
     }
 
     #[tokio::test]
     async fn test_repeated_alert_is_duplicate() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert = create_test_alert("example.com", "phishing", false);
         deduplicator.is_duplicate(&alert).await; // First time
         assert!(deduplicator.is_duplicate(&alert).await); // Second time
@@ -149,7 +157,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_first_resolution_alert_is_not_duplicate() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert1 = create_test_alert("example.com", "phishing", false);
         let alert2 = create_test_alert("example.com", "phishing", true); // First resolution
 
@@ -159,7 +168,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_different_source_tag_is_not_duplicate() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert1 = create_test_alert("example.com", "phishing", false);
         let alert2 = create_test_alert("example.com", "malware", false);
 
@@ -169,7 +179,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_first_resolution_alerts_with_different_tags_are_not_duplicates() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert1 = create_test_alert("example.com", "source1", true);
         let alert2 = create_test_alert("example.com", "source2", true);
 
@@ -179,7 +190,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_subdomain_alert_is_duplicate() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert1 = create_test_alert("example.com", "phishing", false);
         let alert2 = create_test_alert("sub.example.com", "phishing", false); // Same base domain
 
@@ -189,7 +201,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_different_base_domain_is_not_duplicate() {
-        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100);
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
         let alert1 = create_test_alert("example.com", "phishing", false);
         let alert2 = create_test_alert("example.org", "phishing", false); // Different base domain
 
