@@ -371,7 +371,7 @@ impl AppBuilder {
                         break;
                     }
                     Some((domain, source, _)) = resolved_nx_domains_rx.recv() => {
-                        info!(%domain, %source, "Previously NXDOMAIN domain has now resolved.");
+                        trace!(%domain, %source, "Previously NXDOMAIN domain has now resolved.");
                     }
                     else => {
                         info!("Resolved NXDOMAIN channel closed.");

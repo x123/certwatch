@@ -9,7 +9,7 @@ use tokio::{
     sync::{mpsc, watch, Semaphore},
     time::{sleep, Instant},
 };
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 /// Represents a successfully resolved domain.
 pub type ResolvedDomain = (String, DnsInfo); // (domain, dns_info)
@@ -304,7 +304,7 @@ impl DnsResolutionManager {
                         if let Some((_, domain, source_tag, attempt)) = retry_heap.pop() {
                             match resolver.resolve(&domain).await {
                                 Ok(dns_info) => {
-                                    info!(%domain, %source_tag, "Domain now resolves after NXDOMAIN");
+                                    trace!(%domain, %source_tag, "Domain now resolves after NXDOMAIN");
                                     if let Err(e) = resolved_tx.send((domain, source_tag, dns_info)) {
                                         error!(error = %e, "Failed to send resolved NXDOMAIN to channel");
                                     }
