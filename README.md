@@ -165,6 +165,25 @@ start_ip    end_ip  asn country description
 8.8.8.0	8.8.8.255	15169	US	GOOGLE
 ```
 
+**d. Configure Metrics (Optional):**
+
+`certwatch` can expose internal performance metrics via a Prometheus-compatible
+endpoint. This is useful for monitoring the application's health and performance
+over time.
+
+```toml
+# certwatch.toml - Metrics Configuration
+[metrics]
+enabled = true
+listen_address = "127.0.0.1:9090"
+system_metrics_enabled = true
+```
+
+*   `enabled`: Set to `true` to activate the metrics server.
+*   `listen_address`: The address and port where the metrics will be exposed.
+*   `system_metrics_enabled`: If `true`, the server will also collect and
+    expose system-level metrics like CPU and memory usage.
+
 ### 4. Run the Application
 
 Once configured, you can run the application. All configuration is handled

@@ -216,3 +216,21 @@ cache_size = 100000
 cache_ttl_seconds = 3600
 
 
+
+# ==============================================================================
+# [metrics] - Metrics Configuration
+# ==============================================================================
+[metrics]
+
+# enabled: Set to `true` to enable the Prometheus metrics server.
+# Default: true
+enabled = true
+
+# listen_address: The IP address and port for the metrics server to listen on.
+# Default: "127.0.0.1:9090"
+listen_address = "127.0.0.1:9090"
+
+# system_metrics_enabled: Set to `true` to enable the collection of system
+# metrics (e.g., CPU, memory).
+# Default: true
+system_metrics_enabled = true
