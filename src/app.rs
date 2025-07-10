@@ -418,9 +418,11 @@ impl AppBuilder {
                     if let Some((domain, dns_info)) = resolved_domain {
                         trace!(worker_id = i, domain = %domain, "Rules worker picked up domain");
 
-                        let alert = match build_alert(
+                        // Build a base alert. The source_tag will be overwritten by the
+                        // rule name for each match.
+                        let base_alert = match build_alert(
                             domain,
-                            "certstream".to_string(),
+                            String::new(), // Placeholder, will be replaced
                             false,
                             dns_info,
                             enrichment_provider.clone(),
@@ -436,20 +438,25 @@ impl AppBuilder {
 
                         // A single alert can match rules at multiple stages.
                         // We collect all matches.
-                        let mut all_matches =
-                            rule_matcher.matches(&alert, EnrichmentLevel::None);
-                        all_matches.extend(rule_matcher.matches(
-                            &alert,
-                            EnrichmentLevel::Standard,
-                        ));
-
+                        let all_matches = {
+                            let mut matches =
+                                rule_matcher.matches(&base_alert, EnrichmentLevel::None);
+                            matches.extend(rule_matcher.matches(
+                                &base_alert,
+                                EnrichmentLevel::Standard,
+                            ));
+                            matches
+                        };
 
                         if !all_matches.is_empty() {
-                            // The metric is incremented inside the `matches` function,
-                            // so we don't need to do it here.
-                            if alerts_tx.send(alert).await.is_err() {
-                                error!("Failed to send alert to output stage");
-                                break;
+                            for rule_name in all_matches {
+                                let mut alert = base_alert.clone();
+                                alert.source_tag = rule_name;
+                                if alerts_tx.send(alert).await.is_err() {
+                                    error!("Failed to send alert to output stage");
+                                    // If the channel is closed, we can't continue.
+                                    break;
+                                }
                             }
                         }
                     } else {
