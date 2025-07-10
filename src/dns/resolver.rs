@@ -68,6 +68,11 @@ impl HickoryDnsResolver {
         // Override the timeout if specified in our application config.
         resolver_opts.timeout = Duration::from_millis(config.timeout_ms);
 
+        // Enable caching if configured.
+        if let Some(size) = config.cache_size {
+            resolver_opts.cache_size = size;
+        }
+
         let resolver = hickory_resolver::Resolver::builder_with_config(
             resolver_config_with_no_search,
             hickory_resolver::name_server::TokioConnectionProvider::default(),
@@ -91,18 +96,36 @@ impl DnsResolver for HickoryDnsResolver {
         use hickory_resolver::proto::rr::RecordType;
 
         let start_time = Instant::now();
+        let mut dns_info = DnsInfo::default();
 
-        // Perform concurrent lookups for A, AAAA, and NS records
-        let (a_result, aaaa_result, ns_result) = tokio::join!(
+        // Stage 1: Perform NS lookup to check for domain existence.
+        match self.resolver.lookup(domain, RecordType::NS).await {
+            Ok(lookup) => {
+                dns_info.ns_records = lookup.into_iter().map(|r| r.to_string()).collect();
+            }
+            Err(e) => {
+                let err_string = e.to_string();
+                if is_nxdomain_error_str(&err_string) {
+                    metrics::counter!("dns_queries_total", "status" => "nxdomain").increment(1);
+                    // NXDOMAIN means we can stop here.
+                    return Err(DnsError::Resolution(err_string));
+                }
+                // For other errors (like timeouts), we also fail fast.
+                // The original error from hickory is sufficient.
+                metrics::counter!("dns_queries_total", "status" => "failure").increment(1);
+                return Err(DnsError::Resolution(err_string));
+            }
+        };
+
+        // Stage 2: If NS lookup was successful, perform A and AAAA lookups.
+        let (a_result, aaaa_result) = tokio::join!(
             self.resolver.lookup(domain, RecordType::A),
             self.resolver.lookup(domain, RecordType::AAAA),
-            self.resolver.lookup(domain, RecordType::NS)
         );
 
         let duration = start_time.elapsed();
         metrics::histogram!("dns_resolution_duration_seconds").record(duration.as_secs_f64());
 
-        let mut dns_info = DnsInfo::default();
         let mut primary_error = None;
 
         // Process A records
@@ -121,27 +144,16 @@ impl DnsResolver for HickoryDnsResolver {
                 dns_info.aaaa_records = lookup.into_iter().filter_map(|r| r.ip_addr()).collect();
             }
             Err(e) => {
-                // If A lookup also failed, keep that as the primary error.
-                // Otherwise, this is the primary error.
                 if primary_error.is_none() {
                     primary_error = Some(e);
                 } else {
-                    // A lookup failed, AAAA lookup also failed. Log this one at trace.
                     trace!(domain, error = %e, "AAAA record lookup also failed");
                 }
             }
         }
 
-        // Process NS records - failure here is non-critical
-        if let Ok(lookup) = ns_result {
-            dns_info.ns_records = lookup.into_iter().map(|r| r.to_string()).collect();
-        } else if let Err(e) = ns_result {
-            trace!(domain, error = %e, "NS record lookup failed");
-        }
-
         // A resolution is successful if we get at least one A or AAAA record.
         if !dns_info.a_records.is_empty() || !dns_info.aaaa_records.is_empty() {
-            // If one of the IP lookups failed but the other succeeded, log it quietly.
             if let Some(e) = primary_error {
                 trace!(domain, error = %e, "A partial DNS failure occurred but was recovered");
             }
@@ -150,7 +162,6 @@ impl DnsResolver for HickoryDnsResolver {
         }
 
         // If we are here, both A and AAAA lookups failed or returned empty.
-        // This is a definitive failure for our purposes.
         if let Some(err) = primary_error {
             let err_string = err.to_string();
             let status = if is_nxdomain_error_str(&err_string) {
@@ -161,7 +172,6 @@ impl DnsResolver for HickoryDnsResolver {
                 "failure"
             };
             metrics::counter!("dns_queries_total", "status" => status).increment(1);
-            // The original error from hickory is sufficient.
             return Err(DnsError::Resolution(err_string));
         }
 

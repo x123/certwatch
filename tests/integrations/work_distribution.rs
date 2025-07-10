@@ -29,7 +29,7 @@ rules:
     all:
       - domain_regex: "^test-domain-.*\\.com$"
 "#;
-    let (mut test_app, app_future) = TestAppBuilder::new()
+    let builder = TestAppBuilder::new()
         .with_dns_resolver(resolver.clone())
         .with_outputs(vec![counting_output.clone()])
         .with_config_modifier(|c| {
@@ -38,7 +38,9 @@ rules:
         })
         .with_test_domains_channel()
         .with_rules(rules)
-        .await
+        .await;
+
+    let (mut test_app, app_future) = builder
         .build()
         .await
         .expect("TestApp should build successfully");

@@ -2,7 +2,9 @@
 //! Test helpers for running the full application instance.
 
 use anyhow::Result;
-use certwatch::{config::Config, core::Alert, internal_metrics::Metrics};
+use certwatch::{
+    app::AppBuilder, config::Config, core::Alert, internal_metrics::Metrics,
+};
 use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -71,6 +73,7 @@ pub struct TestAppBuilder {
     alert_tx: Option<broadcast::Sender<Alert>>,
     slack_client: Option<Arc<dyn certwatch::notification::slack::SlackClientTrait>>,
     metrics: Option<Metrics>,
+    skip_health_check: bool,
 }
 
 impl TestAppBuilder {
@@ -95,6 +98,7 @@ impl TestAppBuilder {
             alert_tx: None,
             slack_client: None,
             metrics: None,
+            skip_health_check: false,
         }
     }
 
@@ -218,13 +222,13 @@ impl TestAppBuilder {
 
         let (shutdown_tx, shutdown_rx) = watch::channel(());
 
-        let mut builder = certwatch::app::App::builder(self.config)
-            .enrichment_provider_override(self.enrichment_provider);
+        let mut builder = AppBuilder::new(self.config)
+            .enrichment_provider_override(self.enrichment_provider)
+            .skip_health_check(self.skip_health_check);
 
         if let Some(rx) = self.domains_rx_for_test {
             builder = builder.domains_rx_for_test(rx);
         }
-
         if let Some(outputs) = self.outputs {
             builder = builder.output_override(outputs);
         }
@@ -246,7 +250,6 @@ impl TestAppBuilder {
 
         let app = builder.build(shutdown_rx).await?;
         let metrics_addr = app.metrics_addr();
-
         let app_future = async move { app.run().await };
 
         let test_app = TestApp {
@@ -264,5 +267,10 @@ impl TestAppBuilder {
         let handle = tokio::spawn(app_future);
         test_app.app_handle = Some(handle);
         Ok(test_app)
+    }
+
+    pub fn with_skipped_health_check(mut self) -> Self {
+        self.skip_health_check = true;
+        self
     }
 }

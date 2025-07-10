@@ -71,17 +71,20 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn dns_failure_metric_is_incremented() -> Result<()> {
-    let metrics = Arc::new(Metrics::new_for_test());
-    let mock_dns = Arc::new(MockDnsResolver::new(metrics));
-    mock_dns.add_response("google.com", Ok(Default::default())); // Health check
-    mock_dns.add_failure("failing-domain.com").await;
+    // We use a non-routable address to guarantee a DNS timeout/failure.
+    let invalid_resolver = "10.255.255.1:53";
 
-    let builder = TestAppBuilder::new()
-        .with_dns_resolver(mock_dns.clone())
+    let mut builder = TestAppBuilder::new()
         .with_metrics()
         .with_test_domains_channel();
 
+    // Override the DNS config to use the invalid resolver and a short timeout
+    builder.config.dns.resolver = Some(invalid_resolver.to_string());
+    builder.config.dns.timeout_ms = 100; // Short timeout to make the test run faster
+    builder.config.dns.retry_config.retries = Some(0); // Disable retries for this test
+
     let test_app = builder
+        .with_skipped_health_check()
         .with_rules("rules:\n  - name: test-rule\n    domain_regex: 'failing-domain.com'")
         .await
         .start()
@@ -92,21 +95,24 @@ async fn dns_failure_metric_is_incremented() -> Result<()> {
     test_app.send_domain("failing-domain.com").await?;
 
     let mut body = String::new();
-    for _ in 0..10 {
+    // Wait for the resolution to fail and the metric to be updated.
+    // This might take a few moments due to the DNS timeout.
+    for _ in 0..20 {
         let response = client
             .get(format!("http://{}/metrics", test_app.metrics_addr()))
             .send()
             .await?;
         body = response.text().await?;
-        if body.contains("dns_queries_total{status=\"failure\"} 1") {
+        if body.contains("dns_queries_total{status=\"failure\"} 2") {
             break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     assert!(
-        body.contains("dns_queries_total{status=\"failure\"} 1"),
-        "Metric 'dns_queries_total' not found or incorrect."
+        body.contains("dns_queries_total{status=\"failure\"} 2"),
+        "Metric 'dns_queries_total' with status 'failure' not found or incorrect. Body:\n{}",
+        body
     );
 
     Ok(())

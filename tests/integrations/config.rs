@@ -130,7 +130,7 @@ fn test_load_partial_config_uses_defaults() {
         assert_eq!(config.dns.resolver, Some("8.8.8.8:53".to_string()));
 
         // Values from Default
-        assert_eq!(config.performance.dns_worker_concurrency, num_cpus::get());
+        assert_eq!(config.performance.dns_worker_concurrency, 256);
         assert_eq!(config.performance.queue_capacity, 100_000);
         assert_eq!(
             config.network.certstream_url,

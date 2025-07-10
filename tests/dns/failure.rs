@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use certwatch::{
+    config::PerformanceConfig,
     core::DnsInfo,
     dns::{DnsHealthMonitor, DnsResolutionManager, DnsRetryConfig, test_utils::FakeDnsResolver},
     internal_metrics::Metrics,
@@ -33,9 +34,10 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
         vec![],
     );
 
-    let (manager, mut resolved_rx) = DnsResolutionManager::start(
+    let (manager, _resolved_rx, mut resolved_rx) = DnsResolutionManager::start(
         fake_resolver.clone(),
         retry_config,
+        &PerformanceConfig::default(),
         health_monitor,
         shutdown_rx,
         Arc::new(Metrics::new_for_test()),

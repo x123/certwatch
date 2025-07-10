@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     core::{Alert, DnsResolver, EnrichmentProvider, Output},
     deduplication::Deduplicator,
-    dns::{DnsHealthMonitor, HickoryDnsResolver},
+    dns::{DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
     internal_metrics::{Metrics, MetricsBuilder},
     network::{CertStreamClient, WebSocketConnection},
     notification::slack::SlackClientTrait,
@@ -14,7 +14,7 @@ use crate::{
     utils::heartbeat::run_heartbeat,
 };
 use anyhow::Result;
-use async_channel::{Receiver, Sender};
+use async_channel::Receiver;
 use tokio::sync::{broadcast, watch};
 use tracing::{debug, error, info, instrument, trace};
 use std::{sync::Arc, time::Duration};
@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 pub struct App {
     shutdown_rx: watch::Receiver<()>,
     certstream_task: Option<JoinHandle<()>>,
-    dns_worker_handles: Vec<JoinHandle<()>>,
+    dns_manager_task: Option<JoinHandle<()>>,
     rules_worker_handles: Vec<JoinHandle<()>>,
     output_task: JoinHandle<()>,
     metrics_server_task: Option<JoinHandle<()>>,
@@ -55,9 +55,9 @@ impl App {
                 error!("CertStream task panicked: {:?}", e);
             }
         }
-        for handle in self.dns_worker_handles {
+        if let Some(handle) = self.dns_manager_task {
             if let Err(e) = handle.await {
-                error!("DNS worker task panicked: {:?}", e);
+                error!("DNS manager task panicked: {:?}", e);
             }
         }
         for handle in self.rules_worker_handles {
@@ -94,6 +94,7 @@ pub struct AppBuilder {
     notification_tx: Option<broadcast::Sender<Alert>>,
     slack_client_override: Option<Arc<dyn SlackClientTrait>>,
     metrics_override: Option<Metrics>,
+    skip_health_check: bool,
 }
 
 impl AppBuilder {
@@ -109,7 +110,14 @@ impl AppBuilder {
             notification_tx: None,
             slack_client_override: None,
             metrics_override: None,
+            skip_health_check: false,
         }
+    }
+
+    /// Skips the initial DNS health check during application startup.
+    pub fn skip_health_check(mut self, skip: bool) -> Self {
+        self.skip_health_check = skip;
+        self
     }
 
     /// Overrides the domain receiver channel for testing.
@@ -188,16 +196,35 @@ impl AppBuilder {
         // =========================================================================
         // 2. Pre-flight Checks & Service Instantiation
         // =========================================================================
-        let dns_resolver = match self.dns_resolver_override {
-            Some(resolver) => resolver,
+        let (dns_resolver, dns_health_monitor) = match self.dns_resolver_override {
+            Some(resolver) => {
+                let health_monitor = DnsHealthMonitor::new(
+                    config.dns.health.clone(),
+                    resolver.clone(),
+                    shutdown_rx.clone(),
+                    metrics.clone(),
+                    vec![], // No nameservers available in override mode
+                );
+                (resolver, health_monitor)
+            }
             None => {
-                let (resolver, _nameservers) =
+                let (resolver, nameservers) =
                     HickoryDnsResolver::from_config(&config.dns, metrics.clone())?;
-                Arc::new(resolver) as Arc<dyn DnsResolver>
+                let resolver = Arc::new(resolver) as Arc<dyn DnsResolver>;
+                let health_monitor = DnsHealthMonitor::new(
+                    config.dns.health.clone(),
+                    resolver.clone(),
+                    shutdown_rx.clone(),
+                    metrics.clone(),
+                    nameservers,
+                );
+                (resolver, health_monitor)
             }
         };
 
-        DnsHealthMonitor::startup_check(dns_resolver.as_ref(), &config.dns.health).await?;
+        if !self.skip_health_check {
+            DnsHealthMonitor::startup_check(&*dns_resolver, &config.dns.health).await?;
+        }
 
         // =========================================================================
         // 3. Instantiate Remaining Services
@@ -289,60 +316,74 @@ impl AppBuilder {
         // =========================================================================
         // 6. Build the Pipeline
         // =========================================================================
-        let (resolved_tx, resolved_rx): (Sender<(String, crate::core::DnsInfo)>, Receiver<(String, crate::core::DnsInfo)>) = async_channel::unbounded();
         let (alerts_tx, alerts_rx) = async_channel::unbounded();
 
         // =========================================================================
-        // STAGE 2: DNS Resolution
+        // STAGE 2: DNS Resolution Manager
         // =========================================================================
-        let mut dns_worker_handles = Vec::new();
-        let dns_worker_concurrency = config.performance.dns_worker_concurrency;
-        info!("Spawning {} DNS worker tasks...", dns_worker_concurrency);
+        let (dns_manager, resolved_rx, resolved_nx_domains_rx) = DnsResolutionManager::start(
+            dns_resolver.clone(),
+            config.dns.retry_config.clone(),
+            &config.performance,
+            dns_health_monitor.clone(),
+            shutdown_rx.clone(),
+            metrics.clone(),
+        );
 
-        for i in 0..dns_worker_concurrency {
+        // This task forwards domains from the certstream to the DNS manager
+        let dns_manager_task = {
             let mut shutdown_rx = shutdown_rx.clone();
-            let domains_rx = domains_rx.clone();
-            let resolved_tx = resolved_tx.clone();
-            let dns_resolver = dns_resolver.clone();
-            let metrics = metrics.clone();
-
-            let handle = tokio::spawn(async move {
-                trace!("DNS Worker {} started", i);
+            tokio::spawn(async move {
                 loop {
-                    let domain_to_process = tokio::select! {
+                    tokio::select! {
                         biased;
                         _ = shutdown_rx.changed() => {
-                            trace!("DNS Worker {} received shutdown signal, exiting.", i);
-                            None
+                            info!("DNS domain forwarder received shutdown signal.");
+                            break;
                         }
-                        domain_opt = domains_rx.recv() => {
-                            domain_opt.ok()
+                        Ok(domain) = domains_rx.recv() => {
+                            metrics::gauge!("domains_queued").decrement(1.0);
+                            metrics.domains_processed_total.increment(1);
+                            if let Err(e) = dns_manager.resolve(domain, "certstream".to_string()) {
+                                trace!("Failed to send domain to DNS manager: {}", e);
+                            }
                         }
-                    };
+                        else => {
+                            info!("Domain channel closed, DNS forwarder shutting down.");
+                            break;
+                        }
+                    }
+                }
+            })
+        };
 
-                    if let Some(domain) = domain_to_process {
-                        metrics::gauge!("domains_queued").decrement(1.0);
-                        metrics.domains_processed_total.increment(1);
-                        trace!(worker_id = i, domain = %domain, "DNS worker picked up domain");
-                        match dns_resolver.resolve(&domain).await {
-                            Ok(dns_info) => {
-                                if resolved_tx.send((domain, dns_info)).await.is_err() {
-                                    error!("Failed to send resolved domain to rules stage");
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                trace!(worker_id = i, domain = %domain, "DNS resolution failed: {}", e);
-                            }
-                        }
-                    } else {
-                        trace!("Domain channel closed, DNS worker {} shutting down.", i);
+        // This task handles domains that have resolved after being NXDOMAIN
+        // For now, we just log them. A future implementation might feed them back
+        // into the rules pipeline.
+        let mut resolved_nx_shutdown_rx = shutdown_rx.clone();
+        tokio::spawn(async move {
+            let mut resolved_nx_domains_rx = resolved_nx_domains_rx;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = resolved_nx_shutdown_rx.changed() => {
+                        info!("NXDOMAIN resolver task received shutdown signal.");
+                        break;
+                    }
+                    Some((domain, source, _)) = resolved_nx_domains_rx.recv() => {
+                        info!(%domain, %source, "Previously NXDOMAIN domain has now resolved.");
+                    }
+                    else => {
+                        info!("Resolved NXDOMAIN channel closed.");
                         break;
                     }
                 }
-            });
-            dns_worker_handles.push(handle);
-        }
+            }
+        });
+
+        // For now, the main pipeline for resolved domains is not connected,
+        // as the manager handles everything internally. We create a dummy channel.
+        // The resolved_rx from the DnsResolutionManager is now the input to the rules engine.
 
         // =========================================================================
         // STAGE 3: Rule Matching & Enrichment
@@ -436,7 +477,7 @@ impl AppBuilder {
         Ok(App {
             shutdown_rx,
             certstream_task,
-            dns_worker_handles,
+            dns_manager_task: Some(dns_manager_task),
             rules_worker_handles,
             output_task,
             metrics_server_task,

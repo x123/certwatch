@@ -1,14 +1,18 @@
 use crate::{
+    config::PerformanceConfig,
     core::{DnsInfo, DnsResolver},
     dns::{DnsError, DnsHealthMonitor, DnsRetryConfig},
     internal_metrics::Metrics,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, watch, Semaphore},
     time::{sleep, Instant},
 };
 use tracing::{debug, error, info, instrument, warn};
+
+/// Represents a successfully resolved domain.
+pub type ResolvedDomain = (String, DnsInfo); // (domain, dns_info)
 
 /// Represents a domain that has resolved after previously being NXDOMAIN
 pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, dns_info)
@@ -31,28 +35,39 @@ impl DnsResolutionManager {
     /// Returns the manager and a receiver for domains that resolve after being NXDOMAIN.
     pub fn start(
         resolver: Arc<dyn DnsResolver>,
-        config: DnsRetryConfig,
+        retry_config: DnsRetryConfig,
+        performance_config: &PerformanceConfig,
         health_monitor: Arc<DnsHealthMonitor>,
         shutdown_rx: watch::Receiver<()>,
         _metrics: Arc<Metrics>,
-    ) -> (Self, mpsc::UnboundedReceiver<ResolvedNxDomain>) {
+    ) -> (
+        Self,
+        async_channel::Receiver<ResolvedDomain>,
+        mpsc::UnboundedReceiver<ResolvedNxDomain>,
+    ) {
         let (nxdomain_retry_tx, nxdomain_retry_rx) = mpsc::unbounded_channel();
         let (resolved_nxdomain_tx, resolved_nxdomain_rx) = mpsc::unbounded_channel();
         let (dns_request_tx, dns_request_rx) = mpsc::channel(10_000);
+        let (resolved_tx, resolved_rx) =
+            async_channel::bounded(performance_config.queue_capacity);
 
         // Spawn the primary resolution task
         let resolver_clone = Arc::clone(&resolver);
-        let config_clone = config.clone();
+        let retry_config_clone = retry_config.clone();
         let mut task_shutdown_rx = shutdown_rx.clone();
         let task_health_monitor = health_monitor.clone();
+        let semaphore = Arc::new(Semaphore::new(performance_config.dns_worker_concurrency));
+
         tokio::spawn(async move {
             Self::resolution_task(
                 resolver_clone,
-                config_clone,
+                retry_config_clone,
                 dns_request_rx,
                 nxdomain_retry_tx.clone(),
+                resolved_tx,
                 task_health_monitor,
                 &mut task_shutdown_rx,
+                semaphore,
             )
             .await;
         });
@@ -61,7 +76,7 @@ impl DnsResolutionManager {
         let nx_shutdown_rx = shutdown_rx.clone();
         tokio::spawn(Self::nxdomain_retry_task(
             resolver,
-            config,
+            retry_config,
             nxdomain_retry_rx,
             resolved_nxdomain_tx,
             nx_shutdown_rx,
@@ -82,7 +97,7 @@ impl DnsResolutionManager {
             _shutdown_rx: shutdown_rx,
         };
 
-        (manager, resolved_nxdomain_rx)
+        (manager, resolved_rx, resolved_nxdomain_rx)
     }
 
     /// Sends a domain to the resolution channel. This is a non-blocking call.
@@ -106,8 +121,10 @@ impl DnsResolutionManager {
         config: DnsRetryConfig,
         mut dns_request_rx: mpsc::Receiver<(String, String)>,
         nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>,
+        resolved_tx: async_channel::Sender<ResolvedDomain>,
         health_monitor: Arc<DnsHealthMonitor>,
         shutdown_rx: &mut watch::Receiver<()>,
+        semaphore: Arc<Semaphore>,
     ) {
         info!("DNS resolution task started.");
         loop {
@@ -122,18 +139,39 @@ impl DnsResolutionManager {
                     let nxdomain_retry_tx_clone = nxdomain_retry_tx.clone();
                     let health_monitor_clone = health_monitor.clone();
                     let config_clone = config.clone();
+                    let semaphore_clone = semaphore.clone();
+                    let resolved_tx_clone = resolved_tx.clone();
 
-                    // We don't await this handle. This is the key change: resolution
-                    // happens in a separate, detached task.
                     tokio::spawn(async move {
-                        let _ = Self::perform_resolution(
+                        // Acquire a permit from the semaphore. This will block if the
+                        // pool is at its concurrency limit.
+                        let permit = match semaphore_clone.acquire().await {
+                            Ok(p) => p,
+                            Err(_) => {
+                                // This error occurs if the semaphore is closed, which
+                                // happens during shutdown.
+                                warn!("Failed to acquire semaphore permit; semaphore is closed.");
+                                return;
+                            }
+                        };
+
+                        if let Ok(dns_info) = Self::perform_resolution(
                             &domain,
                             &source_tag,
                             resolver_clone,
                             config_clone,
                             nxdomain_retry_tx_clone,
                             health_monitor_clone,
-                        ).await;
+                        )
+                        .await
+                        {
+                            if resolved_tx_clone.send((domain, dns_info)).await.is_err() {
+                                error!("Failed to send resolved domain to the next stage.");
+                            }
+                        }
+
+                        // The permit is automatically released when `permit` goes out of scope.
+                        drop(permit);
                     });
                 }
             }
@@ -161,7 +199,7 @@ impl DnsResolutionManager {
             match resolver.resolve(domain).await {
                 Ok(dns_info) => {
                     health_monitor.record_outcome(true);
-                    metrics::counter!("dns_queries_total", "status" => "success").increment(1);
+                    // The success metric is now recorded in the resolver itself.
                     return Ok(dns_info);
                 }
                 Err(DnsError::Resolution(e)) => {

@@ -28,15 +28,14 @@ rules:
 "#;
 
     // 2. Build the test application, configuring the enrichment provider to fail
-    let (mut app, app_future) = TestAppBuilder::new()
+    let builder = TestAppBuilder::new()
         .with_alert_tx(alerts_tx)
         .with_failing_enrichment(true)
         .with_rules(rules)
         .await
-        .with_test_domains_channel()
-        .build()
-        .await
-        .unwrap();
+        .with_test_domains_channel();
+
+    let (mut app, app_future) = builder.build().await.unwrap();
 
     // 4. Run the app in the background
     app.app_handle = Some(tokio::spawn(app_future));

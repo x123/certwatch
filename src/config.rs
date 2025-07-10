@@ -89,10 +89,9 @@ pub struct PerformanceConfig {
 
 impl Default for PerformanceConfig {
     fn default() -> Self {
-        let worker_count = num_cpus::get();
         Self {
-            dns_worker_concurrency: worker_count,
-            rules_worker_concurrency: worker_count,
+            dns_worker_concurrency: 256,
+            rules_worker_concurrency: num_cpus::get(),
             queue_capacity: 100_000,
         }
     }
@@ -129,6 +128,7 @@ pub struct RulesConfig {
 pub struct DnsConfig {
     pub resolver: Option<String>,
     pub timeout_ms: u64,
+    pub cache_size: Option<usize>,
     #[serde(flatten)]
     pub retry_config: DnsRetryConfig,
     pub health: DnsHealthConfig,
@@ -138,7 +138,8 @@ impl Default for DnsConfig {
     fn default() -> Self {
         Self {
             resolver: None,
-            timeout_ms: 2000,
+            timeout_ms: 5000,
+            cache_size: Some(10_000),
             retry_config: DnsRetryConfig::default(),
             health: DnsHealthConfig::default(),
         }
