@@ -21,11 +21,6 @@ fn test_load_full_valid_config() {
         [core]
         log_level = "debug"
         concurrency = 4
-        [metrics]
-        log_metrics = true
-        log_aggregation_seconds = 30
-        prometheus_enabled = true
-        prometheus_listen_address = "0.0.0.0:9999"
         [performance]
         queue_capacity = 50000
         [network]
@@ -66,13 +61,6 @@ fn test_load_full_valid_config() {
 
         assert_eq!(config.core.log_level, "debug".to_string());
         assert_eq!(config.core.concurrency, 4);
-        assert_eq!(config.metrics.log_metrics, true);
-        assert_eq!(config.metrics.log_aggregation_seconds, 30);
-        assert_eq!(config.metrics.prometheus_enabled, true);
-        assert_eq!(
-            config.metrics.prometheus_listen_address,
-            "0.0.0.0:9999".to_string()
-        );
         assert_eq!(config.performance.queue_capacity, 50000);
         assert_eq!(
             config.network.certstream_url,
@@ -141,7 +129,6 @@ fn test_load_partial_config_uses_defaults() {
 
         // Values from Default
         assert_eq!(config.core.concurrency, num_cpus::get());
-        assert_eq!(config.metrics.log_metrics, false);
         assert_eq!(config.performance.queue_capacity, 100_000);
         assert_eq!(
             config.network.certstream_url,

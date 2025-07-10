@@ -94,8 +94,6 @@ async fn main() -> Result<()> {
 fn log_config_settings(config: &Config) {
     info!("-------------------- Configuration --------------------");
     info!("Log Level: {}", config.core.log_level);
-    info!("Log Metrics: {}", config.metrics.log_metrics);
-    info!("Log Aggregation Interval: {}s", config.metrics.log_aggregation_seconds);
     info!("Concurrency: {}", config.core.concurrency);
     info!("Domain Queue Capacity: {}", config.performance.queue_capacity);
     info!("CertStream URL: {}", config.network.certstream_url);

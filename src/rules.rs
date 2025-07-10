@@ -272,7 +272,6 @@ impl RuleLoader {
 #[derive(Debug, Clone)]
 pub struct PreFilter {
     ignore_set: Option<RegexSet>,
-    metric_domains_ignored: metrics::Counter,
 }
 
 impl PreFilter {
@@ -290,7 +289,6 @@ impl PreFilter {
 
         Ok(Self {
             ignore_set,
-            metric_domains_ignored: metrics::counter!("certwatch_domains_ignored_total"),
         })
     }
 
@@ -299,7 +297,6 @@ impl PreFilter {
         if let Some(set) = &self.ignore_set {
             let is_match = set.is_match(domain);
             if is_match {
-                self.metric_domains_ignored.increment(1);
                 tracing::debug!(domain, "Domain matched ignore list");
             }
             is_match

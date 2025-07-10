@@ -59,7 +59,6 @@ impl TestAppBuilder {
         // Disable network-dependent features for default tests
         config.network.certstream_url = "ws://127.0.0.1:12345".to_string(); // Mock URL
         config.output.slack = None;
-        config.metrics.log_metrics = false;
         // Set a path for the ASN database, even if it's empty, to satisfy the check
         config.enrichment.asn_tsv_path = Some("/tmp/empty.tsv".into());
 

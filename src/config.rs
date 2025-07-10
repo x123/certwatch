@@ -35,7 +35,6 @@ pub struct Config {
     pub test_mode: bool,
     #[serde(default)]
     pub core: CoreConfig,
-    pub metrics: MetricsConfig,
     pub performance: PerformanceConfig,
     pub network: NetworkConfig,
     pub rules: RulesConfig,
@@ -50,7 +49,6 @@ impl Default for Config {
         Self {
             test_mode: false,
             core: CoreConfig::default(),
-            metrics: MetricsConfig::default(),
             performance: PerformanceConfig::default(),
             network: NetworkConfig::default(),
             rules: RulesConfig::default(),
@@ -162,26 +160,6 @@ impl Default for DnsHealthConfig {
     }
 }
 
-/// Configuration for metrics.
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-#[serde(default)]
-pub struct MetricsConfig {
-    pub log_metrics: bool,
-    pub log_aggregation_seconds: u64,
-    pub prometheus_enabled: bool,
-    pub prometheus_listen_address: String,
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self {
-            log_metrics: false,
-            log_aggregation_seconds: 10,
-            prometheus_enabled: false,
-            prometheus_listen_address: "127.0.0.1:9090".to_string(),
-        }
-    }
-}
 
 /// Configuration for IP address enrichment.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Default)]

@@ -38,8 +38,6 @@ operations, ensuring high performance under heavy load.
 *   **Pattern Hot-Reloading:** Enables dynamic updates to regex pattern files
 with a seamless switchover, allowing for continuous monitoring without
 interrupting the data stream or requiring a service restart.
-*   **Logged Metrics:** Periodically logs key operational metrics to the
-console, providing insights into the application's performance and activity.
 
 ## Getting Started
 

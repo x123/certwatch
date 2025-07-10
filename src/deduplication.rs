@@ -1,4 +1,3 @@
-use metrics;
 // Service for filtering duplicate alerts.
 
 use crate::core::Alert;
@@ -42,8 +41,6 @@ impl Deduplicator {
         if !is_dupe {
             self.cache.insert(key, ()).await;
         }
-        
-        metrics::gauge!("deduplication_cache_entries").set(self.cache.entry_count() as f64);
         
         is_dupe
     }

@@ -1,4 +1,3 @@
-use metrics;
 // Network client for CertStream WebSocket connection
 //
 // This module handles connecting to the certstream websocket, parsing
@@ -218,7 +217,6 @@ impl CertStreamClient {
             Message::Text(text) => {
                 match parse_message(&text) {
                     Ok(domains) => {
-                        metrics::counter!("domains_processed").increment(domains.len() as u64);
 
                         if domains.is_empty() {
                             return Ok(());
@@ -227,8 +225,6 @@ impl CertStreamClient {
                         let sampled_domains = self.sample_domains(domains);
 
                         if !sampled_domains.is_empty() {
-                            metrics::counter!("agg.domains_sent_to_queue")
-                                .increment(sampled_domains.len() as u64);
                             for domain in sampled_domains {
                                 if self.output_tx.send(domain).await.is_err() {
                                     // This error means the receiver has been dropped, which implies

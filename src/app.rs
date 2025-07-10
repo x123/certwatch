@@ -6,7 +6,6 @@ use crate::{
     core::{Alert, DnsInfo, DnsResolver, EnrichmentProvider, Output},
     deduplication::{Deduplicator, InFlightDeduplicator},
     dns::{DnsError, DnsHealthMonitor, DnsResolutionManager, HickoryDnsResolver},
-    internal_metrics::logging_recorder::LoggingRecorder,
     network::{CertStreamClient, WebSocketConnection},
     notification::slack::SlackClientTrait,
     outputs::{OutputManager, StdoutOutput},
@@ -28,7 +27,6 @@ pub struct App {
     worker_handles: Vec<JoinHandle<()>>,
     nxdomain_feedback_task: JoinHandle<()>,
     output_task: JoinHandle<()>,
-    metrics_task: Option<JoinHandle<()>>,
 }
 
 impl App {
@@ -60,11 +58,6 @@ impl App {
         }
         if let Err(e) = self.output_task.await {
             error!("Output task panicked: {:?}", e);
-        }
-        if let Some(handle) = self.metrics_task {
-            if let Err(e) = handle.await {
-                error!("Metrics task panicked: {:?}", e);
-            }
         }
 
         info!("All tasks shut down.");
@@ -150,23 +143,6 @@ impl AppBuilder {
     pub async fn build(self, shutdown_rx: watch::Receiver<()>) -> Result<App> {
         let config = self.config;
 
-        // =========================================================================
-        // 1. Initialize Metrics Recorder (and logging)
-        // =========================================================================
-        let mut metrics_task: Option<JoinHandle<()>> = None;
-        if config.metrics.log_metrics {
-            let aggregation_seconds = config.metrics.log_aggregation_seconds;
-            info!(
-                "Logging recorder enabled. Metrics will be printed every {} seconds.",
-                aggregation_seconds
-            );
-            let (recorder, handle) = LoggingRecorder::new(
-                Duration::from_secs(aggregation_seconds),
-                shutdown_rx.clone(),
-            );
-            metrics::set_global_recorder(recorder).expect("Failed to install logging recorder");
-            metrics_task = Some(handle);
-        }
 
         // =========================================================================
         // 2. Pre-flight Checks & Service Instantiation
@@ -318,8 +294,6 @@ impl AppBuilder {
 
                     if in_flight_deduplicator.is_duplicate(&domain) {
                         trace!(worker_id = i, domain = %domain, "Domain is an in-flight duplicate, skipping");
-                        metrics::counter!("domains_skipped_inflight", "worker_id" => i.to_string())
-                            .increment(1);
                         continue;
                     }
 
@@ -346,14 +320,8 @@ impl AppBuilder {
                         }
                         result = process_fut => {
                             trace!(worker_id = i, domain = %domain, "Worker finished processing domain");
-                            match result {
-                                Ok(_) => {
-                                    metrics::counter!("cert_processing_successes").increment(1);
-                                }
-                                Err(e) => {
-                                    metrics::counter!("cert_processing_failures").increment(1);
-                                    trace!("Failed to process certificate update for domain {}: {}", domain, e);
-                                }
+                            if let Err(e) = result {
+                                trace!("Failed to process certificate update for domain {}: {}", domain, e);
                             }
                         }
                     }
@@ -416,7 +384,6 @@ impl AppBuilder {
             worker_handles,
             nxdomain_feedback_task,
             output_task,
-            metrics_task,
         })
     }
 }
@@ -443,7 +410,6 @@ async fn output_task_logic(
                 debug!("Output task received alert for domain: {}", &alert.domain);
                 if !deduplicator.is_duplicate(&alert).await {
                     debug!("Domain {} is not a duplicate. Processing.", &alert.domain);
-                    metrics::counter!("agg.alerts_sent").increment(1);
 
                     // Publish to notification pipeline if enabled
                     if let Some(tx) = &notification_tx {

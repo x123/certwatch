@@ -179,20 +179,6 @@
 
 ---
 
-### **Epic #47: Modernize Metrics System with Prometheus Exporter**
-
-*   **Goal:** Replace the current in-memory, log-based metrics system with a production-grade Prometheus exporter. This will provide real-time visibility into application performance and align with industry-standard observability practices.
-*   **Status:** In Progress
-*   **Tasks:**
-    *   [x] **#194 - Dependencies:** Add `metrics-exporter-prometheus` and `axum` to `Cargo.toml`.
-    *   [x] **#195 - Configuration:** Add a `metrics` section to `config.rs` to enable/disable the exporter and configure its listen address.
-    *   [ ] **#196 - Prometheus Recorder:** Create `src/internal_metrics/prometheus_recorder.rs` to initialize and manage the Prometheus exporter.
-    *   [ ] **#197 - Exporter Server:** Implement a function to run a lightweight `axum` server in a separate Tokio task, serving the rendered metrics at the `/metrics` endpoint.
-    *   [ ] **#198 - Application Integration:** In `main.rs`, conditionally initialize the `PrometheusRecorder` and start the server based on the new configuration.
-    *   [ ] **#199 - Preserve Test Integrity:** Update the `TestAppBuilder` to ensure all existing tests continue to use the `TestMetricsRecorder`, avoiding any disruption to our test suite.
-    *   [ ] **#200 - Documentation:** Update project documentation to explain the new metrics system.
-
----
 
 ### Epic #48: Implement Rule Hot-Reloading
 *   **Goal:** Re-introduce the hot-reloading feature, making it compatible with the new YAML-based rules engine. This allows for dynamic updates to the matching logic without requiring a service restart, restoring a key feature from the legacy system.

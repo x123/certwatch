@@ -106,7 +106,6 @@ impl DnsResolutionManager {
                     match result {
                         Ok(dns_info) => {
                             self.health_monitor.record_outcome(true);
-                            metrics::counter!("dns_resolutions", "status" => "success").increment(1);
                             return Ok(dns_info);
                         }
                         Err(DnsError::Resolution(e)) => {
@@ -116,7 +115,6 @@ impl DnsResolutionManager {
                             // Check if this is an NXDOMAIN error
                             if is_nxdomain_error_str(&e) {
                                 debug!("Detected NXDOMAIN");
-                                metrics::counter!("dns_resolutions", "status" => "nxdomain").increment(1);
 
                                 // Schedule for NXDOMAIN retry queue
                                 let retry_time = Instant::now()
@@ -134,9 +132,6 @@ impl DnsResolutionManager {
                             }
 
                             if e.to_lowercase().contains("timeout") {
-                                metrics::counter!("dns_resolutions", "status" => "timeout").increment(1);
-                            } else {
-                                metrics::counter!("dns_resolutions", "status" => "failure").increment(1);
                             }
                             last_error = Some(e);
 
@@ -191,7 +186,6 @@ impl DnsResolutionManager {
         );
 
         loop {
-            metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
 
             // Determine the sleep duration. If the heap is empty, wait indefinitely
             // for a new message. Otherwise, sleep until the next retry is due.
@@ -217,7 +211,6 @@ impl DnsResolutionManager {
                 // Handle new NXDOMAIN domains
                 Some((domain, source_tag, retry_time)) = rx.recv() => {
                     retry_heap.push((Reverse(retry_time), domain, source_tag, 0));
-                    metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                 },
 
                 // Process retry queue
@@ -230,7 +223,6 @@ impl DnsResolutionManager {
 
                         // It's time, pop the item from the heap
                         if let Some((_, domain, source_tag, attempt)) = retry_heap.pop() {
-                            metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                             match resolver.resolve(&domain).await {
                                 Ok(dns_info) => {
                                     info!(%domain, %source_tag, "Domain now resolves after NXDOMAIN");
@@ -244,7 +236,6 @@ impl DnsResolutionManager {
                                             let backoff_ms = nxdomain_backoff_ms * 2_u64.pow(attempt + 1);
                                             let next_retry = now + Duration::from_millis(backoff_ms);
                                             retry_heap.push((Reverse(next_retry), domain, source_tag, attempt + 1));
-                                            metrics::gauge!("nxdomain_retry_queue_size").set(retry_heap.len() as f64);
                                        } else {
                                             debug!(error = %res_err, attempt, "Giving up on NXDOMAIN retry");
                                        }

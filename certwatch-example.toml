@@ -216,28 +216,3 @@ cache_size = 100000
 cache_ttl_seconds = 3600
 
 
-# ==============================================================================
-# [metrics] - Metrics Collection and Reporting
-# ==============================================================================
-[metrics]
-
-# log_metrics: Set to `true` to enable periodic logging of internal
-# application metrics to the console. This is useful for monitoring
-# performance and behavior.
-# Default: false
-log_metrics = false
-
-# log_aggregation_seconds: The interval in seconds at which to aggregate
-# and log metrics if log_metrics is enabled.
-# Default: 10
-log_aggregation_seconds = 10
-
-# prometheus_enabled: Set to `true` to expose metrics in the Prometheus
-# format via an HTTP endpoint.
-# Default: false
-prometheus_enabled = false
-
-# prometheus_listen_address: The IP address and port on which to expose
-# the Prometheus metrics endpoint.
-# Default: "127.0.0.1:9090"
-prometheus_listen_address = "127.0.0.1:9090"
