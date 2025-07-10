@@ -29,7 +29,7 @@ use anyhow::Result;
 
 pub async fn build_alert(
     domain: String,
-    source_tag: String,
+    source_tag: Vec<String>,
     resolved_after_nxdomain: bool,
     dns_info: DnsInfo,
     enrichment_provider: Option<Arc<dyn EnrichmentProvider>>,

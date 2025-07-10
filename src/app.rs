@@ -422,7 +422,7 @@ impl AppBuilder {
                         // rule name for each match.
                         let base_alert = match build_alert(
                             domain,
-                            String::new(), // Placeholder, will be replaced
+                            vec![], // Placeholder, will be replaced
                             false,
                             dns_info,
                             enrichment_provider.clone(),
@@ -449,14 +449,12 @@ impl AppBuilder {
                         };
 
                         if !all_matches.is_empty() {
-                            for rule_name in all_matches {
-                                let mut alert = base_alert.clone();
-                                alert.source_tag = rule_name;
-                                if alerts_tx.send(alert).await.is_err() {
-                                    error!("Failed to send alert to output stage");
-                                    // If the channel is closed, we can't continue.
-                                    break;
-                                }
+                            let mut alert = base_alert;
+                            alert.source_tag = all_matches;
+                            if alerts_tx.send(alert).await.is_err() {
+                                error!("Failed to send alert to output stage, worker shutting down.");
+                                // If the channel is closed, we can't continue.
+                                break;
                             }
                         }
                     } else {

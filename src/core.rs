@@ -18,7 +18,7 @@ pub struct Alert {
     /// The suspicious domain name
     pub domain: String,
     /// Tag identifying the rule source (e.g., "phishing", "typosquatting")
-    pub source_tag: String,
+    pub source_tag: Vec<String>,
     /// Flag indicating if this domain was previously NXDOMAIN but now resolves
     pub resolved_after_nxdomain: bool,
     /// DNS resolution information

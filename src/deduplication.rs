@@ -54,17 +54,19 @@ impl Deduplicator {
         // Extract the base domain, falling back to the original domain if parsing fails.
         let base_domain = psl::domain_str(&alert.domain).unwrap_or(&alert.domain);
 
+        // Sort and join the source tags to create a stable key.
+        let mut sorted_tags = alert.source_tag.clone();
+        sorted_tags.sort_unstable();
+        let source_key = sorted_tags.join(",");
+
         if alert.resolved_after_nxdomain {
             // Key for "First Resolution" alerts includes the FQDN and source tag
             // to ensure they are unique and not deduplicated against the base domain.
-            let data = format!(
-                "{}::{}::FIRST_RESOLUTION",
-                alert.domain, alert.source_tag
-            );
+            let data = format!("{}::{}::FIRST_RESOLUTION", alert.domain, source_key);
             blake3::hash(data.as_bytes()).to_hex().to_string()
         } else {
             // Standard alerts are deduplicated by base domain and source tag.
-            let data = format!("{}{}", base_domain, alert.source_tag);
+            let data = format!("{}{}", base_domain, source_key);
             blake3::hash(data.as_bytes()).to_hex().to_string()
         }
     }
@@ -120,11 +122,15 @@ mod tests {
     };
     use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
-    fn create_test_alert(domain: &str, source_tag: &str, resolved_after_nxdomain: bool) -> Alert {
+    fn create_test_alert(
+        domain: &str,
+        source_tags: &[&str],
+        resolved_after_nxdomain: bool,
+    ) -> Alert {
         Alert {
             timestamp: "2025-07-05T10:30:00Z".to_string(),
             domain: domain.to_string(),
-            source_tag: source_tag.to_string(),
+            source_tag: source_tags.iter().map(|s| s.to_string()).collect(),
             resolved_after_nxdomain,
             dns: DnsInfo::default(),
             enrichment: vec![EnrichmentInfo {
@@ -142,7 +148,7 @@ mod tests {
     async fn test_new_alert_is_not_duplicate() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert = create_test_alert("example.com", "phishing", false);
+        let alert = create_test_alert("example.com", &["phishing"], false);
         assert!(!deduplicator.is_duplicate(&alert).await);
     }
 
@@ -150,7 +156,7 @@ mod tests {
     async fn test_repeated_alert_is_duplicate() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert = create_test_alert("example.com", "phishing", false);
+        let alert = create_test_alert("example.com", &["phishing"], false);
         deduplicator.is_duplicate(&alert).await; // First time
         assert!(deduplicator.is_duplicate(&alert).await); // Second time
     }
@@ -159,8 +165,8 @@ mod tests {
     async fn test_first_resolution_alert_is_not_duplicate() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert1 = create_test_alert("example.com", "phishing", false);
-        let alert2 = create_test_alert("example.com", "phishing", true); // First resolution
+        let alert1 = create_test_alert("example.com", &["phishing"], false);
+        let alert2 = create_test_alert("example.com", &["phishing"], true); // First resolution
 
         deduplicator.is_duplicate(&alert1).await;
         assert!(!deduplicator.is_duplicate(&alert2).await);
@@ -170,8 +176,8 @@ mod tests {
     async fn test_different_source_tag_is_not_duplicate() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert1 = create_test_alert("example.com", "phishing", false);
-        let alert2 = create_test_alert("example.com", "malware", false);
+        let alert1 = create_test_alert("example.com", &["phishing"], false);
+        let alert2 = create_test_alert("example.com", &["malware"], false);
 
         deduplicator.is_duplicate(&alert1).await;
         assert!(!deduplicator.is_duplicate(&alert2).await);
@@ -181,8 +187,8 @@ mod tests {
     async fn test_first_resolution_alerts_with_different_tags_are_not_duplicates() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert1 = create_test_alert("example.com", "source1", true);
-        let alert2 = create_test_alert("example.com", "source2", true);
+        let alert1 = create_test_alert("example.com", &["source1"], true);
+        let alert2 = create_test_alert("example.com", &["source2"], true);
 
         deduplicator.is_duplicate(&alert1).await;
         assert!(!deduplicator.is_duplicate(&alert2).await, "Second alert with a different source tag should not be a duplicate");
@@ -192,8 +198,8 @@ mod tests {
     async fn test_subdomain_alert_is_duplicate() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert1 = create_test_alert("example.com", "phishing", false);
-        let alert2 = create_test_alert("sub.example.com", "phishing", false); // Same base domain
+        let alert1 = create_test_alert("example.com", &["phishing"], false);
+        let alert2 = create_test_alert("sub.example.com", &["phishing"], false); // Same base domain
 
         deduplicator.is_duplicate(&alert1).await; // First time
         assert!(deduplicator.is_duplicate(&alert2).await, "Alert for a subdomain of a recently seen domain should be a duplicate");
@@ -203,10 +209,23 @@ mod tests {
     async fn test_different_base_domain_is_not_duplicate() {
         let metrics = Arc::new(Metrics::new_for_test());
         let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
-        let alert1 = create_test_alert("example.com", "phishing", false);
-        let alert2 = create_test_alert("example.org", "phishing", false); // Different base domain
+        let alert1 = create_test_alert("example.com", &["phishing"], false);
+        let alert2 = create_test_alert("example.org", &["phishing"], false); // Different base domain
 
         deduplicator.is_duplicate(&alert1).await;
         assert!(!deduplicator.is_duplicate(&alert2).await, "Alert for a different base domain should not be a duplicate");
+    }
+    #[tokio::test]
+    async fn test_multi_tag_alert_is_duplicate_regardless_of_order() {
+        let metrics = Arc::new(Metrics::new_for_test());
+        let deduplicator = Deduplicator::new(Duration::from_secs(10), 100, metrics);
+        let alert1 = create_test_alert("example.com", &["phishing", "malware"], false);
+        let alert2 = create_test_alert("example.com", &["malware", "phishing"], false); // Same tags, different order
+
+        deduplicator.is_duplicate(&alert1).await; // First time
+        assert!(
+            deduplicator.is_duplicate(&alert2).await,
+            "Alert with the same tags in a different order should be a duplicate"
+        );
     }
 }

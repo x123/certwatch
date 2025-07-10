@@ -23,7 +23,7 @@ pub fn spawn(
                     result = alert_rx.recv() => {
                         match result {
                             Ok(alert) => {
-                                info!(domain = %alert.domain, source = %alert.source_tag, "New alert received");
+                                info!(domain = %alert.domain, source = %alert.source_tag.join(","), "New alert received");
                                 if let Some(tx) = completion_tx {
                                     let _ = tx.send(());
                                     return; // Test is done, exit the task
@@ -43,7 +43,7 @@ pub fn spawn(
                 // If no shutdown receiver, just listen for alerts
                 match alert_rx.recv().await {
                     Ok(alert) => {
-                        info!(domain = %alert.domain, source = %alert.source_tag, "New alert received");
+                        info!(domain = %alert.domain, source = %alert.source_tag.join(","), "New alert received");
                         if let Some(tx) = completion_tx {
                             let _ = tx.send(());
                             return; // Test is done, exit the task
@@ -81,7 +81,7 @@ mod tests {
         let alert = Alert {
             timestamp: "2025-07-08T18:00:00Z".to_string(),
             domain: "test.com".to_string(),
-            source_tag: "test-source".to_string(),
+            source_tag: vec!["test-source".to_string()],
             resolved_after_nxdomain: false,
             dns: DnsInfo::default(),
             enrichment: vec![],

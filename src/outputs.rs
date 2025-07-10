@@ -147,7 +147,7 @@ fn format_plain_text(alert: &Alert) -> String {
 
     format!(
         "[{}] {} -> {} {}{} [{}]",
-        alert.source_tag, alert.domain, first_ip_str, enrichment_details, other_ips_str, timestamp
+        alert.source_tag.join(", "), alert.domain, first_ip_str, enrichment_details, other_ips_str, timestamp
     )
     .trim()
     .to_string()
@@ -210,7 +210,7 @@ mod tests {
         Alert {
             timestamp: "2025-07-05T22:25:00Z".to_string(),
             domain: "example.com".to_string(),
-            source_tag: "test-source".to_string(),
+            source_tag: vec!["test-source".to_string()],
             resolved_after_nxdomain: false,
             dns: DnsInfo {
                 a_records: vec!["1.1.1.1".parse().unwrap(), "2.2.2.2".parse().unwrap()],

@@ -28,7 +28,7 @@ impl SlackTextFormatter {
         let base_domain = self.get_base_domain(&alert.domain);
 
         // Tag part
-        let tag_part = format!("[{}] ", alert.source_tag);
+        let tag_part = format!("[{}] ", alert.source_tag.join(", "));
 
         // Domain part
         let domain_urlscan_link = format!(
@@ -226,7 +226,7 @@ mod tests {
         Alert {
             timestamp: "2025-07-08T21:03:52+0200".to_string(),
             domain: domain.to_string(),
-            source_tag: "phishing".to_string(),
+            source_tag: vec!["phishing".to_string()],
             resolved_after_nxdomain: false,
             dns,
             enrichment,
