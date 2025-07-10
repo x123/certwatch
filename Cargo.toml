@@ -123,3 +123,7 @@ path = "tests/integrations/shutdown.rs"
 name = "work_distribution_integration"
 path = "tests/integrations/work_distribution.rs"
 
+[[test]]
+name = "output_separation_integration"
+path = "tests/integrations/output_separation.rs"
+

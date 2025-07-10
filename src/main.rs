@@ -19,6 +19,7 @@ async fn main() -> Result<()> {
 
     // Initialize the logger with the final log level from the config.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env().add_directive(
                 config.core.log_level.parse()

@@ -173,3 +173,14 @@
     *   [x] **#220 - Create `justfile`:** A new file named `justfile` was created in the project root to serve as the central place for defining and documenting project-specific commands.
     *   [x] **#221 - Update `.clinerules`:** The `Task Completion Protocol` section in `.clinerules` has been updated to replace the `cargo test` command with the new `just test` command.
     *   [x] **#222 - Verify Workflow:** The new `just test` command has been run to ensure it works as expected.
+
+
+---
+
+### Epic #50: Ensure Clean JSON Output for Pipelining
+*   **User Story:** As a command-line user, I want `certwatch` to send only JSON data to standard output (`stdout`), so that I can reliably pipe the output to other tools like `jq` for filtering and analysis without encountering parsing errors.
+*   **Status:** Not Started
+*   **Tasks:**
+    *   [ ] **#223 - Reconfigure Tracing Subscriber:** Modify the `tracing_subscriber` in `main.rs` to write all logs to `stderr` instead of `stdout`.
+    *   [ ] **#224 - Audit `println!` Usage:** Perform a codebase-wide audit to find and replace any `println!` macros used for logging with appropriate `tracing` macros.
+    *   [ ] **#225 - Create Output Verification Test:** Implement a new integration test that runs the application with JSON output, captures both `stdout` and `stderr`, and asserts that only valid JSON is written to `stdout` and logs are correctly written to `stderr`.
