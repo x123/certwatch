@@ -1,3 +1,44 @@
+### Epic #53: Decouple Slack Client from Tokio Runtime
+
+*   **User Story:** As a developer, I want to ensure that slow or unresponsive Slack API calls do not interfere with the core application's network stability, so that the CertStream websocket connection remains stable and responsive.
+
+*   **Problem:** The current `SlackClient` implementation uses a standard `reqwest::Client` and `await`s the HTTP request directly within a Tokio task. This is a blocking I/O operation that can tie up a worker thread in the Tokio runtime. If the Slack API is slow, this prevents other critical asynchronous tasks, such as the CertStream websocket client, from being processed. This leads to missed keep-alive messages (pings/pongs) and causes the websocket connection to be dropped, either through a timeout or a graceful close from the server.
+
+*   **Architecture:** The solution is to move the blocking HTTP request to a dedicated thread pool where it won't interfere with the main Tokio runtime. This will be achieved using `tokio::task::spawn_blocking`. A new, private, blocking function will be created to handle the synchronous `reqwest` call. The public `send_batch` function will become a lightweight async wrapper that uses `spawn_blocking` to safely execute the synchronous code without stalling the main event loop.
+
+    ```mermaid
+    graph TD
+        subgraph NotificationManager Task (Async)
+            A[NotificationManager::send_batch] --> B{tokio::task::spawn_blocking};
+        end
+
+        subgraph Blocking Thread Pool
+            C[SlackClient::send_request] --> D[reqwest::blocking::Client];
+            D --> E[Sends HTTP Request to Slack];
+        end
+
+        B -- Schedules --> C;
+        E -- Returns Result --> A;
+    ```
+
+*   **Status:** Not Started
+
+*   **Tasks:**
+    *   [ ] **#235 - Create Blocking Request Function:**
+        *   **Subtask:** In `src/notification/slack.rs`, create a new private function `send_request` that accepts a `reqwest::blocking::Client` and the JSON payload.
+        *   **Subtask:** This function will contain the existing synchronous logic for sending the HTTP request and handling the response.
+
+    *   [ ] **#236 - Refactor `send_batch` to be Non-Blocking:**
+        *   **Subtask:** Modify the existing `send_batch` function to be an `async` function.
+        *   **Subtask:** Inside `send_batch`, use `tokio::task::spawn_blocking` to call the new `send_request` function.
+        *   **Subtask:** A new `reqwest::blocking::Client` will be created inside the `spawn_blocking` closure, as it is not `Send`.
+
+    *   [ ] **#237 - Verify Test Coverage:**
+        *   **Subtask:** Review the existing tests in `src/notification/slack.rs` to ensure they still provide adequate coverage for both success and failure cases after the refactoring.
+        *   **Subtask:** Run the full integration test suite (`just test`) to confirm that the changes have not introduced any regressions.
+
+---
+
 ### Epic 27: Anti-Regression Testing for Graceful Shutdown
 **User Story:** As a developer, I want a robust suite of automated tests that can reliably detect shutdown hangs and deadlocks, so that this entire class of bug can be prevented from recurring in the future.
 
