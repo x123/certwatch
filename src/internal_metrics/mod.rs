@@ -60,6 +60,7 @@ impl Metrics {
         metrics::describe_counter!("alerts_sent_total", Unit::Count, "Total number of alerts successfully sent, labeled by output.");
         metrics::describe_counter!("deduplicated_alerts_total", Unit::Count, "Total number of alerts that were suppressed by the deduplication filter.");
         metrics::describe_gauge!("active_workers", Unit::Count, "The current number of worker tasks actively processing domains.");
+        metrics::describe_gauge!("domains_queued", Unit::Count, "The current number of domains in the queue awaiting processing.");
         metrics::describe_gauge!("in_flight_requests", Unit::Count, "The number of domains currently being processed across all workers.");
         metrics::describe_counter!("rule_matches_total", Unit::Count, "The total number of times each rule has matched a domain.");
         metrics::describe_gauge!("rules_loaded_count", Unit::Count, "The current number of rules loaded into the rule engine.");

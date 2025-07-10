@@ -323,6 +323,7 @@ impl AppBuilder {
                     };
 
                     if let Some(domain) = domain_to_process {
+                        metrics::gauge!("domains_queued").decrement(1.0);
                         metrics.domains_processed_total.increment(1);
                         trace!(worker_id = i, domain = %domain, "DNS worker picked up domain");
                         match dns_resolver.resolve(&domain).await {

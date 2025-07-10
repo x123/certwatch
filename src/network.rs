@@ -243,6 +243,7 @@ impl CertStreamClient {
                                     tracing::info!("Domain channel closed. CertStream client shutting down.");
                                     return Err(anyhow::anyhow!("Domain channel closed"));
                                 }
+                                metrics::gauge!("domains_queued").increment(1.0);
                             }
                         }
                     }
