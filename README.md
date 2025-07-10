@@ -75,69 +75,19 @@ sources.
 the example configuration file from [certwatch-example.toml](./certwatch-example.toml)
 
 ```toml
-# example certwatch.toml configuration
+# certwatch.toml - Minimal Configuration Example
 
-[core]
-# Valid levels: debug, info, warn, error
-log_level = "info"
-
-# The number of concurrent domain processing tasks.
-# If commented out, defaults to (number of CPU cores).
-# concurrency = 16
-
-[metrics]
-log_metrics = true
-log_aggregation_seconds = 10
-
-[performance]
-queue_capacity = 100000
-
+# [network] is required to connect to a CertStream source.
 [network]
-# REQUIRED: A running certstream-server certstream_url. Use
-# https://github.com/CaliDog/certstream-server or similar.
 certstream_url = "wss://127.0.0.1:8181/domains-only"
-sample_rate = 1.0 # 1.0 = 100% sampling, 0.01 = 1% sampling
-allow_invalid_certs = true
 
-[dns]
-# Optional: Specify a custom DNS resolver. If commented out, uses the system default.
-# resolver = "192.168.1.1:53"
+# [rules] are required to specify what to look for.
+[rules]
+rule_files = ["rules/my-first-rules.yml"]
 
-# Optional: Specify the timeout for a single DNS query in milliseconds.
-# timeout_ms = 5000
-
-# DNS retry and backoff settings.
-standard_retries = 3
-standard_initial_backoff_ms = 500
-nxdomain_retries = 5
-nxdomain_initial_backoff_ms = 10000
-
-[dns.health]
-# The failure rate threshold to trigger the unhealthy state (e.g., 0.95 for 95%).
-failure_threshold = 0.95
-# The time window in seconds to consider for the failure rate calculation.
-window_seconds = 120
-# A known-good domain to resolve to check for recovery.
-recovery_check_domain = "google.com"
-
+# [enrichment] is required for any rules that use ASN data.
 [enrichment]
-# REQUIRED: Path to the TSV ASN database file.
-# The file must be tab-separated with 5 columns:
-# CIDR, AS_Number, AS_Name, Country_Code, Description
-# The https://iptoasn.com/data/ip2asn-combined.tsv.gz from https://iptoasn.com is a
-# compatible dataset for enrichment
-asn_tsv_path = "enrichment/ip2asn-combined.tsv"
-
-[output]
-# The format to use for stdout output. Can be "Json" or "PlainText".
-format = "PlainText"
-
-# Optional: webhooks
-# slack = { webhook_url = "https://hooks.slack.com/services/..." }
-
-[deduplication]
-cache_size = 100000
-cache_ttl_seconds = 3600
+asn_tsv_path = "data/enrichment/ip2asn-combined.tsv"
 ```
 
 **b. Create Rule Files:**
