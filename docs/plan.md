@@ -162,3 +162,14 @@
     *   [ ] **#217 - Worker Update:** Modify the worker loop in `src/app.rs` to listen for rule updates on the `watch::Receiver` and swap its local `RuleMatcher` when a new version is available.
     *   [ ] **#218 - Testing:** Create `tests/rule_hot_reload.rs` to verify the end-to-end hot-reloading functionality, including success and failure cases (e.g., invalid rule syntax).
     *   [ ] **#219 - Docs:** Update `README.md` and `certwatch-example.toml` to remove the obsolete `[matching]` section and accurately describe the new hot-reloading feature for YAML rules.
+
+
+---
+
+### Epic #49: Testing Workflow Overhaul
+*   **Goal:** Standardize the project's testing workflow by replacing the ad-hoc `cargo test` command with `cargo nextest` and introducing a `justfile` as the canonical task runner. This will improve consistency, discoverability, and maintainability of project-level commands.
+*   **Status:** Completed
+*   **Tasks:**
+    *   [x] **#220 - Create `justfile`:** A new file named `justfile` was created in the project root to serve as the central place for defining and documenting project-specific commands.
+    *   [x] **#221 - Update `.clinerules`:** The `Task Completion Protocol` section in `.clinerules` has been updated to replace the `cargo test` command with the new `just test` command.
+    *   [x] **#222 - Verify Workflow:** The new `just test` command has been run to ensure it works as expected.

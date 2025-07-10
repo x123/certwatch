@@ -97,7 +97,7 @@ Follow these steps sequentially to ensure a clean and validated handoff of compl
 
 1.  **Update Plan:** Mark the corresponding task(s) as complete (e.g., `[x]`)
 in `docs/plan.md`.
-2.  **Validate Changes:** Run the full test suite (`cargo test --all-features`)
+2.  **Validate Changes:** Run the full test suite (`just test`)
 to ensure no regressions have been introduced.
 3.  **Propose Commit:** Propose a well-structured commit message that adheres
 to the project's version control conventions.
