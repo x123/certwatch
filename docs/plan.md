@@ -1,3 +1,47 @@
+### Epic #55: Granular Performance Instrumentation for Latency Analysis
+
+*   **User Story:** As a developer, I need detailed performance metrics for each stage of the domain processing pipeline, so that I can accurately identify and diagnose latency bottlenecks that are not visible with the current high-level metrics.
+
+*   **Architecture:** The current `processing_duration_seconds` histogram measures the entire worker loop, but the extreme latency observed suggests a bottleneck within a specific, unmeasured part of that loop. The plan is to add several new, more granular histograms to the rules worker loop in `src/app.rs` one by one, testing at each stage to ensure stability. This incremental approach minimizes risk and allows for careful validation of each change.
+
+*   **Status:** Not Started
+
+*   **Phase 1: Instrument the Worker Loop Iteration**
+    *   **Goal:** Establish a baseline by measuring the entire worker loop duration.
+    *   **Tasks:**
+        *   [ ] **#242 - Define `worker_loop_iteration_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [ ] **#243 - Implement `worker_loop_iteration_duration_seconds`:** In `src/app.rs`, add logic to record the duration of a single iteration of the rules worker loop.
+        *   [ ] **#244 - Verify Implementation:** Run the test suite and manually inspect the `/metrics` endpoint to ensure the new metric is present and recording data.
+
+*   **Phase 2: Instrument the Alert Building Stage**
+    *   **Goal:** Isolate the performance of the `build_alert()` function, a primary suspect for latency.
+    *   **Tasks:**
+        *   [ ] **#245 - Define `alert_build_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [ ] **#246 - Implement `alert_build_duration_seconds`:** In `src/app.rs`, wrap the `build_alert().await` call to record its duration.
+        *   [ ] **#247 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint to confirm the new metric is working correctly alongside the first one.
+
+*   **Phase 3: Instrument the Rule Matching Stage**
+    *   **Goal:** Measure the overhead of the rule matching logic itself, separate from the underlying regex performance.
+    *   **Tasks:**
+        *   [ ] **#248 - Define `rule_matching_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [ ] **#249 - Implement `rule_matching_duration_seconds`:** In `src/app.rs`, add logic to record the duration of the `rule_matcher.matches()` calls.
+        *   [ ] **#250 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
+
+*   **Phase 4: Instrument the Alert Sending Stage**
+    *   **Goal:** Measure the time it takes to send an alert to the output channel to detect potential backpressure.
+    *   **Tasks:**
+        *   [ ] **#251 - Define `alert_send_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [ ] **#252 - Implement `alert_send_duration_seconds`:** In `src/app.rs`, wrap the `alerts_tx.send().await` call to record its duration.
+        *   [ ] **#253 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
+
+*   **Phase 5: Analysis and Cleanup**
+    *   **Goal:** Analyze the complete set of new metrics to identify the bottleneck and clean up temporary instrumentation.
+    *   **Tasks:**
+        *   [ ] **#254 - Analyze All New Metrics:** Capture and analyze the full suite of new metrics from a running instance to definitively identify the latency source.
+        *   [ ] **#255 - (Optional) Remove Temporary Metrics:** After the bottleneck has been identified and resolved, consider removing the granular histograms to reduce metric cardinality and monitoring overhead.
+
+---
+
 ### Epic #54: Code Cleanup and Warning Resolution
 
 *   **User Story:** As a developer, I want a codebase that compiles without any warnings, so that I can maintain high code quality, improve readability, and ensure that potential issues are not being masked by noise.
