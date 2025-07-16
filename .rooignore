@@ -1,10 +1,14 @@
 .direnv/
 todo.md
-data/enrichment/
-data/images/
-data/logs/
-data/patterns/
-data/research/
+data/
+.git/
+#data/enrichment/
+#data/images/
+#data/logs/
+#data/patterns/
+#data/research/
+#data/rules/
+#data/config/
 
 flake.lock
 result
