@@ -51,7 +51,7 @@ async fn test_nxdomain_retry_logic() -> Result<()> {
 
     // Act: Send the domain for resolution. This is non-blocking.
     manager
-        .resolve("newly-active.com".to_string(), "test-tag".to_string())
+        .resolve("newly-active.com".to_string(), "test-tag".to_string(), tokio::time::Instant::now())
         .unwrap();
 
     // Assert: The first call to the resolver should happen almost immediately.

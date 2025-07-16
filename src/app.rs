@@ -342,9 +342,10 @@ impl AppBuilder {
                             break;
                         }
                         Ok(domain) = domains_rx.recv() => {
+                            let start_time = std::time::Instant::now();
                             metrics::gauge!("domains_queued").decrement(1.0);
                             metrics.domains_processed_total.increment(1);
-                            if let Err(e) = dns_manager.resolve(domain, "certstream".to_string()) {
+                            if let Err(e) = dns_manager.resolve(domain, "certstream".to_string(), start_time.into()) {
                                 trace!("Failed to send domain to DNS manager: {}", e);
                             }
                         }
@@ -415,7 +416,7 @@ impl AppBuilder {
                         }
                     };
 
-                    if let Some((domain, dns_info)) = resolved_domain {
+                    if let Some((domain, dns_info, start_time)) = resolved_domain {
                         trace!(worker_id = i, domain = %domain, "Rules worker picked up domain");
 
                         // Build a base alert. The source_tag will be overwritten by the
@@ -457,6 +458,7 @@ impl AppBuilder {
                                 break;
                             }
                         }
+                        metrics::histogram!("processing_duration_seconds").record(start_time.elapsed().as_secs_f64());
                     } else {
                         trace!("Resolved channel closed, rules worker {} shutting down.", i);
                         break;

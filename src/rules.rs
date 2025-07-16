@@ -152,10 +152,13 @@ impl Rule {
             RuleExpression::DomainRegex(pattern) => {
                 // This is inefficient as it recompiles regex on every check.
                 // A future optimization will be to pre-compile these.
-                match regex::Regex::new(pattern) {
+                let start = std::time::Instant::now();
+                let result = match regex::Regex::new(pattern) {
                     Ok(re) => re.is_match(&alert.domain),
                     Err(_) => false, // Invalid patterns were already filtered during loading.
-                }
+                };
+                metrics::histogram!("regex_match_duration_seconds").record(start.elapsed().as_secs_f64());
+                result
             }
             RuleExpression::Asns(asns) => alert
                 .enrichment

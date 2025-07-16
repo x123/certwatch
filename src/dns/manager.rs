@@ -12,7 +12,7 @@ use tokio::{
 use tracing::{debug, error, info, instrument, trace, warn};
 
 /// Represents a successfully resolved domain.
-pub type ResolvedDomain = (String, DnsInfo); // (domain, dns_info)
+pub type ResolvedDomain = (String, DnsInfo, Instant); // (domain, dns_info, start_time)
 
 /// Represents a domain that has resolved after previously being NXDOMAIN
 pub type ResolvedNxDomain = (String, String, DnsInfo); // (domain, source_tag, dns_info)
@@ -25,7 +25,7 @@ fn is_nxdomain_error_str(err_str: &str) -> bool {
 
 /// Manages DNS resolution with dual-curve retry logic
 pub struct DnsResolutionManager {
-    dns_request_tx: mpsc::Sender<(String, String)>, // (domain, source_tag)
+    dns_request_tx: mpsc::Sender<(String, String, Instant)>, // (domain, source_tag)
     _shutdown_rx: watch::Receiver<()>, // Kept for ownership, not direct use
 }
 
@@ -101,8 +101,8 @@ impl DnsResolutionManager {
     }
 
     /// Sends a domain to the resolution channel. This is a non-blocking call.
-    pub fn resolve(&self, domain: String, source_tag: String) -> Result<(), DnsError> {
-        match self.dns_request_tx.try_send((domain, source_tag)) {
+    pub fn resolve(&self, domain: String, source_tag: String, start_time: Instant) -> Result<(), DnsError> {
+        match self.dns_request_tx.try_send((domain, source_tag, start_time)) {
             Ok(_) => Ok(()),
             Err(mpsc::error::TrySendError::Full(_)) => {
                 warn!("DNS request channel is full. Dropping domain.");
@@ -119,7 +119,7 @@ impl DnsResolutionManager {
     async fn resolution_task(
         resolver: Arc<dyn DnsResolver>,
         config: DnsRetryConfig,
-        mut dns_request_rx: mpsc::Receiver<(String, String)>,
+        mut dns_request_rx: mpsc::Receiver<(String, String, Instant)>,
         nxdomain_retry_tx: mpsc::UnboundedSender<(String, String, Instant)>,
         resolved_tx: async_channel::Sender<ResolvedDomain>,
         _health_monitor: Arc<DnsHealth>, // Health is now checked periodically, not per-request
@@ -131,10 +131,10 @@ impl DnsResolutionManager {
             tokio::select! {
                 biased;
                 _ = shutdown_rx.changed() => {
-                    info!("DNS resolution task received shutdown signal.");
+                    info!("DNS resolution task received shutdown signal");
                     break;
                 }
-                Some((domain, source_tag)) = dns_request_rx.recv() => {
+                Some((domain, source_tag, start_time)) = dns_request_rx.recv() => {
                     let resolver_clone = resolver.clone();
                     let nxdomain_retry_tx_clone = nxdomain_retry_tx.clone();
                     let config_clone = config.clone();
@@ -163,7 +163,7 @@ impl DnsResolutionManager {
                         )
                         .await
                         {
-                            if resolved_tx_clone.send((domain, dns_info)).await.is_err() {
+                            if resolved_tx_clone.send((domain, dns_info, start_time)).await.is_err() {
                                 error!("Failed to send resolved domain to the next stage.");
                             }
                         }

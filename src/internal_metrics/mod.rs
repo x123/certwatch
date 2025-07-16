@@ -66,6 +66,8 @@ impl Metrics {
         metrics::describe_gauge!("rules_loaded_count", Unit::Count, "The current number of rules loaded into the rule engine.");
         metrics::describe_counter!("dns_queries_total", Unit::Count, "Total number of DNS queries performed, labeled by their outcome.");
         metrics::describe_histogram!("dns_resolution_duration_seconds", Unit::Seconds, "A histogram of the latency for DNS resolutions.");
+        metrics::describe_histogram!("regex_match_duration_seconds", Unit::Seconds, "A histogram of the latency for regex matching operations.");
+        metrics::describe_histogram!("processing_duration_seconds", Unit::Seconds, "A histogram of the total processing time from domain ingestion to rule completion.");
         metrics::describe_gauge!("dns_resolver_health_status", Unit::Count, "Health status of each configured DNS resolver (1 for healthy, 0 for unhealthy).");
         metrics::describe_gauge!("process_cpu_usage_percent", Unit::Percent, "The percentage of CPU time the `certwatch` process is currently using.");
         metrics::describe_gauge!("process_memory_usage_bytes", Unit::Bytes, "The amount of physical memory (resident set size) the `certwatch` process is using, in bytes.");

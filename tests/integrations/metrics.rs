@@ -160,4 +160,67 @@ async fn metrics_format_is_correct() -> Result<()> {
     );
 
     Ok(())
-}
+    }
+    
+    #[tokio::test]
+    async fn test_histogram_metrics() -> Result<()> {
+        let metrics = Arc::new(Metrics::new_for_test());
+        let mock_dns = Arc::new(MockDnsResolver::new(metrics.clone()));
+        mock_dns.add_response("google.com", Ok(Default::default())); // Health check
+        mock_dns.add_response("test-domain.com", Ok(Default::default())); // Test domain
+    
+        let builder = TestAppBuilder::new()
+            .with_dns_resolver(mock_dns)
+            .with_metrics()
+            .with_test_domains_channel();
+    
+        let test_app = builder
+            .with_rules("rules:\n  - name: test-regex-rule\n    domain_regex: 'test-domain.com'")
+            .await
+            .start()
+            .await?;
+    
+        let client = reqwest::Client::new();
+    
+        test_app.send_domain("test-domain.com").await?;
+    
+        // Wait for the metrics to be updated
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    
+        let body = client
+            .get(format!("http://{}/metrics", test_app.metrics_addr()))
+            .send()
+            .await?
+            .text()
+            .await?;
+    
+        assert!(
+            body.contains("regex_match_duration_seconds_count"),
+            "Metric 'regex_match_duration_seconds_count' not found."
+        );
+        assert!(
+            body.contains("processing_duration_seconds_count"),
+            "Metric 'processing_duration_seconds_count' not found."
+        );
+    
+        // Ensure the counts are greater than 0
+        let regex_count = get_metric_value(&body, "regex_match_duration_seconds_count")?;
+        assert!(regex_count > 0.0, "regex_match_duration_seconds_count should be greater than 0");
+    
+        let processing_count = get_metric_value(&body, "processing_duration_seconds_count")?;
+        assert!(processing_count > 0.0, "processing_duration_seconds_count should be greater than 0");
+    
+        Ok(())
+    }
+    
+    // Helper function to extract metric values from Prometheus text format
+    fn get_metric_value(body: &str, metric_name: &str) -> Result<f64> {
+        let line = body.lines()
+            .find(|l| l.starts_with(metric_name))
+            .ok_or_else(|| anyhow::anyhow!("Metric {} not found", metric_name))?;
+        
+        let value_str = line.split_whitespace().last()
+            .ok_or_else(|| anyhow::anyhow!("Could not parse value for metric {}", metric_name))?;
+        
+        Ok(value_str.parse()?)
+    }
