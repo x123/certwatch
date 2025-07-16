@@ -333,6 +333,7 @@ impl AppBuilder {
         // This task forwards domains from the certstream to the DNS manager
         let dns_manager_task = {
             let mut shutdown_rx = shutdown_rx.clone();
+            let metrics = metrics.clone();
             tokio::spawn(async move {
                 loop {
                     tokio::select! {
@@ -402,6 +403,7 @@ impl AppBuilder {
             let alerts_tx = alerts_tx.clone();
             let rule_matcher = rule_matcher.clone();
             let enrichment_provider = enrichment_provider.clone();
+            let _metrics = metrics.clone(); // Clone metrics for the worker
             let handle = tokio::spawn(async move {
                 trace!("Rules Worker {} started", i);
                 loop {
@@ -513,7 +515,12 @@ async fn output_task_logic(
             }
             Ok(alert) = alerts_rx.recv() => {
                 debug!("Output task received alert for domain: {}", &alert.domain);
-                if !deduplicator.is_duplicate(&alert).await {
+                let start_time = std::time::Instant::now();
+                let is_dupe = deduplicator.is_duplicate(&alert).await;
+                metrics::histogram!("deduplication_duration_seconds")
+                    .record(start_time.elapsed().as_secs_f64());
+
+                if !is_dupe {
                     debug!("Domain {} is not a duplicate. Processing.", &alert.domain);
 
                     // Publish to notification pipeline if enabled

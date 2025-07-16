@@ -69,7 +69,7 @@ async fn test_certstream_client_basic_functionality() -> Result<()> {
         Some(Ok(sample_message.to_string())),
         None, // Simulate connection close
     ]);
-    let (tx, mut rx) = async_channel::unbounded();
+    let (tx, rx) = async_channel::unbounded();
     let metrics = Arc::new(Metrics::new());
     let client = CertStreamClient::new("ws://fake-url".to_string(), tx.clone(), 1.0, false, metrics);
 

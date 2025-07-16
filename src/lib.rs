@@ -8,6 +8,7 @@ pub mod notification;
 use chrono::Utc;
 pub mod utils;
 use std::sync::Arc;
+use metrics;
 
 pub mod config;
 pub mod core;
@@ -43,7 +44,11 @@ pub async fn build_alert(
             .collect();
 
         let enrichment_data_futures = all_ips.into_iter().map(|ip| provider.enrich(ip));
-        futures::future::try_join_all(enrichment_data_futures).await?
+        let start = std::time::Instant::now();
+        let result = futures::future::try_join_all(enrichment_data_futures).await?;
+        let duration = start.elapsed().as_secs_f64();
+        metrics::histogram!("enrichment_duration_seconds").record(duration);
+        result
     } else {
         Vec::new()
     };
