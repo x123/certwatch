@@ -355,3 +355,42 @@
     *   [ ] **#234 - Update Integration Tests**
         *   **Subtask:** Update the `TestAppBuilder` in `tests/helpers/app.rs` to construct and use the new `EnrichmentManager`.
         *   **Subtask:** Review and update existing integration tests (e.g., `tests/integrations/not_rules.rs`) to ensure they are compatible with the new pipeline logic. The `with_failing_enrichment` helper may need to be adapted.
+
+
+---
+
+### Epic #56: Improve Metric Granularity
+
+**Brief**
+
+A significant portion of `processing_duration_seconds` is unaccounted for.
+Research identified several unmeasured operations: channel transit times, DNS
+worker scheduling delays, and DNS retry backoff delays.
+
+Define New Metrics: In src/internal_metrics/mod.rs, define the following new
+public Histogram metrics within the Metrics struct:
+
+dns_worker_scheduling_delay_seconds: To measure the time a domain waits for a
+DNS worker to become available (including channel transit and semaphore
+acquisition).
+
+
+dns_retry_backoff_delay_seconds: To measure the total time spent in explicit sleep calls during DNS resolution retries.
+
+alert_queue_time_seconds: To measure the time an alert spends in the channel
+before being processed by the output task.
+
+Register New Metrics: Register these new histograms with the Registry in the Metrics::new() function, following the existing pattern.
+
+Implement Measurement Logic:
+
+DNS Scheduling Delay: In src/dns/manager.rs, start a timer just before a domain is sent to a worker task. Stop the timer and record the duration to dns_worker_scheduling_delay_seconds inside the worker task, immediately after the semaphore has been acquired and before DNS resolution begins. You will need to pass the start time along with the domain.
+DNS Retry Backoff Delay: In the retry loop within src/dns/manager.rs, measure the duration of each tokio::time::sleep call and record it to the dns_retry_backoff_delay_seconds histogram.
+
+Alert Queue Time: In src/app.rs, when an alert is created, store the current time (e.g., as Instant::now()) in the Alert struct. Then, in the output_task_logic (src/app.rs:508), after an alert is received from the alerts_rx channel, calculate the elapsed time and record it to the alert_queue_time_seconds histogram.
+
+**Phases**
+
+*   [ ] Phase 1: Implement 'dns_worker_scheduling_delay_seconds' metric.
+*   [ ] Phase 2: Implement 'dns_retry_backoff_delay_seconds' metric.
+*   [ ] Phase 3: Implement 'alert_queue_time_seconds' metric.
