@@ -400,7 +400,8 @@ impl AppBuilder {
 
                         // Build a base alert. The source_tag will be overwritten by the
                         // rule name for each match.
-                        let base_alert = match build_alert(
+                        let build_start = std::time::Instant::now();
+                        let result = build_alert(
                             domain,
                             vec![], // Placeholder, will be replaced
                             false,
@@ -408,8 +409,11 @@ impl AppBuilder {
                             enrichment_provider.clone(),
                             Some(start_time.into()),
                         )
-                        .await
-                        {
+                        .await;
+                        metrics::histogram!("alert_build_duration_seconds")
+                            .record(build_start.elapsed());
+
+                        let base_alert = match result {
                             Ok(alert) => alert,
                             Err(e) => {
                                 error!("Failed to build alert: {}", e);

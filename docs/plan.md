@@ -16,9 +16,9 @@
 *   **Phase 2: Instrument the Alert Building Stage**
     *   **Goal:** Isolate the performance of the `build_alert()` function, a primary suspect for latency.
     *   **Tasks:**
-        *   [ ] **#245 - Define `alert_build_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [ ] **#246 - Implement `alert_build_duration_seconds`:** In `src/app.rs`, wrap the `build_alert().await` call to record its duration.
-        *   [ ] **#247 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint to confirm the new metric is working correctly alongside the first one.
+        *   [x] **#245 - Define `alert_build_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [x] **#246 - Implement `alert_build_duration_seconds`:** In `src/app.rs`, wrap the `build_alert().await` call to record its duration.
+        *   [x] **#247 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint to confirm the new metric is working correctly alongside the first one.
 
 *   **Phase 3: Instrument the Rule Matching Stage**
     *   **Goal:** Measure the overhead of the rule matching logic itself, separate from the underlying regex performance.
