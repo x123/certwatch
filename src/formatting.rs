@@ -231,6 +231,7 @@ mod tests {
             dns,
             enrichment,
             processing_start_time: None,
+            notification_queue_start_time: None,
         }
     }
 

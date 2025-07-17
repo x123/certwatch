@@ -89,6 +89,7 @@ impl Metrics {
         metrics::describe_histogram!("worker_loop_iteration_duration_seconds", Unit::Seconds, "Duration of each worker loop iteration in seconds.");
         metrics::describe_histogram!("dns_worker_scheduling_delay_seconds", Unit::Seconds, "The time a domain spends waiting for a DNS worker to become available.");
         metrics::describe_histogram!("dns_retry_backoff_delay_seconds", Unit::Seconds, "The sleep duration during the retry backoff logic in the DNS resolver.");
+        metrics::describe_histogram!("alert_queue_time_seconds", Unit::Seconds, "The time an alert spends in the notification queue.");
 
         // Handles (for application use)
         Self {

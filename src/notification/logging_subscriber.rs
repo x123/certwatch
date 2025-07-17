@@ -86,6 +86,7 @@ mod tests {
             dns: DnsInfo::default(),
             enrichment: vec![],
             processing_start_time: None,
+            notification_queue_start_time: None,
         };
 
         // Act

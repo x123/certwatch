@@ -34,11 +34,6 @@
         *   [x] **#252 - Implement `alert_send_duration_seconds`:** In `src/app.rs`, wrap the `alerts_tx.send().await` call to record its duration.
         *   [x] **#253 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
 
-*   **Phase 5: Analysis and Cleanup**
-    *   **Goal:** Analyze the complete set of new metrics to identify the bottleneck and clean up temporary instrumentation.
-    *   **Tasks:**
-        *   [ ] **#254 - Analyze All New Metrics:** Capture and analyze the full suite of new metrics from a running instance to definitively identify the latency source.
-
 ---
 
 ### Epic #54: Code Cleanup and Warning Resolution
@@ -393,4 +388,4 @@ Alert Queue Time: In src/app.rs, when an alert is created, store the current tim
 
 *   [x] Phase 1: Implement 'dns_worker_scheduling_delay_seconds' metric. **Status:** ✅ Done (2025-07-17)
 *   [x] Phase 2: Implement 'dns_retry_backoff_delay_seconds' metric.
-*   [ ] Phase 3: Implement 'alert_queue_time_seconds' metric.
+*   [x] Phase 3: Implement 'alert_queue_time_seconds' metric.

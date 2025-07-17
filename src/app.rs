@@ -8,7 +8,7 @@ use crate::{
     dns::{DnsHealth, DnsResolutionManager, HickoryDnsResolver},
     internal_metrics::{Metrics, MetricsBuilder},
     network::{CertStreamClient, WebSocketConnection},
-    notification::slack::SlackClientTrait,
+    notification::{manager::NotificationManager, slack::SlackClientTrait},
     outputs::{OutputManager, StdoutOutput},
     rules::{EnrichmentLevel, RuleLoader, RuleMatcher},
     utils::heartbeat::run_heartbeat,
@@ -28,6 +28,7 @@ pub struct App {
     dns_manager_task: Option<JoinHandle<()>>,
     rules_worker_handles: Vec<JoinHandle<()>>,
     output_task: JoinHandle<()>,
+    notification_manager_task: Option<JoinHandle<()>>,
     metrics_server_task: Option<JoinHandle<()>>,
     metrics_addr: Option<std::net::SocketAddr>,
 }
@@ -67,6 +68,11 @@ impl App {
         }
         if let Err(e) = self.output_task.await {
             error!("Output task panicked: {:?}", e);
+        }
+        if let Some(handle) = self.notification_manager_task {
+            if let Err(e) = handle.await {
+                error!("Notification manager task panicked: {:?}", e);
+            }
         }
         if let Some(handle) = self.metrics_server_task {
             if let Err(e) = handle.await {
@@ -470,8 +476,31 @@ impl AppBuilder {
             alerts_rx,
             deduplicator,
             output_manager,
-            self.notification_tx,
+            self.notification_tx.clone(),
         ));
+
+        // 11. Spawn NotificationManager if enabled
+        let notification_manager_task = if let Some(notification_tx) = self.notification_tx {
+            if let Some(slack_config) = config.output.slack.clone() {
+                let slack_client = self.slack_client_override.unwrap_or_else(|| {
+                    Arc::new(crate::notification::slack::SlackClient::new(
+                        slack_config.webhook_url.clone().unwrap_or_default(),
+                        Box::new(crate::formatting::SlackTextFormatter),
+                    ))
+                });
+                let notification_manager = NotificationManager::new(
+                    slack_config,
+                    &config.deduplication,
+                    notification_tx.subscribe(),
+                    slack_client,
+                );
+                Some(tokio::spawn(notification_manager.run()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         info!("CertWatch initialized successfully. Monitoring for domains...");
 
@@ -481,6 +510,7 @@ impl AppBuilder {
             dns_manager_task: Some(dns_manager_task),
             rules_worker_handles,
             output_task,
+            notification_manager_task,
             metrics_server_task,
             metrics_addr,
         })
@@ -505,7 +535,7 @@ async fn output_task_logic(
                 info!("Output task received shutdown signal.");
                 break;
             }
-            Ok(alert) = alerts_rx.recv() => {
+            Ok(mut alert) = alerts_rx.recv() => {
                 debug!("Output task received alert for domain: {}", &alert.domain);
 
                 if let Some(start_time) = alert.processing_start_time {
@@ -524,6 +554,7 @@ async fn output_task_logic(
                     // Publish to notification pipeline if enabled
                     if let Some(tx) = &notification_tx {
                         debug!("Publishing alert to notification channel for domain: {}", &alert.domain);
+                        alert.notification_queue_start_time = Some(std::time::Instant::now());
                         if let Err(e) = tx.send(alert.clone()) {
                             error!(domain = %alert.domain, error = %e, "Failed to publish alert to notification channel");
                         }

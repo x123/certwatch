@@ -64,6 +64,7 @@ pub async fn build_alert(
         dns: dns_info,
         enrichment: enrichment_data,
         processing_start_time,
+        notification_queue_start_time: None,
     })
 }
 

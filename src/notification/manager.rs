@@ -11,13 +11,13 @@ use tokio::time::{interval, Duration};
 use tracing::{debug, error, info};
 
 /// The `NotificationManager` actor.
-pub struct NotificationManager<S: SlackClientTrait> {
+pub struct NotificationManager<S: SlackClientTrait + ?Sized> {
     config: SlackConfig,
     alert_rx: broadcast::Receiver<Alert>,
     slack_client: Arc<S>,
 }
 
-impl<S: SlackClientTrait> NotificationManager<S> {
+impl<S: SlackClientTrait + ?Sized> NotificationManager<S> {
     /// Creates a new `NotificationManager`.
     pub fn new(
         slack_config: SlackConfig,
@@ -58,6 +58,10 @@ impl<S: SlackClientTrait> NotificationManager<S> {
                 result = self.alert_rx.recv() => {
                     match result {
                         Ok(alert) => {
+                            if let Some(start_time) = alert.notification_queue_start_time {
+                                let duration = start_time.elapsed().as_secs_f64();
+                                metrics::histogram!("alert_queue_time_seconds").record(duration);
+                            }
                             debug!(domain = %alert.domain, "Received alert in NotificationManager.");
                             let base_domain = psl::domain_str(&alert.domain).unwrap_or(&alert.domain).to_string();
                             

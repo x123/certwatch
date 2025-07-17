@@ -29,6 +29,9 @@ pub struct Alert {
     /// The time processing started for this domain.
     #[serde(skip)]
     pub processing_start_time: Option<Instant>,
+    /// The time the alert was sent to the notification queue.
+    #[serde(skip)]
+    pub notification_queue_start_time: Option<Instant>,
 }
 
 impl Default for Alert {
@@ -41,6 +44,7 @@ impl Default for Alert {
             dns: DnsInfo::default(),
             enrichment: Vec::new(),
             processing_start_time: None,
+            notification_queue_start_time: None,
         }
     }
 }
