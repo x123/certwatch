@@ -9,9 +9,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::net::IpAddr;
+use std::time::Instant;
 
 /// Represents a security alert for a suspicious domain
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Alert {
     /// ISO 8601 timestamp when the alert was generated
     pub timestamp: String,
@@ -25,6 +26,23 @@ pub struct Alert {
     pub dns: DnsInfo,
     /// Enrichment data for resolved IPs
     pub enrichment: Vec<EnrichmentInfo>,
+    /// The time processing started for this domain.
+    #[serde(skip)]
+    pub processing_start_time: Option<Instant>,
+}
+
+impl Default for Alert {
+    fn default() -> Self {
+        Self {
+            timestamp: String::new(),
+            domain: String::new(),
+            source_tag: Vec::new(),
+            resolved_after_nxdomain: false,
+            dns: DnsInfo::default(),
+            enrichment: Vec::new(),
+            processing_start_time: None,
+        }
+    }
 }
 
 impl Alert {

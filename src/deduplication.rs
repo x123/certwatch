@@ -141,6 +141,7 @@ mod tests {
                     country_code: Some("US".to_string()),
                 }),
             }],
+            processing_start_time: None,
         }
     }
 

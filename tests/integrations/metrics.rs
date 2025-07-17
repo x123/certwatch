@@ -195,13 +195,15 @@ async fn metrics_format_is_correct() -> Result<()> {
             .await?;
     
         assert!(
-            body.contains("regex_match_duration_seconds_count"),
+            body.contains("regex_match_duration_seconds_count 1"),
             "Metric 'regex_match_duration_seconds_count' not found."
         );
         assert!(
-            body.contains("processing_duration_seconds_count"),
-            "Metric 'processing_duration_seconds_count' not found."
+            body.contains("processing_duration_seconds_count 1"),
+            "Metric 'processing_duration_seconds_count' not found. Body:\n{}",
+            body
         );
+        println!("Metrics Body:\n{}", body);
     
         // Ensure the counts are greater than 0
         let regex_count = get_metric_value(&body, "regex_match_duration_seconds_count")?;
@@ -224,3 +226,33 @@ async fn metrics_format_is_correct() -> Result<()> {
         
         Ok(value_str.parse()?)
     }
+
+#[tokio::test]
+async fn worker_loop_iteration_duration_metric_is_recorded() -> Result<()> {
+    let test_app = TestAppBuilder::new()
+        .with_metrics()
+        .with_test_domains_channel()
+        .start()
+        .await?;
+
+    test_app.send_domain("example.com").await?;
+
+    // Give the worker time to process the domain and record the metric.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let client = reqwest::Client::new();
+    let body = client
+        .get(format!("http://{}/metrics", test_app.metrics_addr()))
+        .send()
+        .await?
+        .text()
+        .await?;
+
+    assert!(
+        body.contains("worker_loop_iteration_duration_seconds_count 1"),
+        "Metric 'worker_loop_iteration_duration_seconds_count' not found or incorrect. Body:\n{}",
+        body
+    );
+
+    Ok(())
+}

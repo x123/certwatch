@@ -28,12 +28,15 @@ pub use core::*;
 /// Helper function to build an alert
 use anyhow::Result;
 
+use std::time::Instant;
+
 pub async fn build_alert(
     domain: String,
     source_tag: Vec<String>,
     resolved_after_nxdomain: bool,
     dns_info: DnsInfo,
     enrichment_provider: Option<Arc<dyn EnrichmentProvider>>,
+    processing_start_time: Option<Instant>,
 ) -> Result<Alert> {
     let enrichment_data = if let Some(provider) = enrichment_provider {
         let all_ips: Vec<_> = dns_info
@@ -60,6 +63,7 @@ pub async fn build_alert(
         resolved_after_nxdomain,
         dns: dns_info,
         enrichment: enrichment_data,
+        processing_start_time,
     })
 }
 

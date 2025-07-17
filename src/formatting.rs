@@ -230,6 +230,7 @@ mod tests {
             resolved_after_nxdomain: false,
             dns,
             enrichment,
+            processing_start_time: None,
         }
     }
 

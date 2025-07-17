@@ -85,6 +85,7 @@ mod tests {
             resolved_after_nxdomain: false,
             dns: DnsInfo::default(),
             enrichment: vec![],
+            processing_start_time: None,
         };
 
         // Act

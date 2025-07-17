@@ -236,6 +236,7 @@ mod tests {
                 },
                 // No enrichment for the IPv6 address
             ],
+            processing_start_time: None,
         }
     }
 

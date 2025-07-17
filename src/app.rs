@@ -403,7 +403,7 @@ impl AppBuilder {
             let alerts_tx = alerts_tx.clone();
             let rule_matcher = rule_matcher.clone();
             let enrichment_provider = enrichment_provider.clone();
-            let _metrics = metrics.clone(); // Clone metrics for the worker
+            let metrics = metrics.clone(); // Clone metrics for the worker
             let handle = tokio::spawn(async move {
                 trace!("Rules Worker {} started", i);
                 loop {
@@ -419,6 +419,7 @@ impl AppBuilder {
                     };
 
                     if let Some((domain, dns_info, start_time)) = resolved_domain {
+                        let loop_start_time = std::time::Instant::now();
                         trace!(worker_id = i, domain = %domain, "Rules worker picked up domain");
 
                         // Build a base alert. The source_tag will be overwritten by the
@@ -429,6 +430,7 @@ impl AppBuilder {
                             false,
                             dns_info,
                             enrichment_provider.clone(),
+                            Some(start_time.into()),
                         )
                         .await
                         {
@@ -438,6 +440,7 @@ impl AppBuilder {
                                 continue;
                             }
                         };
+                        let _start_time = start_time; // Use the variable to suppress the warning
 
                         // A single alert can match rules at multiple stages.
                         // We collect all matches.
@@ -460,7 +463,9 @@ impl AppBuilder {
                                 break;
                             }
                         }
-                        metrics::histogram!("processing_duration_seconds").record(start_time.elapsed().as_secs_f64());
+
+                        metrics.worker_loop_iteration_duration_seconds.record(loop_start_time.elapsed());
+
                     } else {
                         trace!("Resolved channel closed, rules worker {} shutting down.", i);
                         break;
@@ -515,6 +520,12 @@ async fn output_task_logic(
             }
             Ok(alert) = alerts_rx.recv() => {
                 debug!("Output task received alert for domain: {}", &alert.domain);
+
+                if let Some(start_time) = alert.processing_start_time {
+                    let duration = start_time.elapsed().as_secs_f64();
+                    metrics::histogram!("processing_duration_seconds").record(duration);
+                }
+
                 let start_time = std::time::Instant::now();
                 let is_dupe = deduplicator.is_duplicate(&alert).await;
                 metrics::histogram!("deduplication_duration_seconds")

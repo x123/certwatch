@@ -9,9 +9,9 @@
 *   **Phase 1: Instrument the Worker Loop Iteration**
     *   **Goal:** Establish a baseline by measuring the entire worker loop duration.
     *   **Tasks:**
-        *   [ ] **#242 - Define `worker_loop_iteration_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [ ] **#243 - Implement `worker_loop_iteration_duration_seconds`:** In `src/app.rs`, add logic to record the duration of a single iteration of the rules worker loop.
-        *   [ ] **#244 - Verify Implementation:** Run the test suite and manually inspect the `/metrics` endpoint to ensure the new metric is present and recording data.
+        *   [x] **#242 - Define `worker_loop_iteration_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [x] **#243 - Implement `worker_loop_iteration_duration_seconds`:** In `src/app.rs`, add logic to record the duration of a single iteration of the rules worker loop.
+        *   [x] **#244 - Verify Implementation:** Run the test suite and manually inspect the `/metrics` endpoint to ensure the new metric is present and recording data.
 
 *   **Phase 2: Instrument the Alert Building Stage**
     *   **Goal:** Isolate the performance of the `build_alert()` function, a primary suspect for latency.
