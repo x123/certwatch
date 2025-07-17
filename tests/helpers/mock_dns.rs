@@ -10,6 +10,7 @@ use certwatch::{
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 
@@ -20,6 +21,8 @@ pub struct MockDnsResolver {
     metrics: Arc<Metrics>,
     /// A channel to signal when a resolve attempt has been made.
     resolve_attempts_tx: Arc<Mutex<Option<mpsc::Sender<String>>>>,
+    delay: Option<Duration>,
+    completion_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
 
 impl MockDnsResolver {
@@ -29,7 +32,19 @@ impl MockDnsResolver {
             resolve_counts: Arc::new(Mutex::new(HashMap::new())),
             metrics,
             resolve_attempts_tx: Arc::new(Mutex::new(None)),
+            delay: None,
+            completion_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
+        self
+    }
+
+    pub fn with_completion_signal(self, tx: tokio::sync::oneshot::Sender<()>) -> Self {
+        *self.completion_tx.lock().unwrap() = Some(tx);
+        self
     }
 
     /// Returns a receiver that will get a message every time `resolve` is called.
@@ -68,6 +83,10 @@ impl DnsResolver for MockDnsResolver {
             let _ = tx.try_send(domain.to_string());
         }
 
+        if let Some(delay) = self.delay {
+            tokio::time::sleep(delay).await;
+        }
+
         // Increment the resolve count for this domain.
         let mut counts = self.resolve_counts.lock().unwrap();
         *counts.entry(domain.to_string()).or_insert(0) += 1;
@@ -89,6 +108,10 @@ impl DnsResolver for MockDnsResolver {
         match &response {
             Ok(_) => self.metrics.increment_dns_query("success"),
             Err(_) => self.metrics.increment_dns_query("failure"),
+        }
+
+        if let Some(tx) = self.completion_tx.lock().unwrap().take() {
+            let _ = tx.send(());
         }
 
         response

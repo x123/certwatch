@@ -33,7 +33,7 @@ impl DnsResolutionManager {
         performance_config: &PerformanceConfig,
         _health_monitor: Arc<DnsHealth>, // Kept for API compatibility
         shutdown_rx: watch::Receiver<()>,
-        _metrics: Arc<Metrics>,
+        metrics: Arc<Metrics>,
     ) -> (Self, async_channel::Receiver<ResolvedDomain>) {
         let (dns_request_tx, dns_request_rx) = mpsc::channel(10_000);
         let (resolved_tx, resolved_rx) =
@@ -51,6 +51,7 @@ impl DnsResolutionManager {
                 resolved_tx,
                 &mut task_shutdown_rx,
                 semaphore,
+                metrics,
             )
             .await;
         });
@@ -98,6 +99,7 @@ impl DnsResolutionManager {
         resolved_tx: async_channel::Sender<ResolvedDomain>,
         shutdown_rx: &mut watch::Receiver<()>,
         semaphore: Arc<Semaphore>,
+        metrics: Arc<Metrics>,
     ) {
         info!("DNS resolution task started.");
         loop {
@@ -112,6 +114,7 @@ impl DnsResolutionManager {
                     let config_clone = config.clone();
                     let semaphore_clone = semaphore.clone();
                     let resolved_tx_clone = resolved_tx.clone();
+                    let metrics_clone = metrics.clone();
 
                     tokio::spawn(async move {
                         let permit = match semaphore_clone.acquire().await {
@@ -121,6 +124,9 @@ impl DnsResolutionManager {
                                 return;
                             }
                         };
+                        let elapsed = start_time.elapsed();
+                        metrics_clone.dns_worker_scheduling_delay_seconds.record(elapsed);
+
 
                         if let Ok(dns_info) =
                             Self::perform_resolution(&domain, resolver_clone, config_clone).await
