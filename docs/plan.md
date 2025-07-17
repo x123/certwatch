@@ -30,15 +30,14 @@
 *   **Phase 4: Instrument the Alert Sending Stage**
     *   **Goal:** Measure the time it takes to send an alert to the output channel to detect potential backpressure.
     *   **Tasks:**
-        *   [ ] **#251 - Define `alert_send_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [ ] **#252 - Implement `alert_send_duration_seconds`:** In `src/app.rs`, wrap the `alerts_tx.send().await` call to record its duration.
-        *   [ ] **#253 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
+        *   [x] **#251 - Define `alert_send_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [x] **#252 - Implement `alert_send_duration_seconds`:** In `src/app.rs`, wrap the `alerts_tx.send().await` call to record its duration.
+        *   [x] **#253 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
 
 *   **Phase 5: Analysis and Cleanup**
     *   **Goal:** Analyze the complete set of new metrics to identify the bottleneck and clean up temporary instrumentation.
     *   **Tasks:**
         *   [ ] **#254 - Analyze All New Metrics:** Capture and analyze the full suite of new metrics from a running instance to definitively identify the latency source.
-        *   [ ] **#255 - (Optional) Remove Temporary Metrics:** After the bottleneck has been identified and resolved, consider removing the granular histograms to reduce metric cardinality and monitoring overhead.
 
 ---
 

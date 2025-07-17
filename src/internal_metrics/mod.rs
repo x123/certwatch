@@ -74,6 +74,11 @@ impl Metrics {
             "alert_build_duration_seconds",
             "The time taken to build an alert."
         );
+        metrics::describe_histogram!(
+            "alert_send_duration_seconds",
+            Unit::Seconds,
+            "The time in seconds it takes to send an alert to the output channel."
+        );
         metrics::describe_gauge!("dns_resolver_health_status", Unit::Count, "Health status of each configured DNS resolver (1 for healthy, 0 for unhealthy).");
         metrics::describe_gauge!("process_cpu_usage_percent", Unit::Percent, "The percentage of CPU time the `certwatch` process is currently using.");
         metrics::describe_gauge!("process_memory_usage_bytes", Unit::Bytes, "The amount of physical memory (resident set size) the `certwatch` process is using, in bytes.");

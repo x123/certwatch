@@ -440,11 +440,15 @@ impl AppBuilder {
                         if !all_matches.is_empty() {
                             let mut alert = base_alert;
                             alert.source_tag = all_matches;
-                            if alerts_tx.send(alert).await.is_err() {
-                                error!("Failed to send alert to output stage, worker shutting down.");
+
+                            let start_time = std::time::Instant::now();
+                            if let Err(e) = alerts_tx.send(alert).await {
+                                error!("Failed to send alert to output stage, worker shutting down: {}", e);
                                 // If the channel is closed, we can't continue.
                                 break;
                             }
+                            metrics::histogram!("alert_send_duration_seconds")
+                                .record(start_time.elapsed().as_secs_f64());
                         }
 
                         metrics.worker_loop_iteration_duration_seconds.record(loop_start_time.elapsed());
