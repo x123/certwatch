@@ -23,9 +23,9 @@
 *   **Phase 3: Instrument the Rule Matching Stage**
     *   **Goal:** Measure the overhead of the rule matching logic itself, separate from the underlying regex performance.
     *   **Tasks:**
-        *   [ ] **#248 - Define `rule_matching_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [ ] **#249 - Implement `rule_matching_duration_seconds`:** In `src/app.rs`, add logic to record the duration of the `rule_matcher.matches()` calls.
-        *   [ ] **#250 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
+        *   [x] **#248 - Define `rule_matching_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
+        *   [x] **#249 - Implement `rule_matching_duration_seconds`:** In `src/app.rs`, add logic to record the duration of the `rule_matcher.matches()` calls.
+        *   [x] **#250 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
 
 *   **Phase 4: Instrument the Alert Sending Stage**
     *   **Goal:** Measure the time it takes to send an alert to the output channel to detect potential backpressure.

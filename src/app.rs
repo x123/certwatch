@@ -425,12 +425,15 @@ impl AppBuilder {
                         // A single alert can match rules at multiple stages.
                         // We collect all matches.
                         let all_matches = {
+                            let start_time = std::time::Instant::now();
                             let mut matches =
                                 rule_matcher.matches(&base_alert, EnrichmentLevel::None);
                             matches.extend(rule_matcher.matches(
                                 &base_alert,
                                 EnrichmentLevel::Standard,
                             ));
+                            metrics::histogram!("rule_matching_duration_seconds")
+                                .record(start_time.elapsed());
                             matches
                         };
 
