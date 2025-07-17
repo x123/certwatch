@@ -6,7 +6,7 @@ use crate::{
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{mpsc, watch, Semaphore},
+    sync::watch,
     time::{sleep, Instant},
 };
 use tracing::{debug, error, info, instrument, warn};
@@ -22,7 +22,7 @@ fn is_nxdomain_error_str(err_str: &str) -> bool {
 
 /// Manages DNS resolution tasks.
 pub struct DnsResolutionManager {
-    dns_request_tx: mpsc::Sender<(String, String, Instant)>,
+    dns_request_tx: async_channel::Sender<(String, String, Instant)>,
 }
 
 impl DnsResolutionManager {
@@ -35,26 +35,56 @@ impl DnsResolutionManager {
         shutdown_rx: watch::Receiver<()>,
         metrics: Arc<Metrics>,
     ) -> (Self, async_channel::Receiver<ResolvedDomain>) {
-        let (dns_request_tx, dns_request_rx) = mpsc::channel(10_000);
+        let (dns_request_tx, dns_request_rx) =
+            async_channel::bounded::<(String, String, Instant)>(performance_config.queue_capacity);
         let (resolved_tx, resolved_rx) =
             async_channel::bounded(performance_config.queue_capacity);
 
-        // Spawn the primary resolution task
-        let mut task_shutdown_rx = shutdown_rx.clone();
-        let semaphore = Arc::new(Semaphore::new(performance_config.dns_worker_concurrency));
+        // Spawn a pool of worker tasks
+        for i in 0..performance_config.dns_worker_concurrency {
+            let mut worker_shutdown_rx = shutdown_rx.clone();
+            let worker_resolver = resolver.clone();
+            let worker_retry_config = retry_config.clone();
+            let worker_dns_request_rx = dns_request_rx.clone();
+            let worker_resolved_tx = resolved_tx.clone();
+            let worker_metrics = metrics.clone();
 
-        tokio::spawn(async move {
-            Self::resolution_task(
-                resolver,
-                retry_config,
-                dns_request_rx,
-                resolved_tx,
-                &mut task_shutdown_rx,
-                semaphore,
-                metrics,
-            )
-            .await;
-        });
+            tokio::spawn(async move {
+                info!("DNS worker {} started.", i);
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = worker_shutdown_rx.changed() => {
+                            info!("DNS worker {} received shutdown signal.", i);
+                            break;
+                        }
+                        Ok((domain, _source_tag, start_time)) = worker_dns_request_rx.recv() => {
+                            if let Ok(dns_info) = Self::perform_resolution(
+                                &domain,
+                                worker_resolver.clone(),
+                                worker_retry_config.clone(),
+                                worker_metrics.clone(),
+                            )
+                            .await
+                            {
+                                if worker_resolved_tx
+                                    .send((domain, dns_info, start_time))
+                                    .await
+                                    .is_err()
+                                {
+                                    error!("Failed to send resolved domain to the next stage. Channel closed.");
+                                }
+                            }
+                        }
+                        else => {
+                            info!("DNS request channel closed. Shutting down worker {}.", i);
+                            break;
+                        }
+                    }
+                }
+                info!("DNS worker {} finished.", i);
+            });
+        }
 
         // Start the heartbeat task, but not during tests, as it interferes with paused time.
         #[cfg(not(test))]
@@ -78,77 +108,22 @@ impl DnsResolutionManager {
         source_tag: String,
         start_time: Instant,
     ) -> Result<(), DnsError> {
-        match self.dns_request_tx.try_send((domain, source_tag, start_time)) {
+        match self
+            .dns_request_tx
+            .try_send((domain, source_tag, start_time))
+        {
             Ok(_) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
+            Err(async_channel::TrySendError::Full(_)) => {
                 warn!("DNS request channel is full. Dropping domain.");
                 Err(DnsError::Resolution("DNS channel full".to_string()))
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
+            Err(async_channel::TrySendError::Closed(_)) => {
                 error!("DNS request channel is closed.");
                 Err(DnsError::Shutdown)
             }
         }
     }
 
-    /// The primary background task for handling DNS resolution requests.
-    async fn resolution_task(
-        resolver: Arc<dyn DnsResolver>,
-        config: DnsRetryConfig,
-        mut dns_request_rx: mpsc::Receiver<(String, String, Instant)>,
-        resolved_tx: async_channel::Sender<ResolvedDomain>,
-        shutdown_rx: &mut watch::Receiver<()>,
-        semaphore: Arc<Semaphore>,
-        metrics: Arc<Metrics>,
-    ) {
-        info!("DNS resolution task started.");
-        loop {
-            tokio::select! {
-                biased;
-                _ = shutdown_rx.changed() => {
-                    info!("DNS resolution task received shutdown signal");
-                    break;
-                }
-                Some((domain, _source_tag, start_time)) = dns_request_rx.recv() => {
-                    let resolver_clone = resolver.clone();
-                    let config_clone = config.clone();
-                    let semaphore_clone = semaphore.clone();
-                    let resolved_tx_clone = resolved_tx.clone();
-                    let metrics_clone = metrics.clone();
-
-                    tokio::spawn(async move {
-                        let permit = match semaphore_clone.acquire().await {
-                            Ok(p) => p,
-                            Err(_) => {
-                                warn!("Failed to acquire semaphore permit; semaphore is closed.");
-                                return;
-                            }
-                        };
-                        let elapsed = start_time.elapsed();
-                        metrics_clone.dns_worker_scheduling_delay_seconds.record(elapsed);
-
-
-                        if let Ok(dns_info) =
-                            Self::perform_resolution(&domain, resolver_clone, config_clone, metrics_clone).await
-                        {
-                            if resolved_tx_clone
-                                .send((domain, dns_info, start_time))
-                                .await
-                                .is_err()
-                            {
-                                error!("Failed to send resolved domain to the next stage.");
-                            }
-                        }
-                        // Errors from perform_resolution are logged and handled within the function.
-                        // We don't propagate them here, as they are terminal (e.g., final retry failed).
-
-                        drop(permit);
-                    });
-                }
-            }
-        }
-        info!("DNS resolution task finished.");
-    }
 
     /// Performs the actual resolution with retry logic for a single domain.
     #[instrument(skip_all, fields(domain = %domain))]

@@ -39,6 +39,12 @@ impl TestApp {
             .expect("Metrics must be enabled to get the address")
     }
 
+    pub fn close_domains_channel(&mut self) {
+        if let Some(tx) = self.domains_tx.take() {
+            drop(tx);
+        }
+    }
+
     /// Shuts down the application and waits for it to terminate.
     /// Fails if the application does not shut down within the specified timeout.
     pub async fn shutdown(self, timeout_duration: Duration) -> Result<()> {
@@ -164,6 +170,11 @@ impl TestAppBuilder {
 
     pub fn with_config_modifier(mut self, modifier: impl FnOnce(&mut Config)) -> Self {
         modifier(&mut self.config);
+        self
+    }
+
+    pub fn with_performance_config(mut self, perf_config: certwatch::config::PerformanceConfig) -> Self {
+        self.config.performance = perf_config;
         self
     }
 

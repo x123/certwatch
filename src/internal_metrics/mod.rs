@@ -42,7 +42,6 @@ pub struct Metrics {
     pub deduplicated_alerts_total: Counter,
     // Gauges and Histograms can be added here as needed
     pub worker_loop_iteration_duration_seconds: Histogram,
-    pub dns_worker_scheduling_delay_seconds: Histogram,
     pub dns_retry_backoff_delay_seconds: Histogram,
 }
 
@@ -87,7 +86,6 @@ impl Metrics {
         metrics::describe_gauge!("websocket_connection_status", Unit::Count, "The status of the websocket connection (1 for connected, 0 for disconnected).");
         metrics::describe_counter!("websocket_disconnects_total", Unit::Count, "Total number of times the websocket has disconnected.");
         metrics::describe_histogram!("worker_loop_iteration_duration_seconds", Unit::Seconds, "Duration of each worker loop iteration in seconds.");
-        metrics::describe_histogram!("dns_worker_scheduling_delay_seconds", Unit::Seconds, "The time a domain spends waiting for a DNS worker to become available.");
         metrics::describe_histogram!("dns_retry_backoff_delay_seconds", Unit::Seconds, "The sleep duration during the retry backoff logic in the DNS resolver.");
         metrics::describe_histogram!("alert_queue_time_seconds", Unit::Seconds, "The time an alert spends in the notification queue.");
 
@@ -98,7 +96,6 @@ impl Metrics {
             domains_ignored_total: metrics::counter!("domains_ignored_total"),
             deduplicated_alerts_total: metrics::counter!("deduplicated_alerts_total"),
             worker_loop_iteration_duration_seconds: metrics::histogram!("worker_loop_iteration_duration_seconds"),
-            dns_worker_scheduling_delay_seconds: metrics::histogram!("dns_worker_scheduling_delay_seconds"),
             dns_retry_backoff_delay_seconds: metrics::histogram!("dns_retry_backoff_delay_seconds"),
         }
     }
@@ -113,7 +110,6 @@ impl Metrics {
             domains_ignored_total: metrics::counter!("disabled"),
             deduplicated_alerts_total: metrics::counter!("disabled"),
             worker_loop_iteration_duration_seconds: metrics::histogram!("disabled"),
-            dns_worker_scheduling_delay_seconds: metrics::histogram!("disabled"),
             dns_retry_backoff_delay_seconds: metrics::histogram!("disabled"),
         }
     }
