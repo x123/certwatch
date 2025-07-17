@@ -1,242 +1,41 @@
+# Development Plan
 
+## Epic: Implement Pre-DNS Rule Filtering
 
-### Epic #53: Decouple Slack Client from Tokio Runtime
+**User Story:** As an operator, I want the application to filter incoming domains from the `CertStream` against a set of pre-defined rules *before* performing any expensive DNS lookups, so that system resources are conserved and the application can handle high-volume streams efficiently without dropping legitimate domains of interest.
 
-*   **User Story:** As a developer, I want to ensure that slow or unresponsive Slack API calls do not interfere with the core application's network stability, so that the CertStream websocket connection remains stable and responsive.
+### Tasks
 
-*   **Problem:** The current `SlackClient` implementation uses a standard `reqwest::Client` and `await`s the HTTP request directly within a Tokio task. This is a blocking I/O operation that can tie up a worker thread in the Tokio runtime. If the Slack API is slow, this prevents other critical asynchronous tasks, such as the CertStream websocket client, from being processed. This leads to missed keep-alive messages (pings/pongs) and causes the websocket connection to be dropped, either through a timeout or a graceful close from the server.
+1.  **Create a Failing Integration Test:**
+    *   **Goal:** Write a new integration test in `tests/integrations/pre_filtering.rs` that simulates a high volume of mixed domains (some matching, some not).
+    *   **Assertions:**
+        *   The test will use a mock DNS resolver that counts the number of times `resolve()` is called.
+        *   It will assert that `resolve()` is only called for the domains that match the pre-filtering rules.
+        *   It will assert that the `certwatch_domains_prefiltered_total` metric is incremented correctly for the dropped domains.
+    *   **Initial State:** This test will fail because the pre-filtering logic does not yet exist.
 
-*   **Architecture:** The solution is to move the blocking HTTP request to a dedicated thread pool where it won't interfere with the main Tokio runtime. This will be achieved using `tokio::task::spawn_blocking`. A new, private, blocking function will be created to handle the synchronous `reqwest` call. The public `send_batch` function will become a lightweight async wrapper that uses `spawn_blocking` to safely execute the synchronous code without stalling the main event loop.
+2.  **Expose the Pre-Filtering Method:**
+    *   **Goal:** Investigate `src/rules.rs` to find the existing method for Stage 1 filtering (likely based on `EnrichmentLevel::None`).
+    *   **Action:** Make this method public so it can be called from `src/app.rs`.
 
-    ```mermaid
-    graph TD
-        subgraph NotificationManager Task (Async)
-            A[NotificationManager::send_batch] --> B{tokio::task::spawn_blocking};
-        end
+3.  **Implement the Pre-Filtering Logic:**
+    *   **Goal:** Modify the `dns_manager_task` in `src/app.rs` to perform pre-filtering.
+    *   **Actions:**
+        *   Inject the `RuleMatcher` into the task.
+        *   For each domain received from the `CertStream`, call the pre-filtering method.
+        *   If the domain matches, forward it to the `DnsResolutionManager`.
+        *   If it does not match, drop it and increment the new `certwatch_domains_prefiltered_total` metric.
 
-        subgraph Blocking Thread Pool
-            C[SlackClient::send_request] --> D[reqwest::blocking::Client];
-            D --> E[Sends HTTP Request to Slack];
-        end
+4.  **Add the New Metric:**
+    *   **Goal:** Add the `certwatch_domains_prefiltered_total` counter to the metrics system.
+    *   **Action:** Update `src/internal_metrics/mod.rs` to include the new metric.
 
-        B -- Schedules --> C;
-        E -- Returns Result --> A;
-    ```
+5.  **Verify the Fix:**
+    *   **Goal:** Run the new integration test and ensure it passes.
+    *   **Action:** Execute `cargo nextest run --test pre_filtering`.
 
-*   **Status:** Not Started
-
-*   **Tasks:**
-    *   [ ] **#235 - Create Blocking Request Function:**
-        *   **Subtask:** In `src/notification/slack.rs`, create a new private function `send_request` that accepts a `reqwest::blocking::Client` and the JSON payload.
-        *   **Subtask:** This function will contain the existing synchronous logic for sending the HTTP request and handling the response.
-
-    *   [ ] **#236 - Refactor `send_batch` to be Non-Blocking:**
-        *   **Subtask:** Modify the existing `send_batch` function to be an `async` function.
-        *   **Subtask:** Inside `send_batch`, use `tokio::task::spawn_blocking` to call the new `send_request` function.
-        *   **Subtask:** A new `reqwest::blocking::Client` will be created inside the `spawn_blocking` closure, as it is not `Send`.
-
-    *   [ ] **#237 - Verify Test Coverage:**
-        *   **Subtask:** Review the existing tests in `src/notification/slack.rs` to ensure they still provide adequate coverage for both success and failure cases after the refactoring.
-        *   **Subtask:** Run the full integration test suite (`just test`) to confirm that the changes have not introduced any regressions.
-
----
-
-### Epic 27: Anti-Regression Testing for Graceful Shutdown
-**User Story:** As a developer, I want a robust suite of automated tests that can reliably detect shutdown hangs and deadlocks, so that this entire class of bug can be prevented from recurring in the future.
-
-
-- [ ] **#86 - Implement Heartbeat-Monitoring Shutdown Test**
-  - **Context:** Create a more precise test that leverages the existing heartbeat utility to identify which specific component fails to terminate. This provides immediate diagnostic information when the timeout test fails.
-  - **Dependencies:** #85
-  - **Subtasks:**
-    - [ ] Add a test-specific logging subscriber (e.g., `tracing-subscriber::test`) to capture log output.
-    - [ ] In a new test, run the application and capture logs.
-    - [ ] After sending the shutdown signal, continue capturing for a few seconds.
-    - [ ] Assert that "received shutdown" log messages exist for all key components.
-    - [ ] Assert that no "is alive" heartbeat messages are present in the logs after the shutdown signal was sent.
-
-
----
-
-### Epic #40: Refactor `dns` Module Architecture
-
-- **User Story:** As a developer, I want the `dns` module to follow the same clean, organized structure as the `enrichment` module, so that the codebase is more consistent, easier to navigate, and simpler to maintain.
-- **Acceptance Criteria:**
-  - The `src/dns` directory is created and populated with `mod.rs`, `health.rs`, `resolver.rs`, and `fake.rs`.
-  - The `DnsResolver` trait is defined in `src/dns/mod.rs`.
-  - The `startup_check` function is located in `src/dns/health.rs`.
-  - Production resolvers (`HickoryDnsResolver`, `NoOpDnsResolver`) are in `src/dns/resolver.rs`.
-  - The test-only `FakeDnsResolver` is in `src/dns/fake.rs` and conditionally compiled.
-  - The old `src/dns.rs` and `src/dns/health.rs` files are deleted.
-  - The application compiles and all tests pass after the refactoring.
-- **Tasks:**
-  - [ ] **#126 - Create new `dns` module structure**
-    - [ ] Create the directory `src/dns`.
-    - [ ] Create the files `src/dns/mod.rs`, `src/dns/health.rs`, `src/dns/resolver.rs`, and `src/dns/fake.rs`.
-  - [ ] **#127 - Migrate `DnsResolver` trait and implementations**
-    - [ ] Move `DnsResolver` trait to `src/dns/mod.rs`.
-    - [ ] Move `HickoryDnsResolver` and `NoOpDnsResolver` to `src/dns/resolver.rs`.
-    - [ ] Move `FakeDnsResolver` to `src/dns/fake.rs`.
-  - [ ] **#128 - Migrate `startup_check` function**
-    - [ ] Move the `startup_check` function to `src/dns/health.rs`.
-  - [ ] **#129 - Update codebase and remove old files**
-    - [ ] Update all module paths across the codebase to point to the new locations.
-    - [ ] Delete `src/dns.rs` and the old `src/dns/health.rs`.
-    - [ ] Run `cargo check` and `cargo test --all-features` to ensure everything works correctly.
-
-
----
-
-### Epic #41: Harden Test Suite and Improve Error Propagation
-
-- **User Story:** As a developer, I want the test suite to be more robust and reliable, and I want to ensure that errors are correctly propagated throughout the application so that we can catch regressions more effectively.
-- **Acceptance Criteria:**
-  - The `dns_failure.rs` test is refactored to be a focused unit test that is no longer flaky.
-  - The `TestMetrics` helper is improved to support resetting counters between test scenarios.
-  - Errors from the `build_alert` function are correctly propagated and handled in `app::run`.
-  - The `enrichment_failure.rs` test correctly verifies that enrichment failures are recorded.
-- **Tasks:**
-  - [ ] **#133 - Fix flaky `test_enrichment_failure_increments_failure_metric` test.**
-
-
----
----
-
-### **Phase 9: Formalize the Extensible Enrichment Framework**
-*   **Goal:** Refactor the internal architecture to be a generic, multi-level pipeline, preparing for future high-cost enrichment stages.
-*   **Status:** Not Started
-*   **Tasks:**
-    *   [ ] **#188 - EnrichmentLevel Enum:** Create a formal `EnrichmentLevel` enum (e.g., `Level0`, `Level1`, `Level2`).
-    *   [ ] **#189 - Condition Trait:** Define a trait or method for rule conditions to report their required `EnrichmentLevel`.
-    *   [ ] **#190 - Generic Pipeline:** Refactor the hardcoded two-stage pipeline into a generic loop that progresses through enrichment levels, filtering at each step. This is primarily an internal code quality improvement.
-
----
-
-### **Phase 10: Add a New, High-Cost Enrichment Stage (Proof of Concept)**
-*   **Goal:** Prove the framework's extensibility by adding a new, expensive check.
-*   **Status:** Not Started
-*   **Tasks:**
-    *   [ ] **#191 - Define New Condition:** Add a hypothetical `http_body_matches` condition and assign it a new, higher `EnrichmentLevel`.
-    *   [ ] **#192 - Implement Enrichment Provider:** Create a new enrichment provider that can perform the HTTP request.
-    *   [ ] **#193 - Integration Test:** Create an integration test demonstrating that the new provider is only called for alerts that have successfully passed all lower-level filter stages.
-
----
-
-
-### Epic #48: Implement Rule Hot-Reloading
-*   **Goal:** Re-introduce the hot-reloading feature, making it compatible with the new YAML-based rules engine. This allows for dynamic updates to the matching logic without requiring a service restart, restoring a key feature from the legacy system.
-*   **Architecture:** A new `RuleWatcher` component will be created. It will use the `notify` crate to monitor the rule files for changes. When a change is detected, it will attempt to load the new rules. If successful, it will broadcast the new `Arc<RuleMatcher>` to all worker tasks using a `tokio::sync::watch` channel. This ensures a non-blocking, clean distribution of the updated configuration.
-    ```mermaid
-    graph TD
-        subgraph Rule Watcher Task
-            A[File System Event] --> B{Change Detected};
-            B --> C[Load New Rules];
-            C -- Success --> D[Send Arc<RuleMatcher>];
-            C -- Failure --> E[Log Error & Keep Old Rules];
-        end
-        subgraph Main Application
-            F[app::run] --> G{Create watch channel};
-            G --> H[Spawn Rule Watcher];
-            G --> I[Spawn Workers];
-        end
-        subgraph Worker Task
-            J[Start Loop] --> K{Select};
-            K -- Domain Received --> L[Process with Current Rules];
-            K -- Rule Update Received --> M[Update Local Arc<RuleMatcher>];
-            L --> J;
-            M --> J;
-        end
-        D -- watch::Sender --> G;
-    ```
-*   **Status:** Not Started
-*   **Tasks:**
-    *   [ ] **#213 - Dependency:** Add the `notify` and `notify-debouncer-full` crates to `Cargo.toml`.
-    *   [ ] **#214 - Config:** Add a `hot_reload: bool` flag to the `[rules]` section in `certwatch.toml` and the `Config` struct to enable/disable this feature.
-    *   [ ] **#215 - Component:** Create `src/rule_watcher.rs` and implement the `RuleWatcher` which will manage file watching and rule reloading.
-    *   [ ] **#216 - Integration:** In `src/app.rs`, create the `watch` channel and spawn the `RuleWatcher` task if hot-reloading is enabled. Pass the `watch::Receiver` to the workers.
-    *   [ ] **#217 - Worker Update:** Modify the worker loop in `src/app.rs` to listen for rule updates on the `watch::Receiver` and swap its local `RuleMatcher` when a new version is available.
-    *   [ ] **#218 - Testing:** Create `tests/rule_hot_reload.rs` to verify the end-to-end hot-reloading functionality, including success and failure cases (e.g., invalid rule syntax).
-    *   [ ] **#219 - Docs:** Update `README.md` and `certwatch-example.toml` to remove the obsolete `[matching]` section and accurately describe the new hot-reloading feature for YAML rules.
-
-
----
-
-
-
-### Epic #51: Enhance Slack Alerts with Deduplicated Domain Counts
-*   **User Story:** As a security analyst receiving CertWatch alerts, I want to see a count of suppressed subdomains and IPs in a compact format, so that I can quickly gauge the magnitude of an alert without unnecessary verbosity.
-*   **Status:** Not Started
-*   **Tasks:**
-    *   [ ] **#226 - Update Slack Formatting Logic:** Modify the Slack notification formatting to include a `(+x more)` count for both deduplicated subdomains and aggregated IP addresses.
-    *   [ ] **#227 - Refactor IP Aggregation Text:** Change the existing `(+x others)` for IPs to `(+x more)` for consistency.
-    *   [ ] **#228 - Add Conditional Display Logic:** Ensure the `(+x more)` text only appears when the count of additional items is greater than zero.
-
----
-
-### Epic #52: Formalize the Extensible Enrichment Framework
-
-*   **User Story:** As a developer, I want to refactor the hardcoded two-stage filtering pipeline into a generic, multi-level pipeline, so that new, high-cost enrichment stages can be added in the future with minimal code changes and without impacting performance unnecessarily.
-
-*   **Vision & Justification:**
-    The current implementation in `process_domain` is a rigid, two-stage process. It first checks rules that require no enrichment (`EnrichmentLevel::None`), and if they match, it *always* proceeds to perform DNS and ASN enrichment before checking the next stage of rules (`EnrichmentLevel::Standard`).
-
-    This architecture has two key weaknesses:
-    1.  **Inextensible:** Adding a new, more expensive enrichment stage (e.g., a hypothetical HTTP lookup for `EnrichmentLevel::HighCost`) would require invasive changes to the core `process_domain` function, adding more `if/else` blocks and further coupling the application logic.
-    2.  **Inefficient:** It lacks the granularity to support multiple enrichment levels beyond the current one. It cannot, for example, run a cheap DNS check for one set of rules and a more expensive ASN lookup only for a smaller subset.
-
-    This refactoring will replace the hardcoded logic with a generic, iterative pipeline. This new design will be driven by an ordered `EnrichmentLevel` enum, ensuring that we only perform the minimum work necessary at each stage. This makes the system highly extensible and more efficient, paving the way for future features without requiring complex rewrites.
-
-*   **Architecture:**
-    The core of the new design is a loop within `process_domain` that iterates through the `EnrichmentLevel` enum.
-    1.  A new `EnrichmentManager` will be created to hold all available `EnrichmentProvider` implementations, mapped to the level they provide.
-    2.  The `process_domain` loop will start at `EnrichmentLevel::None`.
-    3.  In each iteration, it will ask the `RuleMatcher` for rules matching the *current* level.
-    4.  If no rules match, the process stops for that domain.
-    5.  If rules *do* match, the loop advances to the *next* enrichment level. It asks the `EnrichmentManager` for the appropriate provider, executes it, and merges the new data into the `Alert`.
-    6.  The loop continues until all enrichment levels have been processed or the domain has been filtered out.
-
-    ```mermaid
-    graph TD
-        A[Start: Domain Received] --> B{Loop: Current Level = None};
-        B --> C{"Match Rules at Current Level?"};
-        C -- No --> X[Discard Domain];
-        C -- Yes --> D{Get Next Enrichment Level};
-        D -- No More Levels --> J[Final Alert Sent];
-        D -- Next Level Exists --> E[Get Provider from EnrichmentManager];
-        E --> F[Execute Enrichment];
-        F --> G[Merge Data into Alert];
-        G --> B;
-    ```
-
-*   **Status:** Not Started
-
-*   **Tasks:**
-    *   [ ] **#230 - Foundational Type & Trait Enhancements**
-        *   **Subtask:** Add the `strum` and `strum_macros` crates to `Cargo.toml` to make the `EnrichmentLevel` enum easily iterable.
-        *   **Subtask:** Derive `EnumIter` for `EnrichmentLevel` in `src/rules.rs` and ensure its variants are ordered correctly (`None`, `Standard`, etc.).
-        *   **Subtask:** Create a new `EnrichmentProvider` trait method, `provides_level() -> EnrichmentLevel`, to allow providers to declare what level of data they supply.
-
-    *   [ ] **#231 - Create the `EnrichmentManager`**
-        *   **Subtask:** Create a new file `src/enrichment/manager.rs`.
-        *   **Subtask:** Implement the `EnrichmentManager` struct, which will hold a `HashMap<EnrichmentLevel, Arc<dyn EnrichmentProvider>>`.
-        *   **Subtask:** Implement a `new()` or `build()` function for the manager that takes the application `Config` and instantiates all required providers (e.g., `TsvAsnLookup`).
-        *   **Subtask:** Implement a `get_provider_for(&self, level: EnrichmentLevel) -> Option<...>` method.
-
-    *   [ ] **#232 - Implement the Generic Pipeline in `app.rs`**
-        *   **Subtask:** In `AppBuilder`, replace the single `enrichment_provider_override` with the new `EnrichmentManager`.
-        *   **Subtask:** In `process_domain`, remove the existing two-stage logic.
-        *   **Subtask:** Implement the new iterative loop as described in the architecture diagram.
-        *   **Subtask:** The loop should maintain a set of matched rule names and only proceed to the next enrichment level if there are matching rules from the current level.
-
-    *   [ ] **#233 - Write Focused Unit Tests**
-        *   **Subtask:** In `src/app.rs`'s test module, create a new test to verify that a domain that doesn't match `Level::None` rules is correctly discarded without any enrichment.
-        *   **Subtask:** Create a test to verify that a domain matching `Level::None` rules proceeds to `Level::Standard` enrichment.
-        *   **Subtask:** Create a test to verify that a domain matching both `Level::None` and `Level::Standard` rules results in a final alert with all rule names.
-
-    *   [ ] **#234 - Update Integration Tests**
-        *   **Subtask:** Update the `TestAppBuilder` in `tests/helpers/app.rs` to construct and use the new `EnrichmentManager`.
-        *   **Subtask:** Review and update existing integration tests (e.g., `tests/integrations/not_rules.rs`) to ensure they are compatible with the new pipeline logic. The `with_failing_enrichment` helper may need to be adapted.
-
-
----
-
+6.  **Cleanup and Final Validation:**
+    *   **Goal:** Ensure the codebase is clean and all tests pass.
+    *   **Actions:**
+        *   Remove any temporary code or comments.
+        *   Run the full test suite with `just test`.
