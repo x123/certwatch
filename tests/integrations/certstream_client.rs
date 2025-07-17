@@ -5,9 +5,13 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use certwatch::{internal_metrics::Metrics, network::{CertStreamClient, WebSocketConnection}};
+use certwatch::{
+    internal_metrics::Metrics,
+    network::{CertStreamClient, WebSocketConnection},
+    task_manager::TaskManager,
+};
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use async_channel;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
@@ -69,9 +73,18 @@ async fn test_certstream_client_basic_functionality() -> Result<()> {
         Some(Ok(sample_message.to_string())),
         None, // Simulate connection close
     ]);
-    let (tx, rx) = async_channel::unbounded();
-    let metrics = Arc::new(Metrics::new());
-    let client = CertStreamClient::new("ws://fake-url".to_string(), tx.clone(), 1.0, false, metrics);
+   let (tx, rx) = async_channel::unbounded();
+   let metrics = Arc::new(Metrics::new_for_test());
+   let (_, shutdown_rx) = watch::channel(false);
+   let task_manager = TaskManager::new(shutdown_rx);
+   let client = CertStreamClient::new(
+       "ws://fake-url".to_string(),
+       tx.clone(),
+       1.0,
+       false,
+       metrics,
+       task_manager,
+   );
 
     // 2. Act
     let completion_rx = run_client_with_signal(client, fake_ws).await;
@@ -104,9 +117,18 @@ async fn test_certstream_client_handles_invalid_messages() -> Result<()> {
         Some(Ok(invalid_message.to_string())),
         None, // Simulate connection close
     ]);
-    let (tx, rx) = async_channel::unbounded();
-    let metrics = Arc::new(Metrics::new());
-    let client = CertStreamClient::new("ws://fake-url".to_string(), tx, 1.0, false, metrics);
+   let (tx, rx) = async_channel::unbounded();
+   let metrics = Arc::new(Metrics::new_for_test());
+   let (_, shutdown_rx) = watch::channel(false);
+   let task_manager = TaskManager::new(shutdown_rx);
+   let client = CertStreamClient::new(
+       "ws://fake-url".to_string(),
+       tx,
+       1.0,
+       false,
+       metrics,
+       task_manager,
+   );
 
     // 2. Act
     let completion_rx = run_client_with_signal(client, fake_ws).await;

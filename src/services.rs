@@ -6,7 +6,7 @@ use crate::{
     notification::{manager::NotificationManager, slack::SlackClient},
 };
 use anyhow::Result;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tracing::info;
 
 /// Sets up the Slack notification pipeline if it is enabled in the configuration.
@@ -39,7 +39,8 @@ pub fn setup_notification_pipeline(config: &Config) -> Result<Option<broadcast::
                 tx.subscribe(),
                 slack_client,
             );
-            tokio::spawn(slack_notifier.run());
+            let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+            tokio::spawn(slack_notifier.run(shutdown_rx));
             return Ok(Some(tx));
         }
     }

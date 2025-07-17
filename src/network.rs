@@ -3,7 +3,7 @@
 // This module handles connecting to the certstream websocket, parsing
 // messages, and managing reconnection logic.
 
-use crate::{internal_metrics::Metrics, utils::heartbeat::run_heartbeat};
+use crate::{internal_metrics::Metrics, task_manager::TaskManager, utils::heartbeat::run_heartbeat};
 use anyhow::Result;
 use async_trait::async_trait;
 use rand::Rng;
@@ -52,6 +52,7 @@ pub struct CertStreamClient {
     sample_rate: f64,
     allow_invalid_certs: bool,
     metrics: Arc<Metrics>,
+    task_manager: TaskManager,
 }
 
 impl CertStreamClient {
@@ -68,6 +69,7 @@ impl CertStreamClient {
         sample_rate: f64,
         allow_invalid_certs: bool,
         metrics: Arc<Metrics>,
+        task_manager: TaskManager,
     ) -> Self {
         assert!(
             (0.0..=1.0).contains(&sample_rate),
@@ -79,6 +81,7 @@ impl CertStreamClient {
             sample_rate,
             allow_invalid_certs,
             metrics,
+            task_manager,
         }
     }
 
@@ -113,13 +116,13 @@ impl CertStreamClient {
     /// 
     /// This method implements the main client loop with exponential backoff
     /// reconnection logic. It will continue running until explicitly stopped.
-    pub async fn run(&self, mut shutdown_rx: watch::Receiver<()>) -> Result<()> {
+    pub async fn run(&self, mut shutdown_rx: watch::Receiver<bool>) -> Result<()> {
         let mut backoff_ms = 1000; // Start with 1 second
         const MAX_BACKOFF_MS: u64 = 60000; // Max 60 seconds
 
         // Spawn the heartbeat task
         let hb_shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
+        self.task_manager.spawn("CertStreamClient-heartbeat", async move {
             run_heartbeat("CertStreamClient", hb_shutdown_rx).await;
         });
 
@@ -281,15 +284,21 @@ impl CertStreamClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal_metrics::Metrics;
-    use std::sync::Arc;
+    use crate::task_manager::TaskManager;
     use async_channel;
+    use std::sync::Arc;
+    use tokio::sync::watch;
 
     fn create_test_metrics() -> Arc<Metrics> {
         // The metrics system uses a global recorder, so we can't easily
         // isolate it for tests. For unit tests, we just need a valid
         // `Metrics` instance that doesn't panic.
         Arc::new(Metrics::new_for_test())
+    }
+
+    fn create_test_task_manager() -> TaskManager {
+        let (_, shutdown_rx) = watch::channel(false);
+        TaskManager::new(shutdown_rx)
     }
 
     #[test]
@@ -340,8 +349,14 @@ mod tests {
         let domains: Vec<String> = (0..10000).map(|i| format!("domain{}.com", i)).collect();
 
         // Test case 1: sample_rate = 0.5 (50%)
-        let client_half =
-            CertStreamClient::new("".to_string(), tx.clone(), 0.5, false, metrics.clone());
+       let client_half = CertStreamClient::new(
+           "".to_string(),
+           tx.clone(),
+           0.5,
+           false,
+           metrics.clone(),
+           create_test_task_manager(),
+       );
         let sampled_half = client_half.sample_domains(domains.clone());
         // Check if the sampled count is roughly 50% +/- 5%
         let count_half = sampled_half.len();
@@ -352,8 +367,14 @@ mod tests {
         );
 
         // Test case 2: sample_rate = 1.0 (100%)
-        let client_full =
-            CertStreamClient::new("".to_string(), tx.clone(), 1.0, false, metrics.clone());
+       let client_full = CertStreamClient::new(
+           "".to_string(),
+           tx.clone(),
+           1.0,
+           false,
+           metrics.clone(),
+           create_test_task_manager(),
+       );
         let sampled_full = client_full.sample_domains(domains.clone());
         assert_eq!(
             sampled_full.len(),
@@ -362,7 +383,14 @@ mod tests {
         );
 
         // Test case 3: sample_rate = 0.0 (0%)
-        let client_none = CertStreamClient::new("".to_string(), tx, 0.0, false, metrics);
+       let client_none = CertStreamClient::new(
+           "".to_string(),
+           tx,
+           0.0,
+           false,
+           metrics,
+           create_test_task_manager(),
+       );
         let sampled_none = client_none.sample_domains(domains);
         assert_eq!(
             sampled_none.len(),

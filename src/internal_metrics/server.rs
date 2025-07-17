@@ -14,51 +14,61 @@
 use axum::{routing::get, Router};
 use log::error;
 use metrics_exporter_prometheus::PrometheusHandle;
-use tokio::{net::TcpListener, sync::watch};
-use tokio::task::JoinHandle;
+use tracing::trace;
+use std::future::Future;
+use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 /// A server that exposes metrics to a Prometheus scraper.
 ///
 /// This struct encapsulates the `axum` server and its associated task handle,
 /// providing a clean interface for managing the server's lifecycle.
 pub struct MetricsServer {
-    /// The `JoinHandle` for the spawned `axum` server task.
-    /// This can be used by the main application to await the server's
-    /// graceful shutdown.
-    pub task: JoinHandle<()>,
+    listener: TcpListener,
+    prom_handle: PrometheusHandle,
+    shutdown_rx: watch::Receiver<bool>,
 }
 
 impl MetricsServer {
-    /// Creates a new `MetricsServer` and spawns it in a background task.
+    /// Creates a new `MetricsServer` but does not spawn it.
     ///
     /// # Arguments
     ///
     /// * `listener` - A `TcpListener` that has already been bound to an address.
-    /// * `handle` - A `PrometheusHandle` used to render the metrics.
-    /// * `shutdown_rx` - A `watch::Receiver` for the graceful shutdown signal.
+    /// * `prom_handle` - A `PrometheusHandle` used to render the metrics.
+    /// * `shutdown_rx` - A watch channel receiver for graceful shutdown.
     pub fn new(
         listener: TcpListener,
-        handle: PrometheusHandle,
-        mut shutdown_rx: watch::Receiver<()>,
+        prom_handle: PrometheusHandle,
+        shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
-        let app = Router::new().route(
-            "/metrics",
-            get(move || async move {
-                handle.render()
-            }),
-        );
+        Self {
+            listener,
+            prom_handle,
+            shutdown_rx,
+        }
+    }
 
-        let task = tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, app.into_make_service())
-                .with_graceful_shutdown(async move {
-                    shutdown_rx.changed().await.ok();
-                })
-                .await
-            {
-                error!("Metrics server error: {}", e);
+    /// Returns a future that runs the server until a shutdown signal is received.
+    pub fn run(mut self) -> impl Future<Output = ()> {
+        let app = Router::new().route("/metrics", get(move || async move { self.prom_handle.render() }));
+
+        async move {
+            tokio::select! {
+                biased;
+                _ = self.shutdown_rx.changed() => {
+                    trace!("Metrics server received shutdown signal via select.");
+                }
+                result = axum::serve(self.listener, app.into_make_service()) => {
+                    if let Err(e) = result {
+                        // This error is expected during graceful shutdown when the server is dropped.
+                        if !e.to_string().contains("operation was canceled") {
+                            error!("Metrics server error: {}", e);
+                        }
+                    }
+                }
             }
-        });
-
-        Self { task }
+            trace!("Metrics server task finished.");
+        }
     }
 }

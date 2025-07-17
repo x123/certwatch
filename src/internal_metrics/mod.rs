@@ -20,7 +20,7 @@
 //! - **`SystemCollector`**: (Defined in `system.rs`) A background task that
 //!   periodically collects and updates system-level metrics (CPU, memory).
 
-use crate::config::MetricsConfig;
+use crate::{config::MetricsConfig, task_manager::TaskManager};
 use crate::internal_metrics::server::MetricsServer;
 use crate::internal_metrics::system::SystemCollector;
 use log::error;
@@ -28,7 +28,6 @@ use metrics::{Counter, Histogram, Unit};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tokio::sync::watch;
 
 /// The public API for the metrics system.
 ///
@@ -38,6 +37,7 @@ pub struct Metrics {
     pub domains_ingested_total: Counter,
     pub domains_processed_total: Counter,
     pub domains_ignored_total: Counter,
+    pub domains_prefiltered_total: Counter,
     // This metric is now handled directly via macro at the call site.
     pub deduplicated_alerts_total: Counter,
     // Gauges and Histograms can be added here as needed
@@ -88,6 +88,7 @@ impl Metrics {
         metrics::describe_histogram!("worker_loop_iteration_duration_seconds", Unit::Seconds, "Duration of each worker loop iteration in seconds.");
         metrics::describe_histogram!("dns_retry_backoff_delay_seconds", Unit::Seconds, "The sleep duration during the retry backoff logic in the DNS resolver.");
         metrics::describe_histogram!("alert_queue_time_seconds", Unit::Seconds, "The time an alert spends in the notification queue.");
+        metrics::describe_counter!("certwatch_domains_prefiltered_total", Unit::Count, "Total number of domains that were filtered out by rules before DNS resolution.");
 
         // Handles (for application use)
         Self {
@@ -97,6 +98,7 @@ impl Metrics {
             deduplicated_alerts_total: metrics::counter!("deduplicated_alerts_total"),
             worker_loop_iteration_duration_seconds: metrics::histogram!("worker_loop_iteration_duration_seconds"),
             dns_retry_backoff_delay_seconds: metrics::histogram!("dns_retry_backoff_delay_seconds"),
+            domains_prefiltered_total: metrics::counter!("certwatch_domains_prefiltered_total"),
         }
     }
 
@@ -111,6 +113,7 @@ impl Metrics {
             deduplicated_alerts_total: metrics::counter!("disabled"),
             worker_loop_iteration_duration_seconds: metrics::histogram!("disabled"),
             dns_retry_backoff_delay_seconds: metrics::histogram!("disabled"),
+            domains_prefiltered_total: metrics::counter!("disabled"),
         }
     }
 
@@ -149,6 +152,16 @@ impl Metrics {
         // The `metrics` crate's default recorder is a no-op.
         Self::new()
     }
+
+    /// Increments the counter for pre-filtered domains.
+    pub fn increment_domains_prefiltered(&self) {
+        self.domains_prefiltered_total.increment(1);
+    }
+
+    /// Increments the counter for ignored domains.
+    pub fn increment_domains_ignored(&self) {
+        self.domains_ignored_total.increment(1);
+    }
 }
 
 /// Builder for the metrics system.
@@ -174,64 +187,69 @@ impl MetricsBuilder {
     /// # Arguments
     ///
        /// * `shutdown_rx` - A watch channel receiver for graceful shutdown.
-       pub fn build(
-           self,
-           shutdown_rx: watch::Receiver<()>,
-       ) -> (Metrics, Option<(MetricsServer, SocketAddr)>) {
-           if !self.config.enabled {
-               return (Metrics::disabled(), None);
-           }
-   
-           let recorder = PrometheusBuilder::new()
-                .set_buckets_for_metric(
-                    Matcher::Suffix("duration_seconds".to_string()),
-                    &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
-                )
-                .unwrap()
-                .build_recorder();
-           let handle = recorder.handle();
-   
-           // Bind the listener before installing the recorder to ensure we can
-           // report the address even if the recorder fails to install.
-           let listener = match std::net::TcpListener::bind(self.config.listen_address) {
-               Ok(listener) => listener,
-               Err(e) => {
-                   error!(
-                       "Failed to bind metrics server to {}: {}",
-                       self.config.listen_address, e
-                   );
-                   return (Metrics::disabled(), None);
-               }
-           };
-   
-           let addr = match listener.local_addr() {
-               Ok(addr) => addr,
-               Err(e) => {
-                   error!("Failed to get local address for metrics server: {}", e);
-                   return (Metrics::disabled(), None);
-               }
-           };
-   
-           // The listener must be non-blocking to be used with Tokio.
-           listener.set_nonblocking(true).unwrap();
-           let listener = TcpListener::from_std(listener).unwrap();
-   
-           if let Err(e) = metrics::set_global_recorder(recorder) {
-               error!("Failed to install Prometheus recorder: {}", e);
-               return (Metrics::disabled(), None);
-           }
-   
-           let metrics = Metrics::new();
-           let server = MetricsServer::new(listener, handle, shutdown_rx);
-   
-           if self.config.system_metrics_enabled {
-               let system_collector = SystemCollector::new();
-               tokio::spawn(system_collector.run());
-           }
-   
-           (metrics, Some((server, addr)))
-       }
-   }
+    pub fn build(
+        self,
+        task_manager: &TaskManager,
+    ) -> (Metrics, Option<(MetricsServer, SocketAddr)>) {
+        if !self.config.enabled {
+            return (Metrics::disabled(), None);
+        }
+
+        let recorder = PrometheusBuilder::new()
+            .set_buckets_for_metric(
+                Matcher::Suffix("duration_seconds".to_string()),
+                &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+            )
+            .unwrap()
+            .build_recorder();
+        let prom_handle = recorder.handle();
+
+        // Bind the listener before installing the recorder to ensure we can
+        // report the address even if the recorder fails to install.
+        let listener = match std::net::TcpListener::bind(self.config.listen_address) {
+            Ok(listener) => listener,
+            Err(e) => {
+                error!(
+                    "Failed to bind metrics server to {}: {}",
+                    self.config.listen_address, e
+                );
+                return (Metrics::disabled(), None);
+            }
+        };
+
+        let addr = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(e) => {
+                error!("Failed to get local address for metrics server: {}", e);
+                return (Metrics::disabled(), None);
+            }
+        };
+
+        // The listener must be non-blocking to be used with Tokio.
+        listener.set_nonblocking(true).unwrap();
+        let listener = TcpListener::from_std(listener).unwrap();
+
+        if let Err(e) = metrics::set_global_recorder(recorder) {
+            error!("Failed to install Prometheus recorder: {}", e);
+            return (Metrics::disabled(), None);
+        }
+
+        let metrics = Metrics::new();
+        let server = MetricsServer::new(
+            listener,
+            prom_handle,
+            task_manager.get_shutdown_rx(),
+        );
+
+        if self.config.system_metrics_enabled {
+            let system_collector = SystemCollector::new();
+            let shutdown_rx = task_manager.get_shutdown_rx();
+            task_manager.spawn("SystemCollector", system_collector.run(shutdown_rx));
+        }
+
+        (metrics, Some((server, addr)))
+    }
+}
 
 pub mod server;
 pub mod system;

@@ -5,7 +5,7 @@ use crate::helpers::{
 };
 use certwatch::config::PerformanceConfig;
 use std::{sync::Arc, time::Duration};
-use tokio::time::Instant;
+use tokio::{sync::oneshot, time::Instant};
 use tracing::info;
 
 #[tokio::test]
@@ -15,15 +15,16 @@ async fn test_high_volume_dns_resolution_performance() {
     let resolution_delay = Duration::from_millis(10);
 
     let metrics = Arc::new(certwatch::internal_metrics::Metrics::new_for_test());
-    let mock_resolver = Arc::new(MockDnsResolver::new(metrics.clone()).with_delay(resolution_delay));
+    let mock_resolver = Arc::new(MockDnsResolver::new_with_metrics(metrics.clone()).with_delay(resolution_delay));
 
-    let output = Arc::new(CountingOutput::new());
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let output = Arc::new(CountingOutput::new(total_domains).with_completion_signal(completion_tx));
     let catch_all_rule = r#"
 rules:
   - name: "Catch All"
     domain_regex: "."
 "#;
-    let mut test_app = TestAppBuilder::new()
+    let test_app_builder = TestAppBuilder::new()
         .with_dns_resolver(mock_resolver.clone())
         .with_performance_config(PerformanceConfig {
             dns_worker_concurrency: worker_concurrency,
@@ -35,11 +36,10 @@ rules:
         .with_metrics()
         .with_disabled_periodic_health_check()
         .with_skipped_health_check()
-        .with_rules(catch_all_rule)
-        .await
-        .start()
-        .await
-        .unwrap();
+        .with_rules(catch_all_rule);
+
+    let mut test_app = test_app_builder.start().await.unwrap();
+    test_app.wait_for_startup().await.unwrap();
 
     let start_time = Instant::now();
 
@@ -52,7 +52,9 @@ rules:
     // Close the channel to signal that no more domains are coming.
     test_app.close_domains_channel();
 
-    output.wait_for_count(total_domains, Duration::from_secs(5)).await;
+    completion_rx
+        .await
+        .expect("Failed to receive completion signal");
     let total_duration = start_time.elapsed();
 
     info!("--- Performance Test Results ---");

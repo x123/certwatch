@@ -5,32 +5,31 @@ use crate::{
     config::Config,
     core::{Alert, DnsResolver, EnrichmentProvider, Output},
     deduplication::Deduplicator,
-    dns::{DnsHealth, DnsResolutionManager, HickoryDnsResolver},
+    dns::{DnsHealth, DnsResolutionManager, HealthState, HickoryDnsResolver},
     internal_metrics::{Metrics, MetricsBuilder},
     network::{CertStreamClient, WebSocketConnection},
     notification::{manager::NotificationManager, slack::SlackClientTrait},
     outputs::{OutputManager, StdoutOutput},
     rules::{EnrichmentLevel, RuleLoader, RuleMatcher},
     utils::heartbeat::run_heartbeat,
+    task_manager::TaskManager,
 };
 use anyhow::Result;
 use async_channel::Receiver;
 use tokio::sync::{broadcast, watch};
+use tokio::time::Instant;
 use tracing::{debug, error, info, instrument, trace};
 use std::{sync::Arc, time::Duration};
-use tokio::task::JoinHandle;
+use tokio::sync::Barrier;
 
 
 /// A handle to the running application, containing all its task handles.
 pub struct App {
-    shutdown_rx: watch::Receiver<()>,
-    certstream_task: Option<JoinHandle<()>>,
-    dns_manager_task: Option<JoinHandle<()>>,
-    rules_worker_handles: Vec<JoinHandle<()>>,
-    output_task: JoinHandle<()>,
-    notification_manager_task: Option<JoinHandle<()>>,
-    metrics_server_task: Option<JoinHandle<()>>,
+    task_manager: TaskManager,
     metrics_addr: Option<std::net::SocketAddr>,
+    startup_barrier: Option<Arc<Barrier>>,
+    // Keep the manager alive for the duration of the app
+    _dns_manager: Arc<DnsResolutionManager>,
 }
 
 impl App {
@@ -45,40 +44,17 @@ impl App {
 
     /// Waits for the shutdown signal and then gracefully shuts down all tasks.
     pub async fn run(self) -> Result<()> {
-        let mut shutdown_rx = self.shutdown_rx;
-        // Wait for the external shutdown signal
+        // Signal that the app has started and is ready.
+        if let Some(barrier) = &self.startup_barrier {
+            barrier.wait().await;
+        }
+
+        // Now, wait for the external shutdown signal.
+        let mut shutdown_rx = self.task_manager.get_shutdown_rx();
         shutdown_rx.changed().await.ok();
         info!("Shutdown signal received in run function. Waiting for tasks to complete...");
 
-        // Wait for all tasks to complete
-        if let Some(handle) = self.certstream_task {
-            if let Err(e) = handle.await {
-                error!("CertStream task panicked: {:?}", e);
-            }
-        }
-        if let Some(handle) = self.dns_manager_task {
-            if let Err(e) = handle.await {
-                error!("DNS manager task panicked: {:?}", e);
-            }
-        }
-        for handle in self.rules_worker_handles {
-            if let Err(e) = handle.await {
-                error!("Rules worker task panicked: {:?}", e);
-            }
-        }
-        if let Err(e) = self.output_task.await {
-            error!("Output task panicked: {:?}", e);
-        }
-        if let Some(handle) = self.notification_manager_task {
-            if let Err(e) = handle.await {
-                error!("Notification manager task panicked: {:?}", e);
-            }
-        }
-        if let Some(handle) = self.metrics_server_task {
-            if let Err(e) = handle.await {
-                error!("Metrics server task panicked: {:?}", e);
-            }
-        }
+        self.task_manager.shutdown().await;
 
         info!("All tasks shut down.");
         Ok(())
@@ -92,6 +68,7 @@ impl App {
 /// a convenient way to override components for testing purposes.
 pub struct AppBuilder {
     config: Config,
+    task_manager: TaskManager,
     domains_rx_for_test: Option<Receiver<String>>,
     output_override: Option<Vec<Arc<dyn Output>>>,
     websocket_override: Option<Box<dyn WebSocketConnection>>,
@@ -101,6 +78,7 @@ pub struct AppBuilder {
     slack_client_override: Option<Arc<dyn SlackClientTrait>>,
     metrics_override: Option<Metrics>,
     skip_health_check: bool,
+    startup_barrier: Option<Arc<Barrier>>,
 }
 
 impl AppBuilder {
@@ -108,6 +86,8 @@ impl AppBuilder {
     pub fn new(config: Config) -> Self {
         Self {
             config,
+            // This is a placeholder, it will be replaced in `build`
+            task_manager: TaskManager::new(watch::channel(false).1),
             domains_rx_for_test: None,
             output_override: None,
             websocket_override: None,
@@ -117,6 +97,7 @@ impl AppBuilder {
             slack_client_override: None,
             metrics_override: None,
             skip_health_check: false,
+            startup_barrier: None,
         }
     }
 
@@ -177,25 +158,32 @@ impl AppBuilder {
         self
     }
 
+    pub fn startup_barrier(mut self, barrier: Arc<Barrier>) -> Self {
+        self.startup_barrier = Some(barrier);
+        self
+    }
+
     /// Builds and initializes all application components, returning a runnable `App`.
     #[instrument(skip_all)]
-    pub async fn build(self, shutdown_rx: watch::Receiver<()>) -> Result<App> {
+    pub async fn build(mut self, shutdown_rx: watch::Receiver<bool>) -> Result<App> {
         let config = self.config;
+        self.task_manager = TaskManager::new(shutdown_rx);
+        let task_manager = self.task_manager.clone();
 
         // =========================================================================
         // 1. Initialize Metrics
         // =========================================================================
         let (metrics, metrics_server_info) = match self.metrics_override {
             Some(m) => (m, None),
-            None => MetricsBuilder::new(config.metrics.clone()).build(shutdown_rx.clone()),
+            None => MetricsBuilder::new(config.metrics.clone()).build(&task_manager),
         };
-        let metrics = Arc::new(metrics);
+        let metrics: Arc<Metrics> = Arc::new(metrics);
 
-        let (metrics_server_task, metrics_addr) = if let Some((server, addr)) = metrics_server_info
-        {
-            (Some(server.task), Some(addr))
+        let metrics_addr = if let Some((server, addr)) = metrics_server_info {
+            task_manager.spawn("MetricsServer", server.run());
+            Some(addr)
         } else {
-            (None, None)
+            None
         };
 
 
@@ -204,12 +192,18 @@ impl AppBuilder {
         // =========================================================================
         let (dns_resolver, dns_health_monitor) = match self.dns_resolver_override {
             Some(resolver) => {
+                let initial_state = if self.skip_health_check {
+                    HealthState::Healthy
+                } else {
+                    HealthState::Unhealthy // It will be updated by the startup check
+                };
                 let health_monitor = DnsHealth::new(
                     config.dns.health.clone(),
                     resolver.clone(),
-                    shutdown_rx.clone(),
+                    &task_manager,
                     metrics.clone(),
                     vec![], // No nameservers available in override mode
+                    initial_state,
                 );
                 (resolver, health_monitor)
             }
@@ -220,9 +214,10 @@ impl AppBuilder {
                 let health_monitor = DnsHealth::new(
                     config.dns.health.clone(),
                     resolver.clone(),
-                    shutdown_rx.clone(),
+                    &task_manager,
                     metrics.clone(),
                     nameservers,
+                    HealthState::Unhealthy, // Will be updated by startup_check
                 );
                 (resolver, health_monitor)
             }
@@ -230,6 +225,8 @@ impl AppBuilder {
 
         if !self.skip_health_check {
             DnsHealth::startup_check(&*dns_resolver, &config.dns.health).await?;
+            // On successful startup check, the periodic monitor will take over,
+            // which starts in a healthy state.
         }
 
         // =========================================================================
@@ -280,8 +277,8 @@ impl AppBuilder {
 
         // If a test receiver is provided, use it. Otherwise, create a new channel
         // and spawn the CertStream client to populate it.
-        let (domains_rx, certstream_task) = if let Some(rx) = self.domains_rx_for_test {
-            (rx, None)
+        let domains_rx = if let Some(rx) = self.domains_rx_for_test {
+            rx
         } else {
             let (tx, rx) = async_channel::unbounded();
             let certstream_url = config.network.certstream_url.clone();
@@ -300,23 +297,31 @@ impl AppBuilder {
                     sample_rate,
                     allow_invalid_certs,
                     metrics.clone(),
+                    task_manager.clone(),
                 );
 
-            let task = {
-                let shutdown_rx_clone = shutdown_rx.clone();
-                tokio::spawn(async move {
-                    let result = if let Some(ws) = self.websocket_override {
-                        certstream_client.run_with_connection(ws).await
-                    } else {
-                        certstream_client.run(shutdown_rx_clone).await
-                    };
-
-                    if let Err(e) = result {
-                        error!("CertStream client failed: {}", e);
+            let websocket_override = self.websocket_override;
+            let certstream_task_manager = task_manager.clone();
+            task_manager.spawn("CertStreamClient", async move {
+                let mut shutdown_rx = certstream_task_manager.get_shutdown_rx();
+                let result = if let Some(ws) = websocket_override {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown_rx.changed() => {
+                            info!("CertStream client (override) received shutdown signal.");
+                            Ok(())
+                        },
+                        res = certstream_client.run_with_connection(ws) => res,
                     }
-                })
-            };
-            (rx, Some(task))
+                } else {
+                    certstream_client.run(shutdown_rx).await
+                };
+
+                if let Err(e) = result {
+                    error!("CertStream client failed: {}", e);
+                }
+            });
+            rx
         };
 
         // =========================================================================
@@ -332,38 +337,71 @@ impl AppBuilder {
             config.dns.retry_config.clone(),
             &config.performance,
             dns_health_monitor.clone(),
-            shutdown_rx.clone(),
+            &task_manager,
             metrics.clone(),
         );
 
         // This task forwards domains from the certstream to the DNS manager
-        let dns_manager_task = {
-            let mut shutdown_rx = shutdown_rx.clone();
-            let metrics = metrics.clone();
-            tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = shutdown_rx.changed() => {
-                            info!("DNS domain forwarder received shutdown signal.");
-                            break;
+        debug!("Spawning DNS domain forwarder task...");
+        let forwarder_task_manager = task_manager.clone();
+        let forwarder_metrics = metrics.clone();
+        let forwarder_rule_matcher = rule_matcher.clone();
+        let forwarder_dns_manager = dns_manager.clone();
+        task_manager.spawn("DnsDomainForwarder", async move {
+            let mut shutdown_rx = forwarder_task_manager.get_shutdown_rx();
+            let metrics = forwarder_metrics;
+            let rule_matcher = forwarder_rule_matcher;
+            let dns_manager = forwarder_dns_manager;
+            loop {
+                let domain_result = tokio::select! {
+                    biased;
+                    _ = shutdown_rx.changed() => {
+                        info!("DNS domain forwarder received shutdown signal.");
+                        break;
+                    }
+                    res = domains_rx.recv() => {
+                        res
+                    }
+                };
+
+                match domain_result {
+                    Ok(domain) => {
+                        debug!(domain = %domain, "DNS domain forwarder received domain.");
+                        let start_time = Instant::now();
+                        metrics::gauge!("domains_queued").decrement(1.0);
+                        metrics.domains_processed_total.increment(1);
+
+                        // Stage 1: Check against the ignore list (blocklist)
+                        if rule_matcher.is_ignored(&domain) {
+                            metrics.increment_domains_ignored();
+                            trace!(domain = %domain, "Domain ignored, skipping processing.");
+                            continue;
                         }
-                        Ok(domain) = domains_rx.recv() => {
-                            let start_time = std::time::Instant::now();
-                            metrics::gauge!("domains_queued").decrement(1.0);
-                            metrics.domains_processed_total.increment(1);
-                            if let Err(e) = dns_manager.resolve(domain, "certstream".to_string(), start_time.into()) {
-                                trace!("Failed to send domain to DNS manager: {}", e);
-                            }
+
+                        // Stage 2: Check against the pre-DNS whitelist
+                        if !rule_matcher.matches_pre_dns_whitelist(&domain) {
+                            metrics.increment_domains_prefiltered();
+                            trace!(
+                                domain = %domain,
+                                "Domain did not match pre-DNS whitelist, skipping DNS resolution."
+                            );
+                            continue;
                         }
-                        else => {
-                            info!("Domain channel closed, DNS forwarder shutting down.");
-                            break;
+
+                        if let Err(e) =
+                            dns_manager.resolve(domain, "certstream".to_string(), start_time).await
+                        {
+                            // This can happen if the DNS manager shuts down while we are sending.
+                            debug!("Failed to send domain to DNS manager: {}", e);
                         }
                     }
+                    Err(_) => {
+                        info!("Domain channel closed, DNS forwarder shutting down.");
+                        break;
+                    }
                 }
-            })
-        };
+            }
+        });
 
         // For now, the main pipeline for resolved domains is not connected,
         // as the manager handles everything internally. We create a dummy channel.
@@ -372,7 +410,6 @@ impl AppBuilder {
         // =========================================================================
         // STAGE 3: Rule Matching & Enrichment
         // =========================================================================
-        let mut rules_worker_handles = Vec::new();
         let rules_worker_concurrency = config.performance.rules_worker_concurrency;
         info!(
             "Spawning {} rules worker tasks...",
@@ -380,13 +417,14 @@ impl AppBuilder {
         );
 
         for i in 0..rules_worker_concurrency {
-            let mut shutdown_rx = shutdown_rx.clone();
+            let worker_task_manager = task_manager.clone();
             let resolved_rx = resolved_rx.clone();
             let alerts_tx = alerts_tx.clone();
             let rule_matcher = rule_matcher.clone();
             let enrichment_provider = enrichment_provider.clone();
             let metrics = metrics.clone(); // Clone metrics for the worker
-            let handle = tokio::spawn(async move {
+            task_manager.spawn("RulesWorker", async move {
+                let mut shutdown_rx = worker_task_manager.get_shutdown_rx();
                 trace!("Rules Worker {} started", i);
                 loop {
                     let resolved_domain = tokio::select! {
@@ -465,22 +503,25 @@ impl AppBuilder {
                     }
                 }
             });
-            rules_worker_handles.push(handle);
         }
 
         // =========================================================================
         // 10. Alert Deduplication and Output Task
         // =========================================================================
-        let output_task = tokio::spawn(output_task_logic(
-            shutdown_rx.clone(),
+        let shutdown_rx = task_manager.get_shutdown_rx();
+        task_manager.spawn(
+            "OutputTask",
+            output_task_logic(
+                shutdown_rx,
             alerts_rx,
             deduplicator,
             output_manager,
             self.notification_tx.clone(),
+            task_manager.clone(),
         ));
 
         // 11. Spawn NotificationManager if enabled
-        let notification_manager_task = if let Some(notification_tx) = self.notification_tx {
+        if let Some(notification_tx) = self.notification_tx {
             if let Some(slack_config) = config.output.slack.clone() {
                 let slack_client = self.slack_client_override.unwrap_or_else(|| {
                     Arc::new(crate::notification::slack::SlackClient::new(
@@ -494,39 +535,37 @@ impl AppBuilder {
                     notification_tx.subscribe(),
                     slack_client,
                 );
-                Some(tokio::spawn(notification_manager.run()))
-            } else {
-                None
+                let shutdown_rx = task_manager.get_shutdown_rx();
+                task_manager.spawn("NotificationManager", notification_manager.run(shutdown_rx));
             }
-        } else {
-            None
         };
 
         info!("CertWatch initialized successfully. Monitoring for domains...");
 
+        info!("CertWatch initialized successfully. Monitoring for domains...");
+
         Ok(App {
-            shutdown_rx,
-            certstream_task,
-            dns_manager_task: Some(dns_manager_task),
-            rules_worker_handles,
-            output_task,
-            notification_manager_task,
-            metrics_server_task,
+            task_manager,
             metrics_addr,
+            startup_barrier: self.startup_barrier,
+            _dns_manager: dns_manager,
         })
     }
 }
 
 #[instrument(skip_all)]
 async fn output_task_logic(
-    mut shutdown_rx: watch::Receiver<()>,
+    mut shutdown_rx: watch::Receiver<bool>,
     alerts_rx: Receiver<Alert>,
     deduplicator: Arc<Deduplicator>,
     output_manager: Arc<OutputManager>,
     notification_tx: Option<broadcast::Sender<Alert>>,
+    task_manager: TaskManager,
 ) {
     let hb_shutdown_rx = shutdown_rx.clone();
-    tokio::spawn(async move { run_heartbeat("OutputManager", hb_shutdown_rx).await });
+    task_manager.spawn("OutputManager-heartbeat", async move {
+        run_heartbeat("OutputManager", hb_shutdown_rx).await
+    });
 
     loop {
         tokio::select! {

@@ -11,7 +11,7 @@ use tokio::time::{interval, Duration};
 /// that the corresponding task is not respecting the shutdown signal.
 pub async fn run_heartbeat(
     task_name: &'static str,
-    mut shutdown_rx: tokio::sync::watch::Receiver<()>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut timer = interval(Duration::from_secs(3));
     trace!(task_name, "Heartbeat started.");

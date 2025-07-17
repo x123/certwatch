@@ -5,13 +5,21 @@ use std::{sync::Arc, time::Duration};
 #[tokio::test]
 async fn test_dns_retry_backoff_metric() {
     let metrics = Arc::new(Metrics::new_for_test());
-    let mock_dns = Arc::new(MockDnsResolver::new(metrics.clone()));
+    let mock_dns = Arc::new(MockDnsResolver::new_with_metrics(metrics.clone()));
     let mut resolve_attempts_rx = mock_dns.get_resolve_attempts_rx();
 
     // Configure the mock resolver to always fail for "fail.com"
     mock_dns.add_failure("fail.com").await;
 
-    let test_app = TestAppBuilder::new()
+    // Whitelist "fail.com" so it passes the pre-DNS filter.
+    let rules = r#"
+rules:
+  - name: "allow fail.com"
+    domain_regex: "^fail\\.com$"
+"#;
+
+    let test_app_builder = TestAppBuilder::new()
+        .with_rules(rules)
         .with_config_modifier(|config| {
             // Use a small, predictable backoff for testing
             config.dns.retry_config = DnsRetryConfig {
@@ -25,10 +33,10 @@ async fn test_dns_retry_backoff_metric() {
         .with_test_domains_channel()
         .with_metrics()
         .with_skipped_health_check()
-        .with_disabled_periodic_health_check()
-        .start()
-        .await
-        .unwrap();
+        .with_disabled_periodic_health_check();
+
+    let test_app = test_app_builder.start().await.unwrap();
+    test_app.wait_for_startup().await.unwrap();
 
     // Send the domain that will trigger retries
     test_app.send_domain("fail.com").await.unwrap();
@@ -45,7 +53,7 @@ async fn test_dns_retry_backoff_metric() {
     // Fetch metrics via HTTP and parse the response
     let client = reqwest::Client::new();
     let response = client
-        .get(format!("http://{}/metrics", test_app.metrics_addr()))
+        .get(format!("http://{}/metrics", test_app.metrics_addr().unwrap()))
         .send()
         .await
         .unwrap()
@@ -78,5 +86,5 @@ async fn test_dns_retry_backoff_metric() {
         sum
     );
 
-    test_app.shutdown(Duration::from_secs(1)).await.unwrap();
+    test_app.shutdown().await.unwrap();
 }

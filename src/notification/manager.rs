@@ -6,7 +6,7 @@ use crate::core::{Alert, AggregatedAlert};
 use crate::notification::slack::SlackClientTrait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time::{interval, Duration};
 use tracing::{debug, error, info};
 
@@ -33,7 +33,7 @@ impl<S: SlackClientTrait + ?Sized> NotificationManager<S> {
     }
 
     /// Runs the notification manager's main loop.
-    pub async fn run(mut self) {
+    pub async fn run(mut self, mut shutdown_rx: watch::Receiver<bool>) {
         info!("NotificationManager started.");
         let batch_size = self.config.batch_size.unwrap_or(50);
         let batch_timeout = self.config.batch_timeout_seconds.unwrap_or(300);
@@ -49,6 +49,14 @@ impl<S: SlackClientTrait + ?Sized> NotificationManager<S> {
         loop {
             tokio::select! {
                 biased;
+                _ = shutdown_rx.changed() => {
+                    info!("NotificationManager received shutdown signal.");
+                    if !batch.is_empty() {
+                        info!("Sending final batch of {} aggregated alerts before shutdown.", batch.len());
+                        self.send_batch(&mut batch).await;
+                    }
+                    break;
+                }
                 _ = timer.tick() => {
                     if !batch.is_empty() {
                         info!("Batch timer expired, sending {} aggregated alerts to Slack.", batch.len());
@@ -64,7 +72,7 @@ impl<S: SlackClientTrait + ?Sized> NotificationManager<S> {
                             }
                             debug!(domain = %alert.domain, "Received alert in NotificationManager.");
                             let base_domain = psl::domain_str(&alert.domain).unwrap_or(&alert.domain).to_string();
-                            
+
                             if let Some(existing_alert) = batch.get_mut(&base_domain) {
                                 existing_alert.deduplicated_count += 1;
                                 debug!(domain = %alert.domain, "Aggregated subdomain.");
@@ -164,7 +172,8 @@ mod tests {
 
         let deduplication_config = DeduplicationConfig::default();
         let manager = NotificationManager::new(config, &deduplication_config, alert_rx, fake_client.clone());
-        let manager_handle = tokio::spawn(manager.run());
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let manager_handle = tokio::spawn(manager.run(shutdown_rx));
 
         // Act
         let mut alert1 = Alert::default();
@@ -205,7 +214,8 @@ mod tests {
 
         let deduplication_config = DeduplicationConfig::default();
         let manager = NotificationManager::new(config, &deduplication_config, alert_rx, fake_client.clone());
-        let manager_handle = tokio::spawn(manager.run());
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let manager_handle = tokio::spawn(manager.run(shutdown_rx));
 
         // Act
         alert_tx.send(Alert::default()).unwrap();

@@ -7,7 +7,7 @@ pub mod test_utils;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use health::DnsHealth;
+pub use health::{DnsHealth, HealthState};
 pub use manager::DnsResolutionManager;
 pub use resolver::HickoryDnsResolver;
 pub use crate::core::DnsResolver;

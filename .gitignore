@@ -5,6 +5,6 @@ data/
 flake.lock
 result
 todo.md
-
+testconfigs/
 # Added by cargo
 /target

@@ -36,13 +36,13 @@ async fn main() -> Result<()> {
     // =========================================================================
     // Create Shutdown Channel
     // =========================================================================
-    let (shutdown_tx, shutdown_rx) = watch::channel(());
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Spawn a task to listen for Ctrl-C
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.expect("Failed to install Ctrl-C handler");
         info!("Shutdown signal received. Shutting down gracefully...");
-        shutdown_tx.send(()).expect("Failed to send shutdown signal");
+        shutdown_tx.send(true).expect("Failed to send shutdown signal");
     });
 
     // =========================================================================

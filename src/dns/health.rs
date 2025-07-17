@@ -4,7 +4,7 @@
 //! It periodically checks a known domain to determine if the configured DNS
 //! resolver is operational.
 
-use crate::{config::DnsHealthConfig, core::DnsResolver, internal_metrics::Metrics};
+use crate::{config::DnsHealthConfig, core::DnsResolver, internal_metrics::Metrics, task_manager::TaskManager};
 use anyhow::Result;
 use std::{
     net::SocketAddr,
@@ -14,7 +14,6 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 /// Represents the health state of the DNS resolver.
@@ -57,11 +56,12 @@ impl DnsHealth {
     pub fn new(
         config: DnsHealthConfig,
         resolver: Arc<dyn DnsResolver>,
-        mut shutdown_rx: watch::Receiver<()>,
+        task_manager: &TaskManager,
         metrics: Arc<Metrics>,
         nameservers: Vec<SocketAddr>,
+        initial_state: HealthState,
     ) -> Arc<Self> {
-        let is_healthy = Arc::new(AtomicBool::new(true));
+        let is_healthy = Arc::new(AtomicBool::new(initial_state == HealthState::Healthy));
         let monitor = Arc::new(Self {
             is_healthy: is_healthy.clone(),
             nameservers,
@@ -74,7 +74,8 @@ impl DnsHealth {
         if config.enabled {
             // Start the background health check task
             let monitor_clone = Arc::clone(&monitor);
-            tokio::spawn(async move {
+            let mut shutdown_rx = task_manager.get_shutdown_rx();
+            task_manager.spawn("DnsHealthCheck", async move {
                 debug!("Spawning DNS periodic health check task.");
                 let mut interval = tokio::time::interval(Duration::from_secs(config.interval_seconds));
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -102,6 +103,7 @@ impl DnsHealth {
     pub fn is_healthy(&self) -> bool {
         self.is_healthy.load(Ordering::Relaxed)
     }
+
 
     /// Performs a single health check by resolving a domain.
     async fn perform_health_check(&self, resolver: &dyn DnsResolver, check_domain: &str) {
@@ -139,8 +141,7 @@ impl DnsHealth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dns::test_utils::FakeDnsResolver;
-    use crate::internal_metrics::Metrics;
+    use crate::{dns::test_utils::FakeDnsResolver, internal_metrics::Metrics, task_manager::TaskManager};
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::watch;
@@ -154,7 +155,8 @@ mod tests {
             interval_seconds: 5,
             check_domain: "google.com".to_string(),
         };
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let task_manager = TaskManager::new(shutdown_rx);
 
         // Add a success response for the initial health check that runs upon creation.
         resolver.add_success_response("google.com", Default::default());
@@ -162,9 +164,10 @@ mod tests {
         let monitor = DnsHealth::new(
             config.clone(),
             resolver.clone(),
-            shutdown_rx,
+            &task_manager,
             Arc::new(Metrics::new_for_test()),
             vec![],
+            HealthState::Healthy,
         );
 
         // Let the initial check run.
@@ -193,7 +196,7 @@ mod tests {
 
         // Ensure shutdown works.
         drop(shutdown_tx);
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        task_manager.shutdown().await;
     }
 
     #[tokio::test]

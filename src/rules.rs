@@ -30,8 +30,10 @@ pub struct RuleMatcher {
     pub stage_1_rules: Vec<Rule>,
     /// Rules that require enrichment data to be evaluated.
     pub stage_2_rules: Vec<Rule>,
-    /// The pre-emptive filter for ignoring domains.
-    pre_filter: PreFilter,
+    /// A pre-emptive filter for ignoring domains based on the `ignore` list.
+    ignore_filter: PreFilter,
+    /// A whitelist filter for domains that should proceed to DNS resolution.
+    pre_dns_whitelist: RegexSet,
     /// A handle to the metrics system.
     metrics: Arc<Metrics>,
 }
@@ -66,24 +68,32 @@ pub enum RuleExpression {
 impl RuleMatcher {
     /// Creates a new `RuleMatcher` from a fully-loaded `RuleSet`.
     pub fn new(rule_set: RuleSet, metrics: Arc<Metrics>) -> Result<Self> {
-        let (stage_2_rules, stage_1_rules) = rule_set
-            .rules
-            .into_iter()
-            .partition(|rule| rule.required_level == EnrichmentLevel::Standard);
+        let (stage_2_rules, stage_1_rules): (Vec<Rule>, Vec<Rule>) =
+            rule_set
+                .rules
+                .into_iter()
+                .partition(|rule| rule.required_level == EnrichmentLevel::Standard);
 
-        let pre_filter = PreFilter::new(Some(rule_set.ignore_patterns))?;
+        let ignore_filter = PreFilter::new(Some(rule_set.ignore_patterns))?;
+
+        let pre_dns_patterns: Vec<_> = stage_1_rules
+            .iter()
+            .filter_map(|rule| rule.get_domain_regex_pattern())
+            .collect();
+        let pre_dns_whitelist = RegexSet::new(pre_dns_patterns)?;
 
         Ok(Self {
             stage_1_rules,
             stage_2_rules,
-            pre_filter,
+            ignore_filter,
+            pre_dns_whitelist,
             metrics,
         })
     }
 
     /// Checks if a domain should be ignored by the pre-filter.
     pub fn is_ignored(&self, domain: &str) -> bool {
-        self.pre_filter.is_match(domain)
+        self.ignore_filter.is_match(domain)
     }
 
     /// Checks an alert against the rules for a given enrichment stage.
@@ -117,9 +127,18 @@ impl RuleMatcher {
         Self {
             stage_1_rules,
             stage_2_rules,
-            pre_filter: PreFilter::new(None).unwrap(),
+            ignore_filter: PreFilter::new(None).unwrap(),
+            pre_dns_whitelist: RegexSet::new(Vec::<String>::new()).unwrap(),
             metrics,
         }
+    }
+}
+
+impl RuleMatcher {
+    /// Checks a domain against the pre-DNS whitelist.
+    /// Returns `true` if the domain matches the whitelist.
+    pub fn matches_pre_dns_whitelist(&self, domain: &str) -> bool {
+        self.pre_dns_whitelist.is_match(domain)
     }
 }
 
@@ -132,9 +151,24 @@ pub struct Rule {
     pub expression: RuleExpression,
     /// The enrichment level required for this rule.
     pub required_level: EnrichmentLevel,
+    /// Whether this rule should be used for pre-dns filtering.
+    pub pre_dns_filter: bool,
 }
 
 impl Rule {
+    fn get_domain_regex_pattern(&self) -> Option<String> {
+        fn find_pattern(expr: &RuleExpression) -> Option<String> {
+            match expr {
+                RuleExpression::DomainRegex(re) => Some(re.to_string()),
+                RuleExpression::All(exprs) | RuleExpression::Any(exprs) => {
+                    exprs.iter().find_map(find_pattern)
+                }
+                _ => None,
+            }
+        }
+        find_pattern(&self.expression)
+    }
+
     /// Recursively evaluates the rule's expression tree against an alert.
     pub fn is_match(&self, alert: &Alert) -> bool {
         Self::evaluate_expression(&self.expression, alert)
@@ -168,7 +202,9 @@ impl Rule {
             RuleExpression::NotAsns(asns) => {
                 let has_enrichment = alert.enrichment.iter().any(|e| e.asn_info.is_some());
                 if !has_enrichment {
-                    return false; // Cannot satisfy a 'not' if there's nothing to check.
+                    // If enrichment fails, we cannot satisfy the 'not' condition,
+                    // so we must return false.
+                    return false;
                 }
                 !alert
                     .enrichment
@@ -262,6 +298,7 @@ impl RuleLoader {
                     name: file_rule.name,
                     expression: file_rule.expression,
                     required_level,
+                    pre_dns_filter: file_rule.pre_dns_filter.unwrap_or(true),
                 });
             }
         }
@@ -334,4 +371,5 @@ struct FileRule {
     name: String,
     #[serde(flatten)]
     expression: RuleExpression,
+    pre_dns_filter: Option<bool>,
 }

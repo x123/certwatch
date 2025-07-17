@@ -10,3 +10,4 @@ mod output_separation;
 mod shutdown;
 mod slack_notification;
 mod work_distribution;
+mod pre_dns_filtering;

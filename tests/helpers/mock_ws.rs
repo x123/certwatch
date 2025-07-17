@@ -17,7 +17,7 @@ pub struct MockWebSocket {
     // Signals to the test that the app has called `read_message` at least once.
     ready_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
     // Synchronizes the test and the mock to prevent race conditions.
-    barrier: Arc<Barrier>,
+    barrier: Option<Arc<Barrier>>,
 }
 
 impl MockWebSocket {
@@ -27,9 +27,18 @@ impl MockWebSocket {
             messages: Arc::new(Mutex::new(VecDeque::new())),
             is_closed: Arc::new(AtomicBool::new(false)),
             ready_tx: Arc::new(Mutex::new(Some(ready_tx))),
-            barrier,
+            barrier: Some(barrier),
         };
         (mock_ws, ready_rx)
+    }
+
+    pub fn new_silent() -> Self {
+        Self {
+            messages: Arc::new(Mutex::new(VecDeque::new())),
+            is_closed: Arc::new(AtomicBool::new(false)),
+            ready_tx: Arc::new(Mutex::new(None)),
+            barrier: None,
+        }
     }
 
     pub fn add_domain_message(&self, domain: &str) {
@@ -54,7 +63,12 @@ impl WebSocketConnection for MockWebSocket {
         }
 
         // Wait for the test to signal it's ready for us to proceed.
-        self.barrier.wait().await;
+        if let Some(barrier) = &self.barrier {
+            barrier.wait().await;
+        } else {
+            // If there's no barrier, this is a silent mock that should close immediately.
+            return None;
+        }
 
         if self.is_closed.load(Ordering::SeqCst) {
             return None;

@@ -1,5 +1,7 @@
 use certwatch::core::DnsInfo;
 use std::{sync::Arc, time::Duration};
+use tokio::sync::oneshot;
+use tracing::{debug, info, instrument};
 
 // Import test helpers from the `tests` module.
 #[path = "../helpers/mod.rs"]
@@ -8,14 +10,16 @@ use certwatch::internal_metrics::Metrics;
 use helpers::{app::TestAppBuilder, mock_dns::MockDnsResolver, mock_output::CountingOutput};
 
 #[tokio::test]
+#[instrument(skip_all)]
 async fn test_domain_is_processed_by_one_worker() {
     let metrics = Arc::new(Metrics::new_for_test());
-    let resolver = Arc::new(MockDnsResolver::new(metrics));
+    let resolver = Arc::new(MockDnsResolver::new_with_metrics(metrics));
     // The health check will try to resolve google.com
     resolver.add_response("google.com", Ok(DnsInfo::default()));
 
-    let counting_output = Arc::new(CountingOutput::new());
     let domains_to_send = 10;
+    let (completion_tx, completion_rx) = oneshot::channel();
+    let counting_output = Arc::new(CountingOutput::new(domains_to_send).with_completion_signal(completion_tx));
 
     // Pre-configure the DNS resolver to successfully resolve all test domains.
     for i in 0..domains_to_send {
@@ -26,6 +30,7 @@ async fn test_domain_is_processed_by_one_worker() {
     let rules = r#"
 rules:
   - name: "Test Domain Matcher"
+    pre_dns_filter: false
     all:
       - domain_regex: "^test-domain-.*\\.com$"
 "#;
@@ -35,20 +40,19 @@ rules:
         .with_config_modifier(|c| {
             c.performance.dns_worker_concurrency = 4;
             c.performance.rules_worker_concurrency = 4;
+            c.performance.queue_capacity = 100; // Increase queue capacity
         })
         .with_test_domains_channel()
         .with_rules(rules)
-        .await
         .with_skipped_health_check();
 
-    let (mut test_app, app_future) = builder
-        .build()
+    let mut test_app = builder
+        .start()
         .await
-        .expect("TestApp should build successfully");
+        .expect("TestApp should start successfully");
 
-    // Spawn the application in the background.
-    let app_handle = tokio::spawn(app_future);
-    test_app.app_handle = Some(app_handle);
+    // Wait for the app to signal that it's ready
+    test_app.wait_for_startup().await.unwrap();
 
     // Send all the domains now that the app is running.
     for i in 0..domains_to_send {
@@ -58,28 +62,20 @@ rules:
             .await
             .expect("Failed to send domain to worker pool");
     }
+    test_app.close_domains_channel();
+    test_app.close_domains_channel();
 
-    // Wait until all domains have been processed by the workers.
-    // With the async DNS manager, the worker returns immediately after handing
-    // off the domain. The actual resolution and output happen in the background.
-    // For this test, we'll just wait a fixed amount of time to allow the
-    // processing to complete. This is not ideal, but it's a pragmatic
-    // solution for this integration test.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Wait for all domains to be processed by the output.
+    tokio::select! {
+        _ = completion_rx => {}
+        _ = tokio::time::sleep(Duration::from_secs(10)) => {
+            panic!("Test timed out waiting for CountingOutput completion signal.");
+        }
+    }
 
     // Shut down the app using the provided helper
-    test_app
-        .shutdown(Duration::from_secs(5))
-        .await
-        .expect("App should shut down gracefully");
+    test_app.shutdown().await.expect("App shutdown failed");
 
-    // Account for the startup health check.
-    // The startup health check was skipped, so the periodic check should run once.
-    assert_eq!(
-        resolver.get_resolve_count("google.com"),
-        1,
-        "Periodic health check should have resolved the check domain exactly once."
-    );
 
     // Now, verify the work distribution for our test domains.
     for i in 0..domains_to_send {

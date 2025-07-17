@@ -5,13 +5,14 @@ use anyhow::Result;
 use certwatch::{
     app::AppBuilder, config::Config, core::Alert, internal_metrics::Metrics,
 };
-use futures::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::{broadcast, watch},
+    sync::{broadcast, watch, Barrier},
     task::JoinHandle,
     time::timeout,
 };
+use tracing::debug;
+use tracing_subscriber::{fmt, EnvFilter};
 
 /// Represents a running instance of the application for testing purposes.
 use std::net::SocketAddr;
@@ -19,13 +20,22 @@ use std::net::SocketAddr;
 #[derive(Debug)]
 pub struct TestApp {
     pub domains_tx: Option<async_channel::Sender<String>>,
-    pub shutdown_tx: watch::Sender<()>,
-    pub app_handle: Option<JoinHandle<Result<()>>>,
-    metrics_addr: Option<SocketAddr>,
+    pub shutdown_tx: watch::Sender<bool>,
+    pub metrics_addr: Option<SocketAddr>,
+    startup_barrier: Option<Arc<Barrier>>,
+    app_handle: Option<JoinHandle<Result<()>>>,
 }
 
 impl TestApp {
+    pub async fn wait_for_startup(&self) -> Result<()> {
+        if let Some(barrier) = &self.startup_barrier {
+            barrier.wait().await;
+        }
+        Ok(())
+    }
+
     pub async fn send_domain(&self, domain: &str) -> Result<()> {
+        debug!("TestApp: Sending domain: {}", domain);
         self.domains_tx
             .as_ref()
             .expect("domains_tx is only available when using with_test_domains_channel")
@@ -34,9 +44,8 @@ impl TestApp {
         Ok(())
     }
 
-    pub fn metrics_addr(&self) -> SocketAddr {
+    pub fn metrics_addr(&self) -> Option<SocketAddr> {
         self.metrics_addr
-            .expect("Metrics must be enabled to get the address")
     }
 
     pub fn close_domains_channel(&mut self) {
@@ -45,20 +54,14 @@ impl TestApp {
         }
     }
 
-    /// Shuts down the application and waits for it to terminate.
-    /// Fails if the application does not shut down within the specified timeout.
-    pub async fn shutdown(self, timeout_duration: Duration) -> Result<()> {
-        // Send the shutdown signal
-        self.shutdown_tx
-            .send(())
-            .expect("Failed to send shutdown signal");
-
-        // Wait for the application to terminate
-        if let Some(handle) = self.app_handle {
-            match timeout(timeout_duration, handle).await {
-                Ok(Ok(_)) => Ok(()), // App finished successfully
-                Ok(Err(e)) => Err(e.into()), // App returned an error
-                Err(_) => Err(anyhow::anyhow!("App failed to shut down within the timeout")),
+    pub async fn shutdown(mut self) -> Result<()> {
+        self.shutdown_tx.send(true).unwrap();
+        if let Some(handle) = self.app_handle.take() {
+            match timeout(Duration::from_secs(10), handle).await {
+                Ok(Ok(Ok(_))) => Ok(()),
+                Ok(Ok(Err(e))) => Err(anyhow::anyhow!("App run failed: {}", e)),
+                Ok(Err(e)) => Err(anyhow::anyhow!("App task panicked: {}", e)),
+                Err(_) => Err(anyhow::anyhow!("Shutdown timed out")),
             }
         } else {
             Ok(())
@@ -80,10 +83,18 @@ pub struct TestAppBuilder {
     slack_client: Option<Arc<dyn certwatch::notification::slack::SlackClientTrait>>,
     metrics: Option<Metrics>,
     skip_health_check: bool,
+    startup_barrier: Option<Arc<Barrier>>,
 }
 
 impl TestAppBuilder {
     pub fn new() -> Self {
+        // Use the registry to build a layered subscriber, which is the most robust
+        // way to initialize tracing for tests.
+        use tracing_subscriber::prelude::*;
+        let _ = tracing_subscriber::registry()
+            .with(fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init();
         let mut config = Config::default();
         // Disable network-dependent features for default tests
         config.network.certstream_url = "ws://127.0.0.1:12345".to_string(); // Mock URL
@@ -96,7 +107,7 @@ impl TestAppBuilder {
             domains_tx_for_test: None,
             domains_rx_for_test: None,
             outputs: Some(vec![Arc::new(
-                crate::helpers::mock_output::CountingOutput::new(),
+                crate::helpers::mock_output::CountingOutput::new(1), // Default target count for general tests
             )]),
             websocket: None,
             dns_resolver: None,
@@ -105,6 +116,7 @@ impl TestAppBuilder {
             slack_client: None,
             metrics: None,
             skip_health_check: false,
+            startup_barrier: Some(Arc::new(Barrier::new(2))),
         }
     }
 
@@ -178,18 +190,18 @@ impl TestAppBuilder {
         self
     }
 
-    pub async fn with_rules(mut self, rules_content: &str) -> Self {
+    pub fn with_rules(mut self, rules_content: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("rules.yml");
-        tokio::fs::write(&file_path, rules_content).await.unwrap();
+        std::fs::write(&file_path, rules_content).unwrap();
         self.config.rules.rule_files = Some(vec![file_path]);
         // Intentionally leak the tempdir to keep the file alive for the test run.
         std::mem::forget(dir);
         self
     }
 
-    /// Builds the application components but does not spawn it.
-    /// Returns the TestApp handle and a future that runs the app.
+    /// Builds the application components and spawns it.
+    /// Returns the TestApp handle.
     pub fn with_slack_notification(
         mut self,
         client: Arc<dyn certwatch::notification::slack::SlackClientTrait>,
@@ -216,7 +228,7 @@ impl TestAppBuilder {
         self
     }
 
-    pub async fn build(mut self) -> Result<(TestApp, BoxFuture<'static, Result<()>>)> {
+    pub async fn build(mut self) -> Result<TestApp> {
         // Ensure the dummy ASN file exists to prevent startup errors
         if let Some(path) = &self.config.enrichment.asn_tsv_path {
             if !path.exists() {
@@ -231,53 +243,57 @@ impl TestAppBuilder {
             self.config.metrics.listen_address = "127.0.0.1:0".parse().unwrap();
         }
 
-        let (shutdown_tx, shutdown_rx) = watch::channel(());
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
+        debug!("TestAppBuilder: Calling AppBuilder::build");
         let mut builder = AppBuilder::new(self.config)
             .enrichment_provider_override(self.enrichment_provider)
             .skip_health_check(self.skip_health_check);
 
-        if let Some(rx) = self.domains_rx_for_test {
+        if let Some(rx) = self.domains_rx_for_test.take() {
             builder = builder.domains_rx_for_test(rx);
         }
-        if let Some(outputs) = self.outputs {
+        if let Some(outputs) = self.outputs.take() {
             builder = builder.output_override(outputs);
         }
-        if let Some(ws) = self.websocket {
+        if let Some(ws) = self.websocket.take() {
             builder = builder.websocket_override(ws);
         }
-        if let Some(resolver) = self.dns_resolver {
+        if let Some(resolver) = self.dns_resolver.take() {
             builder = builder.dns_resolver_override(resolver);
         }
-        if let Some(tx) = self.alert_tx {
+        if let Some(tx) = self.alert_tx.take() {
             builder = builder.notification_tx(tx);
         }
-        if let Some(sc) = self.slack_client {
+        if let Some(sc) = self.slack_client.take() {
             builder = builder.slack_client_override(sc);
         }
-        if let Some(metrics) = self.metrics {
+        if let Some(metrics) = self.metrics.take() {
             builder = builder.metrics_override(metrics);
+        }
+
+        if let Some(barrier) = self.startup_barrier.clone() {
+            builder = builder.startup_barrier(barrier);
         }
 
         let app = builder.build(shutdown_rx).await?;
         let metrics_addr = app.metrics_addr();
-        let app_future = async move { app.run().await };
+
+        let app_handle = tokio::spawn(app.run());
 
         let test_app = TestApp {
             domains_tx: self.domains_tx_for_test,
             shutdown_tx,
-            app_handle: None, // The app is not running yet
             metrics_addr,
+            startup_barrier: self.startup_barrier,
+            app_handle: Some(app_handle),
         };
 
-        Ok((test_app, Box::pin(app_future)))
+        Ok(test_app)
     }
 
     pub async fn start(self) -> Result<TestApp> {
-        let (mut test_app, app_future) = self.build().await?;
-        let handle = tokio::spawn(app_future);
-        test_app.app_handle = Some(handle);
-        Ok(test_app)
+        self.build().await
     }
 
     pub fn with_skipped_health_check(mut self) -> Self {

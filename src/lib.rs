@@ -7,6 +7,7 @@ pub mod notification;
 
 use chrono::Utc;
 pub mod utils;
+pub mod task_manager;
 use std::sync::Arc;
 use metrics;
 

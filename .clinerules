@@ -127,7 +127,7 @@ not guess or hallucinate API names.
 -   **Consult Authoritative Documentation:** To find the correct version or API
 for a crate, consult its documentation. The primary method is to generate a
 local copy using `cargo doc -p crate-name --no-deps
---target-dir=./data/rustdocs`. If local documentation is insufficient or online
+--target-dir=./tmpdocs`. If local documentation is insufficient or online
 access is required, use the terminal-based browser as a fallback: `nix run
 nixpkgs#links2 -- -dump https://docs.rs/cratename/latest/cratename/`.
 

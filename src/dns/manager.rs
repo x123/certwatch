@@ -3,10 +3,10 @@ use crate::{
     core::{DnsInfo, DnsResolver},
     dns::{DnsError, DnsHealth, DnsRetryConfig},
     internal_metrics::Metrics,
+    task_manager::TaskManager,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
-    sync::watch,
     time::{sleep, Instant},
 };
 use tracing::{debug, error, info, instrument, warn};
@@ -20,9 +20,10 @@ fn is_nxdomain_error_str(err_str: &str) -> bool {
     lower.contains("nxdomain") || lower.contains("no records found")
 }
 
-/// Manages DNS resolution tasks.
+/// Manages DNS resolution tasks by distributing requests to a pool of workers.
 pub struct DnsResolutionManager {
     dns_request_tx: async_channel::Sender<(String, String, Instant)>,
+    health_monitor: Arc<DnsHealth>,
 }
 
 impl DnsResolutionManager {
@@ -31,25 +32,34 @@ impl DnsResolutionManager {
         resolver: Arc<dyn DnsResolver>,
         retry_config: DnsRetryConfig,
         performance_config: &PerformanceConfig,
-        _health_monitor: Arc<DnsHealth>, // Kept for API compatibility
-        shutdown_rx: watch::Receiver<()>,
+        health_monitor: Arc<DnsHealth>,
+        task_manager: &TaskManager,
         metrics: Arc<Metrics>,
-    ) -> (Self, async_channel::Receiver<ResolvedDomain>) {
-        let (dns_request_tx, dns_request_rx) =
-            async_channel::bounded::<(String, String, Instant)>(performance_config.queue_capacity);
-        let (resolved_tx, resolved_rx) =
-            async_channel::bounded(performance_config.queue_capacity);
+    ) -> (Arc<Self>, async_channel::Receiver<ResolvedDomain>) {
+        let (manager_tx, manager_rx): (
+            async_channel::Sender<(String, String, Instant)>,
+            async_channel::Receiver<(String, String, Instant)>,
+        ) = async_channel::bounded(performance_config.queue_capacity);
+        let (resolved_tx, resolved_rx): (
+            async_channel::Sender<ResolvedDomain>,
+            async_channel::Receiver<ResolvedDomain>,
+        ) = async_channel::bounded(performance_config.queue_capacity);
 
-        // Spawn a pool of worker tasks
+        let mut worker_txs = Vec::new();
         for i in 0..performance_config.dns_worker_concurrency {
-            let mut worker_shutdown_rx = shutdown_rx.clone();
+            let (worker_tx, worker_rx): (
+                async_channel::Sender<(String, String, Instant)>,
+                async_channel::Receiver<(String, String, Instant)>,
+            ) = async_channel::bounded(performance_config.queue_capacity);
+            worker_txs.push(worker_tx);
+
+            let mut worker_shutdown_rx = task_manager.get_shutdown_rx();
             let worker_resolver = resolver.clone();
             let worker_retry_config = retry_config.clone();
-            let worker_dns_request_rx = dns_request_rx.clone();
             let worker_resolved_tx = resolved_tx.clone();
             let worker_metrics = metrics.clone();
 
-            tokio::spawn(async move {
+            task_manager.spawn("DnsWorker", async move {
                 info!("DNS worker {} started.", i);
                 loop {
                     tokio::select! {
@@ -58,8 +68,8 @@ impl DnsResolutionManager {
                             info!("DNS worker {} received shutdown signal.", i);
                             break;
                         }
-                        Ok((domain, _source_tag, start_time)) = worker_dns_request_rx.recv() => {
-                            if let Ok(dns_info) = Self::perform_resolution(
+                        Ok((domain, _source_tag, start_time)) = worker_rx.recv() => {
+                            match Self::perform_resolution(
                                 &domain,
                                 worker_resolver.clone(),
                                 worker_retry_config.clone(),
@@ -67,12 +77,17 @@ impl DnsResolutionManager {
                             )
                             .await
                             {
-                                if worker_resolved_tx
-                                    .send((domain, dns_info, start_time))
-                                    .await
-                                    .is_err()
-                                {
-                                    error!("Failed to send resolved domain to the next stage. Channel closed.");
+                                Ok(dns_info) => {
+                                    if worker_resolved_tx
+                                        .send((domain, dns_info, start_time))
+                                        .await
+                                        .is_err()
+                                    {
+                                        error!("Failed to send resolved domain to the next stage. Channel closed.");
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(domain = %domain, error = %e, "DNS resolution failed for domain.");
                                 }
                             }
                         }
@@ -86,42 +101,62 @@ impl DnsResolutionManager {
             });
         }
 
-        // Start the heartbeat task, but not during tests, as it interferes with paused time.
-        #[cfg(not(test))]
-        {
-            let hb_shutdown_rx = shutdown_rx.clone();
-            tokio::spawn(async move {
-                crate::utils::heartbeat::run_heartbeat("DnsResolutionManager", hb_shutdown_rx)
-                    .await;
-            });
-        }
+        // This is the central distribution task
+        let mut manager_shutdown_rx = task_manager.get_shutdown_rx();
+        task_manager.spawn("DnsManager", async move {
+            let mut next_worker = 0;
+            info!("DNS Manager distributor task started.");
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = manager_shutdown_rx.changed() => {
+                        info!("DNS Manager distributor task received shutdown signal.");
+                        break;
+                    }
+                    Ok(request) = manager_rx.recv() => {
+                        if let Err(e) = worker_txs[next_worker].send(request).await {
+                            error!("Failed to send domain to worker {}: {}", next_worker, e);
+                        }
+                        next_worker = (next_worker + 1) % worker_txs.len();
+                    }
+                    else => {
+                        info!("Manager channel closed. Shutting down distributor.");
+                        break;
+                    }
+                }
+            }
+        });
 
-        let manager = Self { dns_request_tx };
+
+        let manager = Arc::new(Self {
+            dns_request_tx: manager_tx,
+            health_monitor,
+        });
 
         (manager, resolved_rx)
     }
 
     /// Sends a domain to the resolution channel. This is a non-blocking call.
-    pub fn resolve(
+    pub async fn resolve(
         &self,
         domain: String,
         source_tag: String,
         start_time: Instant,
     ) -> Result<(), DnsError> {
-        match self
-            .dns_request_tx
-            .try_send((domain, source_tag, start_time))
-        {
-            Ok(_) => Ok(()),
-            Err(async_channel::TrySendError::Full(_)) => {
-                warn!("DNS request channel is full. Dropping domain.");
-                Err(DnsError::Resolution("DNS channel full".to_string()))
-            }
-            Err(async_channel::TrySendError::Closed(_)) => {
-                error!("DNS request channel is closed.");
-                Err(DnsError::Shutdown)
-            }
+        if !self.health_monitor.is_healthy() {
+            metrics::counter!("dns_queries_total", "status" => "skipped_unhealthy").increment(1);
+            warn!("DNS resolvers are unhealthy, skipping resolution for {}", domain);
+            // Silently drop the domain. The error is logged by the health monitor.
+            return Ok(());
         }
+
+        self.dns_request_tx
+            .send((domain, source_tag, start_time))
+            .await
+            .map_err(|e| {
+                error!("DNS request channel is closed: {}", e);
+                DnsError::Shutdown
+            })
     }
 
 
