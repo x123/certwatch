@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use health::DnsHealth;
-pub use manager::{DnsResolutionManager, ResolvedNxDomain};
+pub use manager::DnsResolutionManager;
 pub use resolver::HickoryDnsResolver;
 pub use crate::core::DnsResolver;
 

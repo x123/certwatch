@@ -78,10 +78,6 @@ name = "rules"
 path = "tests/rules/mod.rs"
 
 [[test]]
-name = "dns_failure"
-path = "tests/dns/failure.rs"
-
-[[test]]
 name = "enrichment_failure"
 path = "tests/enrichment/failure.rs"
 

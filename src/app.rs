@@ -321,7 +321,7 @@ impl AppBuilder {
         // =========================================================================
         // STAGE 2: DNS Resolution Manager
         // =========================================================================
-        let (dns_manager, resolved_rx, resolved_nx_domains_rx) = DnsResolutionManager::start(
+        let (dns_manager, resolved_rx) = DnsResolutionManager::start(
             dns_resolver.clone(),
             config.dns.retry_config.clone(),
             &config.performance,
@@ -358,30 +358,6 @@ impl AppBuilder {
                 }
             })
         };
-
-        // This task handles domains that have resolved after being NXDOMAIN
-        // For now, we just log them. A future implementation might feed them back
-        // into the rules pipeline.
-        let mut resolved_nx_shutdown_rx = shutdown_rx.clone();
-        tokio::spawn(async move {
-            let mut resolved_nx_domains_rx = resolved_nx_domains_rx;
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = resolved_nx_shutdown_rx.changed() => {
-                        info!("NXDOMAIN resolver task received shutdown signal.");
-                        break;
-                    }
-                    Some((domain, source, _)) = resolved_nx_domains_rx.recv() => {
-                        trace!(%domain, %source, "Previously NXDOMAIN domain has now resolved.");
-                    }
-                    else => {
-                        info!("Resolved NXDOMAIN channel closed.");
-                        break;
-                    }
-                }
-            }
-        });
 
         // For now, the main pipeline for resolved domains is not connected,
         // as the manager handles everything internally. We create a dummy channel.
