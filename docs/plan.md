@@ -1,65 +1,4 @@
-### Epic #55: Granular Performance Instrumentation for Latency Analysis
 
-*   **User Story:** As a developer, I need detailed performance metrics for each stage of the domain processing pipeline, so that I can accurately identify and diagnose latency bottlenecks that are not visible with the current high-level metrics.
-
-*   **Architecture:** The current `processing_duration_seconds` histogram measures the entire worker loop, but the extreme latency observed suggests a bottleneck within a specific, unmeasured part of that loop. The plan is to add several new, more granular histograms to the rules worker loop in `src/app.rs` one by one, testing at each stage to ensure stability. This incremental approach minimizes risk and allows for careful validation of each change.
-
-*   **Status:** Not Started
-
-*   **Phase 1: Instrument the Worker Loop Iteration**
-    *   **Goal:** Establish a baseline by measuring the entire worker loop duration.
-    *   **Tasks:**
-        *   [x] **#242 - Define `worker_loop_iteration_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [x] **#243 - Implement `worker_loop_iteration_duration_seconds`:** In `src/app.rs`, add logic to record the duration of a single iteration of the rules worker loop.
-        *   [x] **#244 - Verify Implementation:** Run the test suite and manually inspect the `/metrics` endpoint to ensure the new metric is present and recording data.
-
-*   **Phase 2: Instrument the Alert Building Stage**
-    *   **Goal:** Isolate the performance of the `build_alert()` function, a primary suspect for latency.
-    *   **Tasks:**
-        *   [x] **#245 - Define `alert_build_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [x] **#246 - Implement `alert_build_duration_seconds`:** In `src/app.rs`, wrap the `build_alert().await` call to record its duration.
-        *   [x] **#247 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint to confirm the new metric is working correctly alongside the first one.
-
-*   **Phase 3: Instrument the Rule Matching Stage**
-    *   **Goal:** Measure the overhead of the rule matching logic itself, separate from the underlying regex performance.
-    *   **Tasks:**
-        *   [x] **#248 - Define `rule_matching_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [x] **#249 - Implement `rule_matching_duration_seconds`:** In `src/app.rs`, add logic to record the duration of the `rule_matcher.matches()` calls.
-        *   [x] **#250 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
-
-*   **Phase 4: Instrument the Alert Sending Stage**
-    *   **Goal:** Measure the time it takes to send an alert to the output channel to detect potential backpressure.
-    *   **Tasks:**
-        *   [x] **#251 - Define `alert_send_duration_seconds`:** In `src/internal_metrics/mod.rs`, add the `describe_histogram!` definition.
-        *   [x] **#252 - Implement `alert_send_duration_seconds`:** In `src/app.rs`, wrap the `alerts_tx.send().await` call to record its duration.
-        *   [x] **#253 - Verify Implementation:** Run tests and inspect the `/metrics` endpoint.
-
----
-
-### Epic #54: Code Cleanup and Warning Resolution
-
-*   **User Story:** As a developer, I want a codebase that compiles without any warnings, so that I can maintain high code quality, improve readability, and ensure that potential issues are not being masked by noise.
-
-*   **Architecture:** The approach will be to methodically address each warning category identified by the Rust compiler. This involves removing unused imports, variables, and functions from the test helper modules and integration tests. Each change will be small, targeted, and validated by running the test suite to ensure no regressions are introduced.
-
-*   **Status:** Completed
-
-*   **Tasks:**
-    *   [x] **#238 - Clean up `tests/helpers/app.rs`:**
-        *   **Subtask:** Remove the unused `Mutex` import.
-        *   **Subtask:** Prefix the unused `channel` variable in `with_slack` with an underscore (`_channel`) to silence the warning.
-
-    *   [x] **#239 - Clean up `tests/helpers/mock_slack.rs`:**
-        *   **Subtask:** Remove the unused `new` and `get_sent_batches` functions, as they are no longer required by any tests.
-
-    *   [x] **#240 - Clean up integration tests:**
-        *   **Subtask:** Remove the unused `create_rule_file` import from `tests/integrations/work_distribution.rs`.
-        *   **Subtask:** Remove the unused `FakeEnrichmentProvider` and `Arc` imports from `tests/integrations/not_rules.rs`.
-
-    *   [x] **#241 - Final Verification:**
-        *   **Subtask:** Run the full test suite (`just test`) one final time to ensure the project compiles cleanly with zero warnings and all tests pass.
-
----
 
 ### Epic #53: Decouple Slack Client from Tokio Runtime
 
@@ -116,40 +55,6 @@
     - [ ] Assert that "received shutdown" log messages exist for all key components.
     - [ ] Assert that no "is alive" heartbeat messages are present in the logs after the shutdown signal was sent.
 
-
----
-### Epic 32: Simplify Configuration to be File-Only
-**User Story:** As a developer, I want a simple, robust, and predictable configuration system, so that I can avoid complex debugging sessions caused by unpredictable configuration layering between defaults, files, and command-line arguments.
-**Technical Goal:** Refactor the configuration system to be exclusively file-driven. The application will be configured via a single TOML file, with `clap` only being used to parse the path to that file and a test-only flag. This eliminates the complex and error-prone interaction between `figment` and `clap`.
-
-- [x] **#97 - Simplify `Config` Struct and Loading Logic**
-  - **Context:** The core of the refactor. The `Config` struct was stripped of all `clap` and `figment` attributes, becoming a pure data container. The loading logic was simplified to a two-step process: start with `Config::default()` and merge a single TOML file over it.
-  - **Subtasks:**
-    - [x] Removed all `clap::Parser` and `figment` attributes from `src/config.rs`.
-    - [x] Implemented `Default` for `Config` and its sub-structs to provide the baseline configuration.
-    - [x] Created a minimal `Cli` struct in `src/main.rs` to parse only `--config-file` and `--test-mode`.
-    - [x] Updated `Config::load()` to be driven by the `Cli` input.
-
-- [x] **#98 - Remove Redundant Code and Features**
-  - **Context:** With the move to a file-only strategy, all code related to command-line overrides for individual settings became obsolete.
-  - **Subtasks:**
-    - [x] Deleted the `src/cli.rs` file and its `mod` declaration.
-    - [x] Removed the `env` feature from the `clap` dependency in `Cargo.toml`.
-    - [x] Stripped out all logic for layering environment variables and individual CLI flags.
-
-- [x] **#99 - Update Integration Tests to be File-Driven**
-  - **Context:** The existing integration tests relied heavily on passing command-line arguments. They were completely rewritten to create temporary TOML configuration files for each test case.
-  - **Subtasks:**
-    - [x] Rewrote all tests in `tests/integrations/config.rs` to use `tempfile` and `figment` to create and load test-specific configuration files.
-    - [x] Updated tests in other modules, like `tests/enrichment/startup.rs`, that were also using the old CLI argument system.
-
-- [x] **#100 - Cleanup and Documentation**
-  - **Context:** After the major architectural change, a thorough cleanup and documentation pass was required to bring the project into a consistent state.
-  - **Subtasks:**
-    - [x] Reviewed all changed files for dead code and simplification opportunities.
-    - [x] Updated `README.md` to describe the new file-only configuration and the two remaining command-line arguments.
-    - [x] Verified and updated `certwatch-example.toml` to be a complete and accurate template for users.
-    - [x] Ran the full test suite (`cargo test --all-features`) to ensure no regressions were introduced.
 
 ---
 
@@ -256,26 +161,7 @@
 
 ---
 
-### Epic #49: Testing Workflow Overhaul
-*   **Goal:** Standardize the project's testing workflow by replacing the ad-hoc `cargo test` command with `cargo nextest` and introducing a `justfile` as the canonical task runner. This will improve consistency, discoverability, and maintainability of project-level commands.
-*   **Status:** Completed
-*   **Tasks:**
-    *   [x] **#220 - Create `justfile`:** A new file named `justfile` was created in the project root to serve as the central place for defining and documenting project-specific commands.
-    *   [x] **#221 - Update `.clinerules`:** The `Task Completion Protocol` section in `.clinerules` has been updated to replace the `cargo test` command with the new `just test` command.
-    *   [x] **#222 - Verify Workflow:** The new `just test` command has been run to ensure it works as expected.
 
-
----
-
-### Epic #50: Ensure Clean JSON Output for Pipelining
-*   **User Story:** As a command-line user, I want `certwatch` to send only JSON data to standard output (`stdout`), so that I can reliably pipe the output to other tools like `jq` for filtering and analysis without encountering parsing errors.
-*   **Status:** Completed
-*   **Tasks:**
-    *   [x] **#223 - Reconfigure Tracing Subscriber:** Modify the `tracing_subscriber` in `main.rs` to write all logs to `stderr` instead of `stdout`.
-    *   [x] **#224 - Audit `println!` Usage:** Perform a codebase-wide audit to find and replace any `println!` macros used for logging with appropriate `tracing` macros.
-    *   [x] **#225 - Create Output Verification Test:** Implement a new integration test that runs the application with JSON output, captures both `stdout` and `stderr`, and asserts that only valid JSON is written to `stdout` and logs are correctly written to `stderr`.
-
----
 
 ### Epic #51: Enhance Slack Alerts with Deduplicated Domain Counts
 *   **User Story:** As a security analyst receiving CertWatch alerts, I want to see a count of suppressed subdomains and IPs in a compact format, so that I can quickly gauge the magnitude of an alert without unnecessary verbosity.
@@ -354,38 +240,3 @@
 
 ---
 
-### Epic #56: Improve Metric Granularity
-
-**Brief**
-
-A significant portion of `processing_duration_seconds` is unaccounted for.
-Research identified several unmeasured operations: channel transit times, DNS
-worker scheduling delays, and DNS retry backoff delays.
-
-Define New Metrics: In src/internal_metrics/mod.rs, define the following new
-public Histogram metrics within the Metrics struct:
-
-dns_worker_scheduling_delay_seconds: To measure the time a domain waits for a
-DNS worker to become available (including channel transit and semaphore
-acquisition).
-
-
-dns_retry_backoff_delay_seconds: To measure the total time spent in explicit sleep calls during DNS resolution retries.
-
-alert_queue_time_seconds: To measure the time an alert spends in the channel
-before being processed by the output task.
-
-Register New Metrics: Register these new histograms with the Registry in the Metrics::new() function, following the existing pattern.
-
-Implement Measurement Logic:
-
-DNS Scheduling Delay: In src/dns/manager.rs, start a timer just before a domain is sent to a worker task. Stop the timer and record the duration to dns_worker_scheduling_delay_seconds inside the worker task, immediately after the semaphore has been acquired and before DNS resolution begins. You will need to pass the start time along with the domain.
-DNS Retry Backoff Delay: In the retry loop within src/dns/manager.rs, measure the duration of each tokio::time::sleep call and record it to the dns_retry_backoff_delay_seconds histogram.
-
-Alert Queue Time: In src/app.rs, when an alert is created, store the current time (e.g., as Instant::now()) in the Alert struct. Then, in the output_task_logic (src/app.rs:508), after an alert is received from the alerts_rx channel, calculate the elapsed time and record it to the alert_queue_time_seconds histogram.
-
-**Phases**
-
-*   [x] Phase 1: Implement 'dns_worker_scheduling_delay_seconds' metric. **Status:** ✅ Done (2025-07-17)
-*   [x] Phase 2: Implement 'dns_retry_backoff_delay_seconds' metric.
-*   [x] Phase 3: Implement 'alert_queue_time_seconds' metric.

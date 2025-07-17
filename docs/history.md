@@ -1,3 +1,27 @@
+### Epic #56: Improve Metric Granularity
+**Goal:** Add new, more granular metrics to account for previously unmeasured operations, such as channel transit times and DNS worker scheduling delays, to provide a more accurate performance profile.
+
+---
+### Epic #55: Granular Performance Instrumentation for Latency Analysis
+**Goal:** Added detailed performance metrics to each stage of the domain processing pipeline, enabling precise identification of latency bottlenecks.
+
+---
+### Epic #54: Code Cleanup and Warning Resolution
+**Goal:** Eliminated all compiler warnings from the codebase by removing unused imports and variables, improving code quality and readability.
+
+---
+### Epic #50: Ensure Clean JSON Output for Pipelining
+**Goal:** Reconfigured logging to use `stderr`, ensuring that `stdout` contains only clean JSON output suitable for pipelining to other tools.
+
+---
+### Epic #49: Testing Workflow Overhaul
+**Goal:** Standardized the testing workflow by adopting `cargo nextest` and a `justfile`, improving the consistency and maintainability of project commands.
+
+---
+### Epic 32: Simplify Configuration to be File-Only
+**Goal:** Refactored the configuration system to be exclusively file-driven, removing complex command-line and environment variable layering for improved predictability.
+
+---
 ### Epic #46: Implement Advanced, Staged Rule-Based Filtering Engine
 **Goal:** Implemented a multi-stage, YAML-based rule engine with advanced boolean logic, significantly improving detection capabilities and replacing the legacy pattern matcher.
 
