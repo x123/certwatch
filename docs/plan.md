@@ -392,5 +392,5 @@ Alert Queue Time: In src/app.rs, when an alert is created, store the current tim
 **Phases**
 
 *   [x] Phase 1: Implement 'dns_worker_scheduling_delay_seconds' metric. **Status:** ✅ Done (2025-07-17)
-*   [ ] Phase 2: Implement 'dns_retry_backoff_delay_seconds' metric.
+*   [x] Phase 2: Implement 'dns_retry_backoff_delay_seconds' metric.
 *   [ ] Phase 3: Implement 'alert_queue_time_seconds' metric.

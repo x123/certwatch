@@ -129,7 +129,7 @@ impl DnsResolutionManager {
 
 
                         if let Ok(dns_info) =
-                            Self::perform_resolution(&domain, resolver_clone, config_clone).await
+                            Self::perform_resolution(&domain, resolver_clone, config_clone, metrics_clone).await
                         {
                             if resolved_tx_clone
                                 .send((domain, dns_info, start_time))
@@ -156,6 +156,7 @@ impl DnsResolutionManager {
         domain: &str,
         resolver: Arc<dyn DnsResolver>,
         config: DnsRetryConfig,
+        metrics: Arc<Metrics>,
     ) -> Result<DnsInfo, DnsError> {
         let retries = config.retries.unwrap_or(3);
         let backoff_ms = config.backoff_ms.unwrap_or(500);
@@ -182,7 +183,11 @@ impl DnsResolutionManager {
                     if attempt < retries {
                         let backoff_duration = backoff_ms * 2_u64.pow(attempt);
                         debug!(backoff_ms = backoff_duration, "Retrying after backoff");
+                        let sleep_start = Instant::now();
                         sleep(Duration::from_millis(backoff_duration)).await;
+                        metrics
+                            .dns_retry_backoff_delay_seconds
+                            .record(sleep_start.elapsed());
                     }
                 }
                 Err(DnsError::Shutdown) => {
